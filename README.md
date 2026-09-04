@@ -26,8 +26,11 @@ the whole thing runs in ordinary Linux containers.
 
 ## Two reports, one platform
 
-Both scorecards are built from the **same nine weekly source files**, so a
-week is uploaded once and both reports are produced from it.
+Both scorecards are built from nine weekly source files. **Seven are shared** -
+uploaded once, used by both. **The two Case AR files are not.** Case ARs are
+regenerated daily, and the reports go out on different days: GFS on Tuesday
+uses Tuesday's Case ARs, All Providers on Thursday uses Thursday's. The
+filenames are identical, so a week stores both copies tagged by report.
 
 Their calculation cores are *not* shared. A diff of the two shows 50–90% of
 lines differing — they are genuinely different maths. Merging them into one

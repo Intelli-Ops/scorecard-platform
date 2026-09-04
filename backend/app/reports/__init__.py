@@ -1,26 +1,42 @@
 """Report-type registry.
 
-Two weekly scorecards are produced from the SAME nine source files: GFS and
-All-Providers. Their calculation cores are genuinely different code - a diff
-of the two shows 50-90% of lines differing - so they are NOT merged into one
-generic engine. Each report owns its own `core/` package and `rules.yml`.
+Two weekly scorecards: GFS and All Providers.
 
-What is shared is everything around the maths: upload, storage, jobs, the
-database, the API and the UI. A report type is just a declaration of which
-files it needs and which pipeline turns them into tables.
+WHICH FILES EACH ONE NEEDS
+--------------------------
+Seven of the nine weekly files are the same for both reports - upload once,
+both reports use them.
+
+The two Case AR files are NOT shared. Case ARs are regenerated every day,
+and the two reports go out on different days:
+
+    GFS            mailed Tuesday   -> Tuesday's Case ARs
+    All Providers  mailed Thursday  -> Thursday's Case ARs
+
+The filenames are identical, so nothing in the file itself says which day it
+came from. That is why a week stores them separately, tagged by report. The
+same case can legitimately show different numbers in the two reports, and
+this is the record that explains why.
+
+WHY THE MATHS IS NOT SHARED
+---------------------------
+Each report keeps its own core/ package and rules.yml. Diffing the two shows
+50-90% of lines differing - they are different calculations, not copies.
+Everything AROUND the maths (upload, storage, jobs, database, API, UI) is
+shared.
 """
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
 @dataclass(frozen=True)
 class SourceFile:
-    """One expected weekly input, matched by fragments of its filename.
+    """One expected weekly input, found by fragments of its filename.
 
-    Carried over verbatim from the .bat pipelines: matching is
-    case-insensitive and every fragment must appear in the name, so a
-    trailing date is fine and files are never renamed by hand.
+    Matching is carried over from the .bat pipelines: case-insensitive, and
+    every fragment must appear somewhere in the name. So a trailing date is
+    fine and nobody has to rename files by hand.
     """
     key: str
     fragments: tuple[str, ...]
@@ -29,13 +45,8 @@ class SourceFile:
     required: bool = True
 
 
-# The nine files a week needs. Both reports consume this same set, which is
-# why the upload screen is shared: one upload per week, two reports built.
-WEEKLY_SOURCES: tuple[SourceFile, ...] = (
-    SourceFile("owner_case_ar", ("combined owner case ar",),
-               label="Combined Owner Case AR"),
-    SourceFile("custom_case_ar", ("combined custom", "case ar"),
-               label="Combined Custom Case AR"),
+# Uploaded once per week. Both reports read these same files.
+SHARED_SOURCES: tuple[SourceFile, ...] = (
     SourceFile("delta_wc", ("delta wc",),
                label="Master Settlement & Collection Delta WC"),
     SourceFile("delta_mlcr", ("delta mlcr",),
@@ -52,14 +63,27 @@ WEEKLY_SOURCES: tuple[SourceFile, ...] = (
                label="KPI numbers", required=False),
 )
 
+# Uploaded once PER REPORT, because each report uses its own day's copy.
+CASE_AR_SOURCES: tuple[SourceFile, ...] = (
+    SourceFile("owner_case_ar", ("combined owner case ar",),
+               label="Combined Owner Case AR"),
+    SourceFile("custom_case_ar", ("combined custom", "case ar"),
+               label="Combined Custom Case AR"),
+)
+
 
 @dataclass(frozen=True)
 class ReportType:
     key: str
     label: str
+    send_day: str            # the day this report is mailed to the client
     rules_path: Path
-    sources: tuple[SourceFile, ...] = WEEKLY_SOURCES
     sheets: tuple[str, ...] = ()
+
+    @property
+    def sources(self) -> tuple[SourceFile, ...]:
+        """Every file this report needs: the shared seven plus its own two."""
+        return SHARED_SOURCES + CASE_AR_SOURCES
 
 
 HERE = Path(__file__).parent
@@ -68,6 +92,7 @@ REPORTS: dict[str, ReportType] = {
     "gfs": ReportType(
         key="gfs",
         label="GFS Weekly Scorecard",
+        send_day="Tuesday",
         rules_path=HERE / "gfs" / "rules.yml",
         sheets=("Settlement High-Level", "Collection High-Level",
                 "Delta Comparison", "KPI High-Level", "Case AR", "Raw Data"),
@@ -75,6 +100,7 @@ REPORTS: dict[str, ReportType] = {
     "all_providers": ReportType(
         key="all_providers",
         label="All Providers Weekly Scorecard",
+        send_day="Thursday",
         rules_path=HERE / "all_providers" / "rules.yml",
     ),
 }
