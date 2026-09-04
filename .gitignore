@@ -30,3 +30,6 @@ Thumbs.db
 
 # golden-master parquet cache
 .golden-cache/
+
+# local database + object store
+data/

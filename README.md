@@ -55,6 +55,10 @@ backend/
       all_providers/
         core/                lifted verbatim from ap/marts/
         rules.yml
+    config.py     every path in the project
+    db/           models + session (SQLite locally, Postgres in production)
+    storage/      content-addressed object store
+    service/      ingest uploads, execute runs, read results back
   tests/
     golden/       golden-master: new output must equal the .bat pipeline's
 frontend/         (not started)
@@ -86,8 +90,8 @@ re-running the golden-master test.
 | 3 | Extract `settlement_grids()` / `cp_settled()` out of `run_week.py` | done |
 | 4 | Reader layer: uploaded files → dataframes | |
 | 5 | **Golden-master test** — reproduce Week 35 exactly | |
-| 6 | Replace week folders with object storage + database | next |
-| 7 | Run results become structured data, not console text | |
+| 6 | Replace week folders with object storage + database | done |
+| 7 | Run results become structured data, not console text | next |
 | 8 | API, jobs, upload, UI | |
 
 Steps 0–5 carry the whole risk. Once the golden master passes, the rest is
@@ -119,3 +123,21 @@ is compared to the cent (summing 278,930 values in a different order moves the
 The proof currently rests on ONE week: inputs/2026-W34/ holds no usable data.
 Week 36 will give a second, independent confirmation for free - keep its
 marts/<week>/*.parquet after the .bat run.
+
+
+## A week is rows, not folders
+
+`inputs/2026-W35/` becomes an `upload` row per file, with the bytes themselves
+in the object store under the SHA-256 of their own content. That hash is the
+upload check (chunked uploads are verified against it), the de-duplicator (the
+seven shared files and an unchanged Thursday Case AR are stored once) and the
+audit anchor (a run in December still points at the exact bytes it read).
+
+A run records what it read, how long each file took, what it produced, and
+every STEP 4 warning - so the questions the folders could not answer (who ran
+it, when, what did it warn about, which upload did it actually use) now have
+answers.
+
+Verified end to end on the real Week 35 inputs: 9 of 12 files in the folder
+classified, 3 delivered workbooks correctly ignored, and the four tables built
+from the database still match the golden master.
