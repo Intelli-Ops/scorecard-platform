@@ -1,0 +1,29 @@
+# Uploaded client source files and anything derived from them.
+# Never commit: large, and they contain case data.
+data/
+uploads/
+*.xlsb
+*.xlsx
+*.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.env
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.vite/
+
+# Golden-master fixtures are parquet snapshots of real client data.
+# Kept on disk, referenced by path, never committed.
+backend/tests/golden/fixtures/
+
+# OS
+Thumbs.db
+.DS_Store

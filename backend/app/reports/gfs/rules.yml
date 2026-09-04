@@ -1,0 +1,355 @@
+# Business rules for the GFS Weekly Scorecard.
+#
+# These live here, not in code, so a rule change (new owner, new closing order,
+# a provider going inactive) is a one-line edit rather than a code change.
+#
+# Every rule below was verified against week 2026-W35 real data:
+#   filter -> 414,413 (Supporting 'GFS Cases')
+#   join   -> 301,447 (GFS Formate sheet)
+#   pivot  -> 278,930 (Raw Data)  and all 54 Case AR cells matched to the cent.
+
+case_ar:
+
+  # PHASE 1 - which rows of Combined Owner Case AR are in scope.
+  # Confirmed by the user's Excel formula: INDEX(data,,6)=OWNER NAME, INDEX(data,,9)=CASETYPE.
+  # NOTE: the steps doc calls OWNER NAME the "Provider" column. It is not the PROVIDER column.
+  owner_names:
+    - GFS
+    - GFS-SPV
+    - Med Legal              # doc shorthand: "Medlegal"
+
+  case_types:                # doc shorthand -> the real values in the file
+    - Workers Compensation                      # "WC"
+    - Copy Record (ML)                          # "CopyRecord"
+    - Alternative Dispute Resolution (ADR)      # "Alternative"
+
+  # PHASE 1 - columns pasted into Supporting File 'GFS Cases'
+  gfs_cases_columns: [CASEID, PATIENTNAME, MRN, BUSINESSREGID, PROVIDER]
+
+  # PHASE 2 - rows whose BUSINESSREGID is not in the Provider List get dropped
+  # ("In Group column, filter out all the NA values delete all data")
+  drop_rows_without_group: true
+
+  # PHASE 2 - rows with no match in Custom Case AR get dropped
+  # ("In status columns if any NA value is coming we delete whole row data for it")
+  # Implemented as an inner join on CASEID.
+  drop_rows_without_status: true
+
+  # PHASE 2 - Case_Validity cleanup.
+  # "Valid-Stay" and blank (Excel shows a VLOOKUP blank as 0) both become "Valid".
+  validity_map:
+    Valid-Stay: Valid
+  validity_blank_becomes: Valid
+
+  # PHASE 2 - Closing Order.
+  # Source values carry a "CLOSING ORDER: " prefix which is stripped
+  # ("Find and replace ClosingOrder in Closing_Order column").
+  closing_order_strip_prefix: 'CLOSING ORDER:'
+  # Only these three survive; EXACT match. Everything else -> CIC Pending.
+  # This matters: "FINDING & AWARD" and "ORDER OF DISMISSAL OF CASE" contain the words
+  # AWARD / DISMISSAL but are NOT kept. Verified - a "contains" rule would be wrong.
+  closing_order_keep:
+    - C & R (GRANTED)
+    - AWARD ON STIPULATED FINDS AND AWARD (GRANTED)
+    - DISMISSAL OF CLAIM
+  closing_order_default: CIC Pending
+
+  # PHASE 3 - FileStatus2. Verified: 165,300 Closed + 113,630 Open = 278,930.
+  file_status_closed_value: Closed
+  file_status_open_value: Open
+
+  # PHASE 2/3 - the pivot that produces Raw Data: group by these, sum the measures.
+  raw_data_group_by: [CASEID, BUSINESSREGID, Group, Closing Order, Case_Validity,
+                      FileStatus, FileStatus2]
+  raw_data_measures:  [BILLED, PAID, WRITEOFF, ADVANCE, OUTSTANDING]
+
+  # The Case AR sheet pivot
+  case_ar_rows:     [Case_Validity, Closing Order]
+  case_ar_row_order: [Invalid, Valid]
+  case_ar_closing_order_order:
+    - CIC Pending
+    - C & R (GRANTED)
+    - AWARD ON STIPULATED FINDS AND AWARD (GRANTED)
+    - DISMISSAL OF CLAIM
+
+# ---------------------------------------------------------------------------
+delta:   # Phases 4 and 6 -> the Delta Comparison sheet
+  # Verified against week 2026-W35: 666 rows, and every value matches except
+  # 11 rows of "FINDING & AWARD" that the manual W35 file left uncollapsed
+  # (week 34 collapsed them correctly, as does the Case AR path).
+
+  # PHASE 4 - the 15 combine columns. Source names differ per sheet, and the
+  # positions in the steps doc (wcColsNums etc) are now stale, so map BY NAME.
+  sources:
+    - sheet: WC Delta
+      workbook: wc               # Master Settlement & Collection Delta WC
+      columns:
+        Date: Date
+        Location: Location
+        Case_ID: Case Id
+        MRN: MRN
+        Billed: Billed
+        Paid: Paid
+        Outstanding: Outstanding
+        Settlement_Amount: Settlement Amount
+        Settlement_Pct: Settlement %Age
+        Provider_ID: ProviderID
+        Provider: Provider
+        Settlement_Payment: Settlement Payment
+        Settlement_Payment_Received: Settlement Payment Received?
+        Remaining_Payment: Remaining Payment
+        File_Status: Settlement Payment Status
+    - sheet: Med-Legal Delta
+      workbook: mlcr
+      columns:
+        Date: Date
+        Location: Location
+        Case_ID: Case Id
+        MRN: MRN
+        Billed: Billed
+        Paid: Paid
+        Outstanding: Outstanding
+        Settlement_Amount: Settlement Amount
+        Settlement_Pct: Settlement %Age
+        Provider_ID: ProviderID
+        Provider: Provider
+        Settlement_Payment: Settlement Payments        # note: plural
+        Settlement_Payment_Received: Settlement Payment Received?
+        Remaining_Payment: Remaining Payment
+        File_Status: File Status
+    - sheet: IMR Delta
+      workbook: mlcr
+      columns:
+        Date: Date
+        Location: Location
+        Case_ID: Case Id
+        MRN: MRN
+        Billed: Billed
+        Paid: Paid
+        Outstanding: Outstanding
+        Settlement_Amount: Settlement Amount
+        Settlement_Pct: Settlement %Age
+        Provider_ID: ProviderID
+        Provider: Provider
+        Settlement_Payment: Settlement Payment Received   # no "?" - a DIFFERENT
+        Settlement_Payment_Received: Settlement Payment Received?   # column to this one
+        Remaining_Payment: Remaining Payment
+        File_Status: New File Status
+
+  # PHASE 6 - filters, applied in this order (order confirmed by the user)
+  gfs_type_value: GFS
+  other_type_value: Other
+  drop_na_group: true                 # "inactive" == Group lookup returns NA
+  drop_non_gfs_type: true
+  # Values are inconsistent across sheets: Closed / CLOSED / Closed After Payment /
+  # Closed WO Payment / Closed after payment. Match on the keyword, case-insensitive.
+  closed_keyword: closed
+  # Partial Paid rows: Settlement Amount is REPLACED by Remaining Payment (not added to).
+  partial_paid_keyword: partial
+  partial_paid_uses: Remaining_Payment
+
+  # Aging buckets, measured from the run date
+  aging_buckets: [[30, "1-30"], [60, "31-60"], [90, "61-90"]]
+  aging_default: "90+"
+
+  # Custom Case AR lookups: Closing Order (24), Case_Validity (101), Lien Filed (19)
+  custom_ar_columns: [Closing Order, Case_Validity, Lien Filed]
+
+  # Same cleanup as the Case AR path - see case_ar section for why exact match matters
+  reuse_case_ar_closing_order_rules: true
+
+# ---------------------------------------------------------------------------
+collections:   # Phase 7 -> the Collection High-Level 2026 sheet
+  # Verified against week 2026-W35: 196/196 grid cells, 45/45 pace cells,
+  # 4/4 footer totals - all matching the delivered workbook to the cent.
+  sheet: "  Detail Payment Report"     # note the two leading spaces
+  drop_case_types: [PI]
+  gfs_type_value: gfs
+  other_type_value: other client
+  # "make board reps & in house rep, settlement" = fold them INTO settlement
+  fold_into_settlement: [BOARD REPS, IN HOUSE REPS, SETTLEMENT]
+  payment_type_order: [BILLING, REBILLING, APPEAL, SETTLEMENT]
+  # Sheet layout: 9 group rows, then a Total row; each week is 4 payment-type
+  # columns plus a week-total column.
+  group_rows:
+    Med-Legal: 10
+    Medvantage: 11
+    Artheon: 12
+    MH Express: 13
+    POS: 14
+    United: 15
+    BayCo: 16                 # note: spelled BayCo here, Bayco on the Settlement sheet
+    A Miles: 17
+    Southern California: 18
+  group_aliases:
+    BayCo: Bayco              # sheet label -> Provider List group name
+  total_row: 19
+  pace_rows:
+    Med-Legal: 23
+    Medvantage: 24
+    Artheon: 25
+    MH Express: 26
+    POS: 27
+    United: 28
+    BayCo: 29
+    A Miles: 30
+    Southern California: 31
+  pace_total_row: 32
+  week_first_cols: [10, 15, 20, 25, 30]   # J, O, T, Y, AD
+  pace_cols: [14, 19, 24, 29, 34]         # N, S, X, AC, AH
+  footer_rows: {BILLING: 36, REBILLING: 37, APPEAL: 38, SETTLEMENT: 39}
+  footer_col: 4                            # column D
+
+# ---------------------------------------------------------------------------
+# KPI High-Level - steps doc Phase 8 (SQL-Doc) and Phase 9 (scorecard numbers).
+#
+# The sheet is a stack of small blocks, each one a list of provider-group rows and
+# usually a Total row. Only ONE column is written each week: the one whose 'Period
+# Start' date (row 2) falls in the month being reported. Everything else is history
+# and is left exactly as the template had it.
+# ---------------------------------------------------------------------------
+kpi:
+  sheet: "KPI High-Level"
+  period_row: 2               # 'Period Start'; Excel serial dates
+  first_col: 3                # C
+  last_col: 40                # scan this far right; 'Grand Total' text is skipped
+
+  gfs_type_value: GFS         # SQL-Doc 'Type' filter
+  provider_id_column: BUSINESSREGID     # in the Supporting File 'Provider List'
+  provider_group_column: Provider Group
+
+  # SQL-Doc export column names, as they come out of Superset.
+  sql_doc_columns:
+    provider_id: ProviderID
+    type: Type
+    month: DocumentMonth
+    document_type: DocumentType
+    cases: "#ofcases"
+
+  # Phase 9 - the KPI-numbers table pasted from email.
+  #
+  # The sheet holds three stacked blocks - GFS, Russman, Others - each with its own
+  # header row and its own Total. Only the GFS block belongs on this report, so the
+  # rows between `block_start` and `block_end` are the only ones read.
+  #
+  # Its first column names a provider, not a group, and matches the Supporting File's
+  # PROVIDER ID column. The group comes from there, which is what folds Andrew Miles +
+  # Inland Empire Healthcare into A Miles, MHE Pharmacy + MHE Assets into MH Express,
+  # and Eagle Eye + Novatech + Progressive Orthopedic into POS.
+  scorecard:
+    file_match: [kpi, number]
+    sheet: Sheet1
+    block_start: GFS Client
+    block_end: GFS Total
+    lookup_column: PROVIDER ID      # Supporting File column the provider name matches
+    metrics:                        # source column -> block whose rows are groups
+      DOR Filing: DOR
+      PMR Filing: PMR
+      NTP Filing: NTP
+      EOA Filing: Enforcement Of Agreement
+      Medical Index: Medical Index
+    totals:                         # source column -> [block, single row] (not by group)
+      NOI TO CP:       [Med Legal, NOI (COST)]
+      NOI for Payment: [Med Legal, NOI For Payment]
+      CP:              [Med Legal, Cost Petition]
+      CP DOR:          [Med Legal, Cost Petition (DOR)]
+
+  blocks:
+    SBR:
+      source: sql_doc
+      document_type: Appeals/SBR
+      total_row: 18
+      rows:
+        Med-Legal: 8
+        Medvantage: 9
+        Artheon: 10
+        POS: 11
+        BayCo: 12
+        A Miles: 13
+        United: 14
+        Southern California: 15
+        Prospice Med: 16
+        United Services Plus: 17
+    DDE:
+      source: sql_doc
+      document_type: BillingDocs
+      total_row: 91
+      rows:
+        Medvantage: 82
+        Artheon: 83
+        MH Express: 84
+        POS: 85
+        United: 86
+        BayCo: 87
+        Southern California: 88
+        SUPPORT CLAIMS WEST: 89
+        A Miles: 90
+    PMR:
+      source: scorecard
+      total_row: 30
+      rows:
+        Medvantage: 22
+        Artheon: 23
+        MH Express: 24
+        POS: 25
+        United: 26
+        BayCo: 27
+        A Miles: 28
+        Southern California: 29
+    10635 (DDEL):
+      source: scorecard
+      total_row: 37
+      rows:
+        A Miles: 34
+        Artheon: 35
+        Southern California: 36
+    NTP:
+      source: scorecard
+      total_row: 42
+      rows:
+        A Miles: 40
+        Southern California: 41
+    Medical Index:
+      source: scorecard
+      total_row: 53
+      rows:
+        Medvantage: 45
+        Artheon: 46
+        MH Express: 47
+        POS: 48
+        United: 49
+        BayCo: 50
+        A Miles: 51
+        Southern California: 52
+    DOR:
+      source: scorecard
+      total_row: 65
+      rows:
+        Med-Legal: 56
+        Medvantage: 57
+        Artheon: 58
+        MH Express: 59
+        POS: 60
+        United: 61
+        BayCo: 62
+        A Miles: 63
+        Southern California: 64
+    # These two blocks list metrics, not provider groups, and carry no Total row.
+    Med Legal:
+      source: scorecard
+      total_row: null
+      rows:
+        NOI (COST): 68
+        NOI For Payment: 69
+        Cost Petition: 70
+        Cost Petition (DOR): 71
+    Enforcement Of Agreement:
+      source: scorecard
+      total_row: null
+      rows:
+        Med Legal: 74
+        A Miles: 75
+        Concierge: 76
+        Artheon: 77
+        "WC ": 78
+        MHE Pharmacy: 79

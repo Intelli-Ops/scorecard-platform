@@ -1,0 +1,377 @@
+"""KPI High-Level - steps doc Phase 8 (SQL-Doc) and Phase 9 (litigation numbers).
+
+Two differences from the GFS pipeline, both of them "widen it":
+
+  * SQL-Doc is NOT filtered on Type. GFS keeps only Type = GFS; this report wants
+    every provider, so both GFS and Other Client rows are counted.
+  * The numbers file stacks three blocks - GFS Client, Russman Client, Others
+    Client. GFS reads only the first. This report reads all three.
+
+What is the same, and matters just as much: the group written on the sheet comes
+from the Supporting File's Provider Group, looked up on ProviderID = BUSINESSREGID,
+NOT from SQL-Doc's own Provider_GROUP column. The two disagree - SQL-Doc reports
+Inland Empire Healthcare as its own group where the Supporting File files it under
+A Miles - and following SQL-Doc silently loses those documents from the A Miles row.
+
+The KPI sheet's own shape is read from the template (read_kpi_layout below) rather
+than typed into config: it carries nine blocks and up to thirty-one rows each, and
+those rows change whenever a provider is taken on.
+"""
+from __future__ import annotations
+from dataclasses import dataclass, field
+import re
+
+import polars as pl
+
+
+def norm(s: object) -> str:
+    """Match sheet labels to source groups ignoring case and punctuation.
+    The sheet says 'BayCo', the Supporting File says 'Bayco'."""
+    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+
+
+@dataclass
+class KpiBlock:
+    name: str
+    header_row: int
+    rows: dict[str, int] = field(default_factory=dict)
+    total_row: int | None = None
+
+
+@dataclass
+class KpiReport:
+    month: str = ""
+    column: str = ""
+    written_blocks: list[str] = field(default_factory=list)
+    skipped_blocks: list[str] = field(default_factory=list)
+    unmapped_groups: list[tuple[str, str, float]] = field(default_factory=list)
+    unknown_provider_ids: list[int] = field(default_factory=list)
+    unknown_providers_named: list[str] = field(default_factory=list)
+    scorecard_rows: int = 0
+    scorecard_blocks: list[str] = field(default_factory=list)
+    scorecard_missing: list[str] = field(default_factory=list)
+    scorecard_note: str = ""
+    totals: dict[str, float] = field(default_factory=dict)
+
+
+TOTAL_LABELS = {"total", "grand total"}
+
+
+def read_kpi_layout(sheet, rules: dict) -> dict[str, KpiBlock]:
+    """Find the sheet's blocks by reading column B.
+
+    Column B is a stack of runs separated by blank rows. The first row of each run
+    names the block; the rest are its rows, ending at a Total if it has one. Doing
+    it by runs rather than by "is this row empty of numbers" matters, because a
+    provider with nothing to report this year - MH Express in the SBR block - looks
+    exactly like a block header otherwise.
+    """
+    k = rules["kpi"]
+    start = k["period_row"] + 1
+    labels = {r: str(v).strip() for (r, c), v in sheet.cells.items()
+              if c == 2 and r > start and str(v).strip()}
+    if not labels:
+        return {}
+    blocks: dict[str, KpiBlock] = {}
+    run: list[int] = []
+    for r in range(min(labels), max(labels) + 2):
+        if r in labels:
+            run.append(r)
+            continue
+        if len(run) > 1:
+            _add_block(blocks, labels, run)
+        run = []
+    if len(run) > 1:
+        _add_block(blocks, labels, run)
+    return blocks
+
+
+def _add_block(blocks: dict[str, KpiBlock], labels: dict[int, str],
+               run: list[int]) -> None:
+    name = labels[run[0]]
+    blk = KpiBlock(name, run[0])
+    for r in run[1:]:
+        if labels[r].lower() in TOTAL_LABELS:
+            blk.total_row = r
+            break
+        blk.rows.setdefault(labels[r], r)
+    blocks[name] = blk
+
+
+def _group_dim(provider_list: pl.DataFrame, k: dict) -> pl.DataFrame:
+    """BUSINESSREGID -> Provider Group, one row per id."""
+    return (provider_list
+            .select(pl.col(k["provider_id_column"]).cast(pl.Float64, strict=False)
+                      .round(0).cast(pl.Int64).alias("pid"),
+                    pl.col(k["provider_group_column"]).cast(pl.Utf8).alias("Group"))
+            .unique(subset=["pid"], keep="first"))
+
+
+def _row_key_map(block: KpiBlock, provider_to_group: dict[str, str],
+                 row_aliases: dict[str, str] | None = None) -> dict[str, str]:
+    """Normalised group name -> the sheet row label that should carry it.
+
+    Three ways a row label can name a group, in order:
+      * it IS the group ("Medvantage")
+      * it is a provider inside the group - the Enforcement Of Agreement block says
+        "Andrew Miles" where the Provider List says "A Miles"
+      * config spells it out, for the ones that are simply typed differently
+        ("Support Claim West" for the SUPPORT CLAIMS WEST group)
+    """
+    out: dict[str, str] = {}
+    aliases = {norm(a): norm(b) for a, b in (row_aliases or {}).items()}
+    for label in block.rows:
+        out.setdefault(norm(label), label)
+        g = provider_to_group.get(norm(label))
+        if g:
+            out.setdefault(norm(g), label)
+        alias = aliases.get(norm(label))
+        if alias:
+            out.setdefault(alias, label)
+    return out
+
+
+def _lay_on_rows(block: KpiBlock, by_group: dict[str, float],
+                 provider_to_group: dict[str, str], rep: KpiReport,
+                 row_aliases: dict[str, str] | None = None,
+                 names: dict[str, str] | None = None) -> dict[str, float]:
+    """Spread a {group: value} map across the block's rows.
+
+    Anything left over is a group the sheet has no row for. Those are reported by
+    their real Provider Group name - not the normalised key - because the run uses
+    that name to add the missing row to the sheet.
+    """
+    keys = _row_key_map(block, provider_to_group, row_aliases)
+    vals = {label: 0.0 for label in block.rows}
+    for g, v in by_group.items():
+        label = keys.get(g)
+        if label is None:
+            if v:
+                rep.unmapped_groups.append((block.name, (names or {}).get(g, g), v))
+            continue
+        vals[label] += v
+    return vals
+
+
+def build_kpi_sql(sql_doc: pl.DataFrame,
+                  provider_list: pl.DataFrame,
+                  blocks: dict[str, KpiBlock],
+                  rules: dict,
+                  year: int,
+                  month: int,
+                  rep: KpiReport | None = None
+                  ) -> tuple[dict[str, dict[str, float]], KpiReport]:
+    """Phase 8: SQL-Doc -> {block name: {sheet row label: value}}.
+
+    The steps doc describes a pivot - Rows(Provider_Group), Columns(Document_Type),
+    Values(Cases). The group-by below is that pivot; the row map read off the sheet
+    is the VLOOKUP that follows it.
+    """
+    k = rules["kpi"]
+    rep = rep or KpiReport()
+    rep.month = f"{year}-{month:02d}"
+    cols = k["sql_doc_columns"]
+
+    d = sql_doc.select(
+        pl.col(cols["provider_id"]).cast(pl.Float64, strict=False)
+          .round(0).cast(pl.Int64).alias("pid"),
+        pl.col(cols["type"]).cast(pl.Utf8).alias("type"),
+        pl.col(cols["month"]).cast(pl.Utf8).alias("doc_month"),
+        pl.col(cols["document_type"]).cast(pl.Utf8).alias("doc_type"),
+        pl.col(cols["cases"]).cast(pl.Float64, strict=False).alias("cases"))
+
+    # No Type filter for this report - see the module docstring. The month filter
+    # stays: today's export holds one month, but a wider pull must not silently add
+    # other months into the cells.
+    want_type = k.get("filter_type")
+    if want_type:
+        d = d.filter(pl.col("type").str.strip_chars().str.to_uppercase()
+                     == want_type.upper())
+    d = d.filter(pl.col("doc_month").str.strip_chars() == rep.month)
+
+    d = d.join(_group_dim(provider_list, k), on="pid", how="left")
+    missing = d.filter(pl.col("Group").is_null())
+    if missing.height:
+        rep.unknown_provider_ids = sorted({int(x) for x in missing["pid"].to_list()
+                                           if x is not None})
+
+    pivot = (d.drop_nulls("Group")
+              .group_by(["Group", "doc_type"])
+              .agg(pl.col("cases").sum().alias("cases")))
+
+    p2g = _provider_to_group(provider_list, rules)
+    out: dict[str, dict[str, float]] = {}
+    for block_name, doc_type in (k.get("sql_blocks") or {}).items():
+        block = blocks.get(block_name)
+        if block is None:
+            rep.skipped_blocks.append(block_name)
+            continue
+        want = norm(doc_type)
+        by_group: dict[str, float] = {}
+        names: dict[str, str] = {}
+        for group, dt_, cases in pivot.iter_rows():
+            if norm(dt_) == want:
+                by_group[norm(group)] = by_group.get(norm(group), 0.0) + (cases or 0.0)
+                names[norm(group)] = group
+        vals = _lay_on_rows(block, by_group, p2g, rep, k.get("row_aliases"), names)
+        out[block_name] = vals
+        rep.written_blocks.append(block_name)
+        rep.totals[block_name] = sum(vals.values())
+    return out, rep
+
+
+def _provider_to_group(provider_list: pl.DataFrame, rules: dict) -> dict[str, str]:
+    k = rules["kpi"]
+    sc = k.get("scorecard") or {}
+    col = sc.get("lookup_column", "PROVIDER ID")
+    out: dict[str, str] = {}
+    for name, group in provider_list.select(
+            pl.col(col).cast(pl.Utf8),
+            pl.col(k["provider_group_column"]).cast(pl.Utf8)).iter_rows():
+        if name:
+            out.setdefault(norm(name), group)
+    return out
+
+
+def build_kpi_scorecard(table: pl.DataFrame | None,
+                        provider_list: pl.DataFrame,
+                        blocks: dict[str, KpiBlock],
+                        rules: dict,
+                        rep: KpiReport) -> dict[str, dict[str, float]]:
+    """Phase 9: the litigation / scorecard numbers table pasted from email.
+
+    The sheet stacks three blocks - GFS, Russman, Others - each with its own header
+    row and Total. All three belong on this report, so each is located by its own
+    markers and the rows between them are read; the Total rows themselves are not,
+    or every figure would be counted twice.
+
+    The first column of that table names a PROVIDER, not a group. The group comes
+    from the Supporting File's PROVIDER ID column, which is what folds Andrew Miles
+    and Inland Empire Healthcare into A Miles, MHE Pharmacy and MHE Assets into
+    MH Express, and DIMG and FMR into Russman.
+
+    Two shapes of destination:
+      `metrics` columns spread across a block whose rows are provider groups.
+      `totals`  columns land in ONE cell, because the Med Legal block's rows are
+                metric names rather than groups.
+    """
+    k = rules["kpi"]
+    sc = k.get("scorecard") or {}
+    wanted = list((sc.get("metrics") or {}).values()) + \
+             [dest[0] for dest in (sc.get("totals") or {}).values()]
+
+    if table is None or not (sc.get("metrics") or sc.get("totals")):
+        rep.skipped_blocks.extend(dict.fromkeys(wanted))
+        rep.scorecard_note = "no KPI-numbers file - those blocks keep last week's figures"
+        return {}
+
+    rows = [list(r) for r in table.iter_rows()]
+    body: list[list] = []
+    for start_marker, end_marker in (sc.get("block_markers") or {}).items():
+        start = _find_row(rows, start_marker)
+        end = _find_row(rows, end_marker)
+        if start is None or end is None or end <= start:
+            rep.scorecard_missing.append(f"block {start_marker!r}")
+            continue
+        rep.scorecard_blocks.append(start_marker)
+        head = [norm(c) for c in rows[start]]
+        body.extend([head_marker(head, r) for r in rows[start + 1:end]])
+    if not body:
+        rep.skipped_blocks.extend(dict.fromkeys(wanted))
+        rep.scorecard_note = ("could not find any of the "
+                              f"{list((sc.get('block_markers') or {}))} blocks in the "
+                              "KPI-numbers sheet - nothing written")
+        return {}
+    rep.scorecard_rows = len(body)
+
+    lookup = _provider_to_group(provider_list, rules)
+    aliases = {norm(a): norm(b) for a, b in (sc.get("provider_aliases") or {}).items()}
+
+    groups: list[str | None] = []
+    for head, r in body:
+        key = norm(r[0])
+        key = aliases.get(key, key)
+        g = lookup.get(key)
+        if g is None and str(r[0]).strip():
+            rep.unknown_providers_named.append(str(r[0]))
+        groups.append(g)
+
+    def number(v) -> float:
+        try:
+            return float(str(v).replace(",", "").strip())
+        except (TypeError, ValueError):
+            return 0.0
+
+    def column(head: list[str], name: str) -> int | None:
+        n = norm(name)
+        return head.index(n) if n in head else None
+
+    p2g = _provider_to_group(provider_list, rules)
+    out: dict[str, dict[str, float]] = {}
+
+    for src, block_name in (sc.get("metrics") or {}).items():
+        block = blocks.get(block_name)
+        if block is None:
+            rep.scorecard_missing.append(f"{src} -> no '{block_name}' block on the sheet")
+            continue
+        by_group: dict[str, float] = {}
+        names: dict[str, str] = {}
+        hits = 0
+        for g, (head, r) in zip(groups, body):
+            col = column(head, src)
+            if col is None or g is None:
+                continue
+            hits += 1
+            by_group[norm(g)] = by_group.get(norm(g), 0.0) + number(r[col])
+            names[norm(g)] = g
+        if not hits:
+            rep.scorecard_missing.append(src)
+            continue
+        out[block_name] = _lay_on_rows(block, by_group, p2g, rep,
+                                       k.get("row_aliases"), names)
+        rep.written_blocks.append(block_name)
+        rep.totals[block_name] = sum(out[block_name].values())
+
+    for src, dest in (sc.get("totals") or {}).items():
+        block_name, label = dest
+        block = blocks.get(block_name)
+        if block is None:
+            rep.scorecard_missing.append(f"{src} -> no '{block_name}' block on the sheet")
+            continue
+        row_label = next((l for l in block.rows if norm(l) == norm(label)), None)
+        if row_label is None:
+            rep.scorecard_missing.append(f"{src} -> no '{label}' row in {block_name}")
+            continue
+        vals = out.setdefault(block_name, {l: 0.0 for l in block.rows})
+        total = 0.0
+        found = False
+        for g, (head, r) in zip(groups, body):
+            col = column(head, src)
+            if col is None or g is None:
+                continue
+            found = True
+            total += number(r[col])
+        if not found:
+            rep.scorecard_missing.append(src)
+            continue
+        vals[row_label] = total
+        if block_name not in rep.written_blocks:
+            rep.written_blocks.append(block_name)
+        rep.totals[block_name] = sum(vals.values())
+
+    rep.skipped_blocks.extend(b for b in dict.fromkeys(wanted) if b not in out)
+    return out
+
+
+def head_marker(head: list[str], row: list) -> tuple[list[str], list]:
+    """Keep each source row next to the header it was read under - the three blocks
+    repeat their own header, and nothing guarantees the columns line up."""
+    return head, row
+
+
+def _find_row(rows: list[list], marker: str) -> int | None:
+    want = norm(marker)
+    for i, r in enumerate(rows):
+        if r and norm(r[0]) == want:
+            return i
+    return None
