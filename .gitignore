@@ -27,3 +27,6 @@ backend/tests/golden/fixtures/
 # OS
 Thumbs.db
 .DS_Store
+
+# golden-master parquet cache
+.golden-cache/

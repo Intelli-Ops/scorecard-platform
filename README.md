@@ -83,10 +83,10 @@ re-running the golden-master test.
 | 0 | Freeze the existing project in git as a reference point | done |
 | 1 | New repo and skeleton | done |
 | 2 | Lift the calculation cores and rules across | done |
-| 3 | Extract `settlement_grids()` / `cp_settled()` out of `run_week.py` | next |
+| 3 | Extract `settlement_grids()` / `cp_settled()` out of `run_week.py` | done |
 | 4 | Reader layer: uploaded files → dataframes | |
 | 5 | **Golden-master test** — reproduce Week 35 exactly | |
-| 6 | Replace week folders with object storage + database | |
+| 6 | Replace week folders with object storage + database | next |
 | 7 | Run results become structured data, not console text | |
 | 8 | API, jobs, upload, UI | |
 
@@ -99,3 +99,23 @@ This folder currently sits under OneDrive. Before installing dependencies,
 either exclude `.venv/` and `node_modules/` from sync or move the project
 outside OneDrive — syncing tens of thousands of small files makes everything
 slow and occasionally locks files mid-write.
+
+
+## Golden master
+
+`backend/tests/golden/` proves this project reproduces the .bat pipeline.
+Run it with the legacy project present:
+
+```
+cd backend && python -m pytest tests/golden -v
+```
+
+Week 35 passes on all four tables. Two tolerances are applied on purpose and
+are documented in the test: row order is not compared (polars does not promise
+a stable order, and the .bat pipeline's own order varies run to run), and money
+is compared to the cent (summing 278,930 values in a different order moves the
+15th significant digit - the largest gap seen is 0.0000008 on 299,693,534.89).
+
+The proof currently rests on ONE week: inputs/2026-W34/ holds no usable data.
+Week 36 will give a second, independent confirmation for free - keep its
+marts/<week>/*.parquet after the .bat run.
