@@ -61,7 +61,7 @@ backend/
     service/      ingest uploads, execute runs, read results back
   tests/
     golden/       golden-master: new output must equal the .bat pipeline's
-frontend/         (not started)
+frontend/         (not started - step 8b)
 docs/
 ```
 
@@ -92,7 +92,8 @@ re-running the golden-master test.
 | 5 | **Golden-master test** — reproduce Week 35 exactly | |
 | 6 | Replace week folders with object storage + database | done |
 | 7 | Run results become structured data, not console text | done |
-| 8 | API, jobs, upload, UI | next |
+| 8a | API, background builds, upload | done |
+| 8b | Browser screens | next |
 
 Steps 0–5 carry the whole risk. Once the golden master passes, the rest is
 ordinary web work.
@@ -160,3 +161,32 @@ client will look at is missing and someone has to decide whether to send it.
 
 A run finishes in `review`, not `done`. Approving it is a separate, recorded
 act by a person.
+
+
+## Running it
+
+```
+cd backend
+../.venv/Scripts/python -m uvicorn app.main:app --reload
+```
+
+http://127.0.0.1:8000/docs is the API, generated from the routes.
+
+| | |
+|---|---|
+| `GET /api/reports` | the two scorecards and the files each needs |
+| `GET /api/weeks`, `GET /api/weeks/{week}` | what has been uploaded, what is missing |
+| `POST /api/weeks/{week}/uploads` | receive files (`for_report` for the Case ARs) |
+| `POST /api/runs?report=&week=` | queue a build, returns immediately |
+| `GET /api/runs/{id}` | the review payload |
+| `POST /api/runs/{id}/approve?by=` | sign off |
+| `GET /api/runs/{id}/figures/{name}` | settlement, cp_settled, kpi - the dashboard |
+| `GET /api/runs/{id}/tables/{name}` | a page of raw_data, delta_comparison, ... |
+
+Builds run on one background thread, one at a time on purpose: two concurrent
+runs would each hold a quarter-gigabyte spreadsheet in memory for no gain,
+since the reports go out on different days.
+
+Verified over HTTP against the real Week 35 files: 385 MB uploaded, three
+delivered workbooks refused, build queued in 23 ms and finished in 67 s, all
+four tables reproduced, and 236 dashboard records served.

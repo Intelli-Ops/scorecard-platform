@@ -84,6 +84,8 @@ class Run(Base):
         back_populates="run", cascade="all, delete-orphan", order_by="RunNote.seq")
     tables: Mapped[list["RunTable"]] = relationship(
         back_populates="run", cascade="all, delete-orphan")
+    figures: Mapped[list["RunFigure"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan")
 
 
 # pending  -> queued, nothing read yet
@@ -135,6 +137,30 @@ class RunNote(Base):
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
 
     run: Mapped[Run] = relationship(back_populates="notes")
+
+
+class RunFigure(Base):
+    """The sheet-shaped results, as flat records.
+
+    Settlement grids, CP Settled Cases and the KPI blocks were never tables -
+    the .bat pipeline calculated them and wrote them straight into Excel cells,
+    so they only ever existed inside the workbook. A dashboard has to read them
+    back, and a chart needs one row per value rather than a grid keyed by
+    (group, bucket), so they are stored flattened.
+
+    Small enough for the database: a week is a few hundred records, not the
+    278,930 of Raw Data.
+    """
+    __tablename__ = "run_figure"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("run.id"), index=True)
+    name: Mapped[str] = mapped_column(String(32))     # settlement, kpi, ...
+    data: Mapped[list] = mapped_column(JSON, default=list)
+
+    run: Mapped[Run] = relationship(back_populates="figures")
+
+    __table_args__ = (UniqueConstraint("run_id", "name"),)
 
 
 class RunTable(Base):

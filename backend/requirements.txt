@@ -10,19 +10,20 @@ pyyaml==6.0.3            # rules.yml
 # --- Platform ---------------------------------------------------------
 fastapi>=0.115
 uvicorn[standard]>=0.32
+python-multipart>=0.0.17 # multipart uploads
 sqlalchemy>=2.0
-alembic>=1.14            # schema migrations
-psycopg[binary]>=3.2     # postgres
 pydantic>=2.9
-pydantic-settings>=2.6
-python-multipart>=0.0.17
+
+# Postgres. Not needed locally - SQLite is the default and the models
+# avoid anything either database lacks.
+# psycopg[binary]>=3.2
+# alembic>=1.14          # migrations, once the schema is deployed anywhere
 
 # --- Jobs -------------------------------------------------------------
-celery>=5.4
-redis>=5.2
-
-# --- Object storage ---------------------------------------------------
-boto3>=1.35              # S3-compatible; also works with MinIO locally
+# None. Builds run on a single background thread inside the web process
+# (app/jobs/worker.py). A queue server earns its place when a job must
+# survive a restart or spread across machines; here a run that dies can
+# simply be started again, and its inputs are still in the store.
 
 # --- Dev / test -------------------------------------------------------
 pytest>=8.3

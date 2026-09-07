@@ -30,6 +30,15 @@ def create_all() -> None:
     Base.metadata.create_all(engine())
 
 
+def reset() -> None:
+    """Forget the cached engine, so a new data directory takes effect."""
+    global _engine, _Session
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
+    _Session = None
+
+
 @contextmanager
 def session() -> Session:
     engine()

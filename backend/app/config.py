@@ -22,5 +22,17 @@ class Settings:
         for d in (self.data_dir, self.object_dir, self.results_dir):
             d.mkdir(parents=True, exist_ok=True)
 
+    def use(self, data_dir: Path) -> None:
+        """Point everything at another directory.
+
+        For tests, and for running two instances side by side. Callers must
+        also reset the database session, since it caches its engine.
+        """
+        self.data_dir = Path(data_dir)
+        self.object_dir = self.data_dir / "objects"
+        self.results_dir = self.data_dir / "results"
+        self.database_url = f"sqlite:///{(self.data_dir / 'scorecard.db').as_posix()}"
+        self.ensure()
+
 
 settings = Settings()

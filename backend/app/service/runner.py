@@ -19,10 +19,11 @@ import yaml
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..db.models import Run, RunInput, RunNote, RunTable
+from ..db.models import Run, RunFigure, RunInput, RunNote, RunTable
 from ..reports import ReportType, get as get_report
 from ..reports.cache import ParquetCache
 from ..storage.files import FileStore
+from .figures import all_figures
 from .ingest import source_set
 
 # One pipeline per report. The two are different code on purpose - see
@@ -46,14 +47,28 @@ def _load(report_key: str):
 
 def execute(session: Session, store: FileStore, report_key: str, week: str,
             as_of: dt.date | None = None,
-            results: FileStore | None = None) -> Run:
-    """Build one report for one week. Returns the recorded Run."""
+            results: FileStore | None = None,
+            run_id: int | None = None) -> Run:
+    """Build one report for one week. Returns the recorded Run.
+
+    run_id attaches to a row the queue already created, so a build that is
+    waiting is visible as `pending` before any work starts. Without it the run
+    only appears once it is under way, and a queued build looks like nothing
+    happened.
+    """
     report: ReportType = get_report(report_key)
     results = results or FileStore(settings.results_dir)
     read_sources, run_pipeline = _load(report_key)
 
-    run = Run(report_key=report_key, week=week, status="running", as_of=as_of)
-    session.add(run)
+    if run_id is None:
+        run = Run(report_key=report_key, week=week, status="running", as_of=as_of)
+        session.add(run)
+    else:
+        run = session.get(Run, run_id)
+        if run is None:
+            raise KeyError(f"no run {run_id}")
+        run.status = "running"
+        run.started_at = dt.datetime.now(dt.timezone.utc)
     session.flush()
 
     try:
@@ -89,6 +104,10 @@ def execute(session: Session, store: FileStore, report_key: str, week: str,
             session.add(RunTable(run_id=run.id, name=name, rows=df.height,
                                  columns=df.width, sha256=stored.sha256,
                                  bytes=stored.size))
+
+        # The sheet-shaped results, which only ever lived inside the workbook.
+        for name, records in all_figures(result).items():
+            session.add(RunFigure(run_id=run.id, name=name, data=records))
 
         for i, note in enumerate(result.notes):
             session.add(RunNote(run_id=run.id, seq=i, code=note.code,
