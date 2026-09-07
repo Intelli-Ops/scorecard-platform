@@ -13,7 +13,7 @@ from __future__ import annotations
 import datetime as dt
 
 from sqlalchemy import (String, Integer, Float, DateTime, ForeignKey, Text,
-                        UniqueConstraint, Index)
+                        UniqueConstraint, Index, JSON)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -116,13 +116,23 @@ class RunInput(Base):
 
 
 class RunNote(Base):
-    """The STEP 4 warnings, kept instead of scrolling past in a console."""
+    """The STEP 4 warnings, kept instead of scrolling past in a console.
+
+    text is the .bat pipeline's exact wording. code, severity and detail are
+    what make it usable: code is stable across weeks, so "this warning is new"
+    and "this count doubled" are questions the screen can answer; severity
+    decides what sorts to the top; detail holds the numbers behind the
+    sentence, which a string cannot be charted from.
+    """
     __tablename__ = "run_note"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     run_id: Mapped[int] = mapped_column(ForeignKey("run.id"), index=True)
     seq: Mapped[int] = mapped_column(Integer)
+    code: Mapped[str] = mapped_column(String(64), default="", index=True)
+    severity: Mapped[str] = mapped_column(String(16), default="info")
     text: Mapped[str] = mapped_column(Text)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
 
     run: Mapped[Run] = relationship(back_populates="notes")
 

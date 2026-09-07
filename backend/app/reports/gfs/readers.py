@@ -23,12 +23,20 @@ import polars as pl
 
 from ..cache import Cache, NoCache, ParquetCache
 from ..locate import SourceSet
+from ..notes import Note, info, warning
 
 
 @dataclass
 class FileRead:
-    """What one source file turned out to be. Shown on the review screen."""
+    """What one read produced. Shown on the review screen.
+
+    key identifies the read; source_key identifies the UPLOADED FILE it came
+    from, and the two are not always the same. The delta workbooks are read
+    once per sheet - three sheets out of two files - so several reads share
+    one source_key and the run's audit trail has to add them up.
+    """
     key: str
+    source_key: str
     label: str
     filename: str
     rows: int
@@ -48,7 +56,7 @@ class GfsSources:
     sql_doc: pl.DataFrame             # KPI: SBR and DDE
     scorecard: pl.DataFrame | None    # KPI numbers - may legitimately be absent
     reads: list[FileRead] = field(default_factory=list)
-    notes: list[str] = field(default_factory=list)
+    notes: list[Note] = field(default_factory=list)
 
     @property
     def total_rows(self) -> int:
@@ -65,18 +73,18 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
 
     cache = cache or NoCache()
     reads: list[FileRead] = []
-    notes: list[str] = []
+    notes: list[Note] = []
 
-    def timed(key: str, label: str, path, load):
-        """Read one file, recording how long it took and how much came back."""
+    def timed(key: str, label: str, path, load, source_key: str | None = None):
+        """Read one sheet, recording how long it took and how much came back."""
         t = time.perf_counter()
         ck = (ParquetCache.key_for(key, path)
               if isinstance(cache, ParquetCache) else key)
         df = cache.get_or_read(ck, load)
         elapsed = time.perf_counter() - t
-        reads.append(FileRead(key=key, label=label, filename=path.name,
-                              rows=df.height, seconds=elapsed,
-                              from_cache=elapsed < 0.25))
+        reads.append(FileRead(key=key, source_key=source_key or key, label=label,
+                              filename=path.name, rows=df.height,
+                              seconds=elapsed, from_cache=elapsed < 0.25))
         return df
 
     # --- the two Case AR files ------------------------------------------
@@ -99,10 +107,13 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
     gfs_cases = sup.load_sheet("GFS Cases", header_row=0,
                                use_columns=["CASEID"]).to_polars()
     providers = sup.load_sheet("Provider List", header_row=0).to_polars()
-    reads.append(FileRead("supporting", "Supporting File", sup_path.name,
+    reads.append(FileRead("supporting", "supporting", "Supporting File",
+                          sup_path.name,
                           rows=gfs_cases.height + providers.height,
                           seconds=time.perf_counter() - t))
-    notes.append(f"{gfs_cases.height:,} GFS cases, {providers.height} providers")
+    notes.append(info("supporting_file_contents",
+                      f"{gfs_cases.height:,} GFS cases, {providers.height} providers",
+                      gfs_cases=gfs_cases.height, providers=providers.height))
 
     # --- the delta workbooks --------------------------------------------
     # Which sheets, and which columns of them, is declared in rules.yml rather
@@ -116,7 +127,8 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
         delta_sheets[sheet] = timed(
             f"delta_{sheet}", sheet, book,
             lambda b=book, s=sheet, c=cols: fastexcel.read_excel(str(b)).load_sheet(
-                s, header_row=0, use_columns=c).to_polars())
+                s, header_row=0, use_columns=c).to_polars(),
+            source_key=f"delta_{spec['workbook']}")
 
     # --- payments, hearing calendar, SQL doc -----------------------------
     pay_path = sources.path("payment_detail")
@@ -143,8 +155,10 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
     sc_path = sources.optional("kpi_numbers")
     if sc_path is None:
         scorecard = None
-        notes.append("KPI numbers file not supplied - the blocks it feeds will "
-                     "keep last week's figures")
+        notes.append(warning(
+            "kpi_numbers_not_supplied",
+            "KPI numbers file not supplied - the blocks it feeds will "
+            "keep last week's figures"))
     else:
         scorecard = timed("kpi_numbers", "KPI numbers", sc_path,
                           lambda: fastexcel.read_excel(str(sc_path)).load_sheet(

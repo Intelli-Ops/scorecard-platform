@@ -66,13 +66,19 @@ def execute(session: Session, store: FileStore, report_key: str, week: str,
         src = read_sources(ss, rules, cache)
         result = run_pipeline(src, rules, as_of=as_of)
 
-        # What was read, tied to the exact bytes.
-        by_key = {r.key: r for r in src.reads}
+        # What was read, tied to the exact bytes. Several reads can come from
+        # one uploaded file - the delta workbooks give three sheets from two
+        # files - so they are added up per upload rather than looked up one to
+        # one, which silently recorded those two files as contributing nothing.
+        rows_by_source: dict[str, int] = {}
+        secs_by_source: dict[str, float] = {}
+        for r in src.reads:
+            rows_by_source[r.source_key] = rows_by_source.get(r.source_key, 0) + r.rows
+            secs_by_source[r.source_key] = secs_by_source.get(r.source_key, 0.0) + r.seconds
         for key, upload in uploads.items():
-            fr = by_key.get(key)
             session.add(RunInput(run_id=run.id, upload_id=upload.id,
-                                 rows_read=fr.rows if fr else None,
-                                 seconds=fr.seconds if fr else None))
+                                 rows_read=rows_by_source.get(key),
+                                 seconds=secs_by_source.get(key)))
 
         # What was produced. Parquet into the store, pointer into the database.
         for name, df in result.tables.items():
@@ -85,7 +91,9 @@ def execute(session: Session, store: FileStore, report_key: str, week: str,
                                  bytes=stored.size))
 
         for i, note in enumerate(result.notes):
-            session.add(RunNote(run_id=run.id, seq=i, text=note))
+            session.add(RunNote(run_id=run.id, seq=i, code=note.code,
+                                severity=note.severity, text=note.message,
+                                detail=note.detail))
 
         run.status = "review"          # a person still has to look at STEP 4
         run.seconds = result.seconds

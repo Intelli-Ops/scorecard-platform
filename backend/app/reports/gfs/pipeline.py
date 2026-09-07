@@ -25,6 +25,7 @@ from .core.collections import build_collections
 from .core.delta import combine_delta, build_delta
 from .core.kpi import build_kpi_sql, build_kpi_scorecard
 from .core.settlement import settlement_grids, cp_settled
+from ..notes import Note, info, warning, action, sort_notes
 from .readers import GfsSources
 
 YEAR = 2026
@@ -46,7 +47,7 @@ class RunResult:
     kpi: dict
     current_month: int
 
-    notes: list[str] = field(default_factory=list)
+    notes: list[Note] = field(default_factory=list)
     seconds: float = 0.0
 
     @property
@@ -85,49 +86,85 @@ def run(src: GfsSources, rules: dict,
     )
 
 
-def _notes(rep, drep, krep, src: GfsSources, rules: dict) -> list[str]:
+def _notes(rep, drep, krep, src: GfsSources, rules: dict) -> list[Note]:
     """The STEP 4 warnings, as data rather than console output.
 
     Same wording as the .bat pipeline so nothing a reader already recognises
-    changes meaning. Anything the sources could not answer is said plainly
-    rather than passing silently.
+    changes meaning. What is added is the code (so a warning can be compared
+    with last week's), the severity (so the serious ones sort to the top) and
+    the numbers behind the sentence (so the screen can show a trend rather
+    than a string).
+
+    Severity is assigned by what it costs the reader, not by how alarming it
+    sounds. Dropped rows are routine and expected every week - the COUNT is
+    what matters, and a jump is visible because the count is now a number.
+    A KPI block with no source is ACTION: a figure the client will look at is
+    not there, and someone has to decide whether to send it anyway.
     """
-    notes = list(src.notes)
+    notes: list[Note] = list(src.notes)
 
     if rep.dropped_no_group:
-        notes.append(f"{rep.dropped_no_group:,} AR rows dropped - provider not in the "
-                     f"Provider List (regids {rep.unknown_regids[:6]})")
+        notes.append(warning(
+            "ar_rows_dropped_no_group",
+            f"{rep.dropped_no_group:,} AR rows dropped - provider not in the "
+            f"Provider List (regids {rep.unknown_regids[:6]})",
+            rows=rep.dropped_no_group, regids=list(rep.unknown_regids[:6])))
     if rep.dropped_no_status:
-        notes.append(f"{rep.dropped_no_status:,} AR rows dropped - no match in "
-                     f"Custom Case AR")
+        notes.append(warning(
+            "ar_rows_dropped_no_status",
+            f"{rep.dropped_no_status:,} AR rows dropped - no match in "
+            f"Custom Case AR", rows=rep.dropped_no_status))
     for k, v in (rep.validity_fixed or {}).items():
         if v:
-            notes.append(f"{v:,} rows had Case_Validity '{k}' corrected to Valid")
+            notes.append(info(
+                "case_validity_corrected",
+                f"{v:,} rows had Case_Validity '{k}' corrected to Valid",
+                rows=v, value=k))
 
     if drep.duplicate_case_ids:
-        notes.append(f"{drep.duplicate_case_ids} duplicate case id(s) in "
-                     f"Delta Comparison")
+        notes.append(warning(
+            "delta_duplicate_case_ids",
+            f"{drep.duplicate_case_ids} duplicate case id(s) in "
+            f"Delta Comparison", count=drep.duplicate_case_ids))
     if drep.partial_paid_rewritten:
-        notes.append(f"{drep.partial_paid_rewritten} Partial Paid row(s): settlement "
-                     f"amount replaced with remaining payment")
+        notes.append(info(
+            "delta_partial_paid_rewritten",
+            f"{drep.partial_paid_rewritten} Partial Paid row(s): settlement "
+            f"amount replaced with remaining payment",
+            count=drep.partial_paid_rewritten))
 
     if krep.skipped_blocks:
         why = ("no column for them in the KPI-numbers file"
                if src.scorecard is not None else
                "no KPI-numbers file was supplied")
-        notes.append(f"KPI blocks left without a figure - {why}: "
-                     f"{', '.join(krep.skipped_blocks)}")
+        notes.append(action(
+            "kpi_block_without_source",
+            f"KPI blocks left without a figure - {why}: "
+            f"{', '.join(krep.skipped_blocks)}",
+            blocks=list(krep.skipped_blocks), reason=why))
     if krep.scorecard_missing:
-        notes.append(f"KPI-numbers columns named in rules.yml but not found in the "
-                     f"file: {', '.join(krep.scorecard_missing)}")
+        notes.append(warning(
+            "kpi_columns_not_found",
+            f"KPI-numbers columns named in rules.yml but not found in the "
+            f"file: {', '.join(krep.scorecard_missing)}",
+            columns=list(krep.scorecard_missing)))
     if krep.unknown_providers_named:
-        notes.append(f"KPI-numbers rows dropped - provider not in the Supporting "
-                     f"File: {krep.unknown_providers_named}")
+        notes.append(warning(
+            "kpi_rows_dropped_unknown_provider",
+            f"KPI-numbers rows dropped - provider not in the Supporting "
+            f"File: {krep.unknown_providers_named}",
+            providers=list(krep.unknown_providers_named)))
     if krep.unknown_providers:
-        notes.append(f"SQL-Doc rows dropped - ProviderID not in the Provider List: "
-                     f"{krep.unknown_providers}")
+        notes.append(warning(
+            "sqldoc_rows_dropped_unknown_provider",
+            f"SQL-Doc rows dropped - ProviderID not in the Provider List: "
+            f"{krep.unknown_providers}",
+            providers=list(krep.unknown_providers)))
     for block, group, v in krep.unmapped_groups:
-        notes.append(f"KPI {block}: '{group}' has {v:,.0f} but the sheet has no row "
-                     f"for it - NOT counted in the {block} total")
+        notes.append(action(
+            "kpi_group_not_in_layout",
+            f"KPI {block}: '{group}' has {v:,.0f} but the sheet has no row "
+            f"for it - NOT counted in the {block} total",
+            block=block, group=group, value=float(v)))
 
-    return notes
+    return sort_notes(notes)

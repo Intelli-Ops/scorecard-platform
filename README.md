@@ -91,8 +91,8 @@ re-running the golden-master test.
 | 4 | Reader layer: uploaded files → dataframes | |
 | 5 | **Golden-master test** — reproduce Week 35 exactly | |
 | 6 | Replace week folders with object storage + database | done |
-| 7 | Run results become structured data, not console text | next |
-| 8 | API, jobs, upload, UI | |
+| 7 | Run results become structured data, not console text | done |
+| 8 | API, jobs, upload, UI | next |
 
 Steps 0–5 carry the whole risk. Once the golden master passes, the rest is
 ordinary web work.
@@ -141,3 +141,22 @@ answers.
 Verified end to end on the real Week 35 inputs: 9 of 12 files in the folder
 classified, 3 delivered workbooks correctly ignored, and the four tables built
 from the database still match the golden master.
+
+
+## Warnings are data now
+
+The .bat pipeline's STEP 4 messages are kept word for word, but each one now
+carries a stable `code`, a `severity` and the numbers behind the sentence. That
+is what lets the review screen answer questions the console never could:
+
+  * is this warning NEW this week, or does it appear every week?
+  * has the count moved - 900 dropped rows last week, 112,960 this week?
+  * has one that used to appear stopped appearing?
+  * plot one number across every week that reported it
+
+`severity` is assigned by what it costs the reader. Dropped rows are routine;
+the count is the signal. A KPI block with no source is `action` - a figure the
+client will look at is missing and someone has to decide whether to send it.
+
+A run finishes in `review`, not `done`. Approving it is a separate, recorded
+act by a person.
