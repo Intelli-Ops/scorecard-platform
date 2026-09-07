@@ -1,7 +1,22 @@
 const BASE = import.meta.env.VITE_API ?? "http://127.0.0.1:8000";
+const TOKEN_KEY = "scorecard.token";
 
-async function json(path, opts) {
-  const r = await fetch(BASE + path, opts);
+export const getToken = () => localStorage.getItem(TOKEN_KEY);
+export const setToken = (t) =>
+  t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY);
+
+function authHeaders(extra = {}) {
+  const t = getToken();
+  return t ? { ...extra, Authorization: `Bearer ${t}` } : extra;
+}
+
+async function json(path, opts = {}) {
+  const r = await fetch(BASE + path, { ...opts, headers: authHeaders(opts.headers) });
+  if (r.status === 401) {
+    // The token has expired or been revoked. Drop it and send them to sign in.
+    setToken(null);
+    if (!path.startsWith("/api/auth/")) window.location.reload();
+  }
   if (!r.ok) {
     let detail;
     try { detail = (await r.json()).detail; } catch { detail = await r.text(); }
@@ -10,7 +25,18 @@ async function json(path, opts) {
   return r.json();
 }
 
+const post = (path, body) =>
+  json(path, { method: "POST", headers: { "Content-Type": "application/json" },
+               body: JSON.stringify(body) });
+
 export const api = {
+  // --- accounts ---
+  signup: (email, apd_id, password) =>
+    post("/api/auth/signup", { email, apd_id, password }),
+  login: (email, password) => post("/api/auth/login", { email, password }),
+  logout: () => json("/api/auth/logout", { method: "POST" }),
+  me: () => json("/api/auth/me"),
+
   reports: () => json("/api/reports"),
   weeks: () => json("/api/weeks"),
   week: (w) => json(`/api/weeks/${w}`),
@@ -28,6 +54,8 @@ export const api = {
     return new Promise((resolve, reject) => {
       const x = new XMLHttpRequest();
       x.open("POST", `${BASE}/api/weeks/${week}/uploads`);
+      const token = getToken();
+      if (token) x.setRequestHeader("Authorization", `Bearer ${token}`);
       x.upload.onprogress = (e) =>
         e.lengthComputable && onProgress?.(e.loaded / e.total);
       x.onload = () => {
@@ -48,11 +76,32 @@ export const api = {
          (asOf ? `&as_of=${asOf}` : ""), { method: "POST" }),
   runs: (report) => json("/api/runs" + (report ? `?report=${report}` : "")),
   run: (id) => json(`/api/runs/${id}`),
-  approve: (id, by) =>
-    json(`/api/runs/${id}/approve?by=${encodeURIComponent(by)}`, { method: "POST" }),
+  // Who approved comes from the signed-in account, not from the caller.
+  approve: (id) => json(`/api/runs/${id}/approve`, { method: "POST" }),
   figures: (id, name) => json(`/api/runs/${id}/figures/${name}`),
   table: (id, name, { limit = 100, offset = 0 } = {}) =>
     json(`/api/runs/${id}/tables/${name}?limit=${limit}&offset=${offset}`),
+
+  /* Download a whole table as CSV.
+
+     Fetched rather than linked, because the request needs the sign-in header
+     and a plain <a href> cannot carry one. The file is handed to the browser
+     from memory once it has arrived. */
+  async downloadCsv(id, name) {
+    const r = await fetch(`${BASE}/api/runs/${id}/tables/${name}/csv`,
+                          { headers: authHeaders() });
+    if (!r.ok) throw new Error(`Could not export ${name} (${r.status})`);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = (r.headers.get("Content-Disposition") ?? "")
+      .match(/filename="?([^"]+)"?/)?.[1] ?? `${name}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 };
 
 export const money = (n) =>

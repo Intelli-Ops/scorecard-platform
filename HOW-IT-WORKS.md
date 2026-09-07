@@ -44,11 +44,58 @@ them before they go to the client.**
 
 ---
 
-## 3. Your week, step by step
+## 3. Getting an account
+
+The app is for Appedology staff only, and it checks that itself.
+
+**First time.** Open `http://localhost:5173`, click **Create one**, and give
+three things:
+
+| | |
+|---|---|
+| Work email | must end **@appedology.com** |
+| APD ID | your internal ID — **APD-1234**, four digits |
+| Password | at least 8 characters |
+
+Then you are signed in straight away.
+
+Two things it will not accept:
+
+```
+someone@gmail.com    ->  Use your Appedology email - it must end @appedology.com.
+APD-123              ->  The APD ID looks like APD-1234 - four digits.
+```
+
+Small kindnesses: the email is not case-sensitive, and if you type just `1234`
+it fills in the `APD-` for you.
+
+**After that.** Sign in with your email and password. You stay signed in for
+two weeks unless you press **Sign out**, which is at the bottom of the sidebar
+next to your email and APD ID.
+
+**Your password is never stored.** What is kept is a scrambled version that
+cannot be turned back into your password, with a random ingredient unique to
+your account — so two people with the same password still have different
+stored values.
+
+**Everything is behind the sign-in.** Not just the screens: the data itself.
+Nobody can fetch a number without an account, so there is no way round the
+login page.
+
+Two more things now come from your account rather than being typed:
+
+- **who uploaded** each file
+- **who approved** each report
+
+Both appear on the review page and in the run history.
+
+---
+
+## 4. Your week, step by step
 
 ### Tuesday — the GFS report
 
-**Step 1. Open the app.** Go to `http://localhost:5173` and click
+**Step 1. Open the app.** Go to `http://localhost:5173`, sign in, and click
 **Upload a week**.
 
 **Step 2. Set the week.** The box shows something like `2026-W36`. It fills in
@@ -117,7 +164,7 @@ The screen already shows them as held.
 
 ---
 
-## 4. What happens when you press Build
+## 5. What happens when you press Build
 
 You press the button. **It comes back in under a second.**
 
@@ -147,7 +194,7 @@ A person has to look at it.
 
 ---
 
-## 5. The four screens
+## 6. The four screens
 
 ### Upload a week
 
@@ -239,6 +286,18 @@ Months are totals for the year so far; then the current month's weeks.
 21 MB and slow to open. Here it stays in storage and the page fetches 50 rows at
 a time, so it opens instantly.
 
+**Export CSV.** Every table — Raw data, Delta, Case AR, Collections — has an
+**Export CSV** button beside the page arrows. It downloads the **whole** table,
+not the 50 rows on screen:
+
+```
+GFS Raw data          278,930 rows    24 MB
+GFS Delta                 666 rows
+```
+
+The file is named for what it is, so it doesn't get lost in your downloads
+folder: `gfs-2026-W35-raw_data.csv`.
+
 ### Run history
 
 Every build ever made, both reports, with warning counts and who approved each
@@ -246,7 +305,7 @@ one. Your dated folders could only be read by someone sitting at that laptop.
 
 ---
 
-## 6. Where everything is kept
+## 7. Where everything is kept
 
 Two places:
 
@@ -272,7 +331,7 @@ every warning, who approved what — is in a database.
 
 ---
 
-## 7. Questions you can now answer
+## 8. Questions you can now answer
 
 Things that were hard or impossible before:
 
@@ -286,7 +345,7 @@ Things that were hard or impossible before:
 
 ---
 
-## 8. If something goes wrong
+## 9. If something goes wrong
 
 **"9 still needed" won't go away.**
 A file is missing. The card lists exactly which. Check the name hasn't been
@@ -313,7 +372,7 @@ compare with the `.bat` version — which still works and is still installed.
 
 ---
 
-## 9. How we know the numbers are right
+## 10. How we know the numbers are right
 
 This was checked, not assumed.
 
@@ -346,7 +405,7 @@ second, fresh week.
 
 ---
 
-## 10. Starting and stopping it
+## 11. Starting and stopping it
 
 Two windows. Leave both open while you're using it.
 
@@ -367,14 +426,18 @@ stay where they are.
 
 ---
 
-## 11. What this is not, yet
+## 12. What this is not, yet
 
 Being straight about it:
 
-- **There is no login.** Anyone who can reach the server sees everything. This
-  must be added before the client is given a link.
 - **It runs on your laptop.** For the client to use it, it needs to live on a
   server.
+- **Anyone with an @appedology.com address can create an account.** There is no
+  approval step and no admin who can remove someone. That is fine inside the
+  company; it is not enough before an outside client is given a link.
+- **The sign-in token is kept in the browser's storage.** Fine on one company
+  network. Once this is on a real server it should move to a cookie that
+  JavaScript cannot read at all.
 - **Your `.bat` programs are untouched** and still run every week. Nothing here
   has replaced them yet — that's deliberate. Run both side by side for a few
   weeks until the numbers have been checked enough times to trust.

@@ -1,77 +1,73 @@
 /* Design tokens.
 
-   Light only, on purpose - no dark mode, no theme switch.
+   Light only. The palette is taken from the reference dashboard: a deep teal
+   sidebar, a bright mint-green for anything you act on, mint tints for quiet
+   fills, and a cool off-white page behind white cards.
 
-   The palette is taken from the reference photograph: a warm off-white studio
-   ground, a sand-beige mid tone, deep denim as the one strong colour, and a
-   gum-sole tan for anything that needs attention. Everything else is ink.
-
-   The manner is Apple's: one accent used sparingly, hairline borders instead
-   of boxes, generous space, and numbers set in tabular figures so columns line
-   up down the page. */
+   The manner stays the same - hairlines rather than boxes, one accent used
+   sparingly, generous space, and tabular figures so number columns line up. */
 
 :root {
   color-scheme: light;
 
-  /* Ground and surfaces - the studio backdrop */
-  --bg:          #F4F3F0;
+  /* Page and surfaces */
+  --bg:          #EFF3F4;
   --surface:     #FFFFFF;
-  --surface-2:   #FAF9F6;
-  --hover:       #F7F6F3;
+  --surface-2:   #F6F9F8;
+  --hover:       #F1F7F4;
+
+  /* Deep teal - the chrome */
+  --teal:        #0E3B35;
+  --teal-2:      #145047;
+  --teal-soft:   #DCEAE7;
+
+  /* Mint green - the one colour you act on */
+  --green:       #21B47E;
+  --green-hi:    #1B9E6E;
+  --green-soft:  #E3F5EC;
+  --green-line:  #BFE6D4;
 
   /* Ink */
-  --text:        #1D1D1F;
-  --text-2:      #6B6B70;
-  --text-3:      #A0A0A6;
+  --text:        #12211F;
+  --text-2:      #5C6B68;
+  --text-3:      #94A3A0;
 
-  /* Lines - hairlines, never boxes */
-  --line:        #E8E6E1;
-  --line-2:      #DBD8D1;
+  /* Lines */
+  --line:        #E4EAE8;
+  --line-2:      #D3DEDB;
 
-  /* Deep denim: the single accent. Buttons, links, selected state. */
-  --accent:      #33424B;
-  --accent-hi:   #26333B;
-  --accent-soft: #EDF0F1;
-
-  /* Sand - the tee. Quiet fills and highlights. */
-  --sand:        #D9C7A9;
-  --sand-soft:   #F3EDE2;
-
-  /* Status. Muted to sit with the palette; each always paired with a word. */
-  --good:        #3E7A5E;
-  --warn:        #B07C3D;   /* gum sole */
-  --alert:       #B04A42;
+  /* Status. Each always paired with a word, never colour alone. */
+  --good:        #21B47E;
+  --warn:        #C08A2E;
+  --alert:       #C1544A;
 
   --r-lg: 14px;
   --r-md: 10px;
-  --r-sm: 7px;
+  --r-sm: 8px;
 
-  --shadow: 0 1px 2px rgba(29, 29, 31, .04), 0 6px 20px rgba(29, 29, 31, .04);
+  --shadow: 0 1px 2px rgba(14, 59, 53, .05), 0 6px 20px rgba(14, 59, 53, .05);
 
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
           "Segoe UI", Inter, system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
-
 html, body { height: 100%; }
 
 body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
+  margin: 0; background: var(--bg); color: var(--text);
   font: 14px/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.006em;
 }
 
-a { color: var(--accent); text-decoration: none; }
-a:hover { color: var(--accent-hi); }
+a { color: var(--green-hi); text-decoration: none; }
+a:hover { color: var(--teal); }
 
 h1 { font-size: 25px; line-height: 1.2; letter-spacing: -0.021em;
      font-weight: 600; margin: 0; }
 h2 { font-size: 15px; letter-spacing: -0.01em; font-weight: 600; margin: 0; }
-h3 { font-size: 12px; font-weight: 590; color: var(--text-2); margin: 0 0 8px;
+h3 { font-size: 12px; font-weight: 600; color: var(--text-2); margin: 0 0 8px;
      text-transform: uppercase; letter-spacing: .05em; }
 
 /* ---------------------------------------------------------------- shell */
@@ -79,20 +75,31 @@ h3 { font-size: 12px; font-weight: 590; color: var(--text-2); margin: 0 0 8px;
 .app { display: flex; min-height: 100vh; }
 
 .side {
-  width: 216px; flex: none; padding: 26px 16px;
-  border-right: 1px solid var(--line); background: var(--surface);
+  width: 218px; flex: none; padding: 24px 14px;
+  background: var(--teal); color: #fff;
+  display: flex; flex-direction: column;
 }
-.side .brand { font-weight: 600; letter-spacing: -0.015em; font-size: 15px; }
-.side .sub { color: var(--text-3); font-size: 12px; margin: 2px 0 24px; }
+.side .brand { font-weight: 600; font-size: 15.5px; letter-spacing: -0.015em; }
+.side .sub { color: rgba(255,255,255,.55); font-size: 12px; margin: 2px 0 26px; }
 .side nav a {
-  display: block; padding: 8px 11px; border-radius: var(--r-sm);
-  color: var(--text-2); margin-bottom: 2px; font-weight: 450;
+  display: block; padding: 9px 12px; border-radius: var(--r-sm);
+  color: rgba(255,255,255,.72); margin-bottom: 3px; font-weight: 450;
 }
-.side nav a:hover { background: var(--hover); color: var(--text); }
-.side nav a.on { background: var(--accent-soft); color: var(--accent); font-weight: 550; }
+.side nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
+.side nav a.on { background: var(--green); color: #fff; font-weight: 550; }
 
-.main { flex: 1; padding: 34px 40px 64px; max-width: 1440px; }
+.side .who {
+  margin-top: auto; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.13);
+}
+.side .who .email { font-size: 12.5px; color: #fff; word-break: break-all; }
+.side .who .apd { font-size: 11.5px; color: rgba(255,255,255,.5); margin-top: 2px; }
+.side .who button {
+  margin-top: 11px; width: 100%; background: transparent; color: rgba(255,255,255,.8);
+  border-color: rgba(255,255,255,.22); font-size: 12.5px; padding: 6px 10px;
+}
+.side .who button:hover { background: rgba(255,255,255,.09); color: #fff; }
 
+.main { flex: 1; padding: 34px 40px 64px; max-width: 1460px; }
 .head { margin-bottom: 26px; }
 .head .sub { color: var(--text-2); margin-top: 5px; }
 
@@ -115,16 +122,13 @@ h3 { font-size: 12px; font-weight: 590; color: var(--text-2); margin: 0 0 8px;
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .spread { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 
-/* KPI tile. A single number does not need a chart. */
 .tile {
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 17px 19px;
 }
 .tile .label { color: var(--text-2); font-size: 12.5px; font-weight: 500; }
-.tile .value {
-  font-size: 27px; font-weight: 600; letter-spacing: -0.022em;
-  margin-top: 7px; font-variant-numeric: tabular-nums; line-height: 1.15;
-}
+.tile .value { font-size: 27px; font-weight: 600; letter-spacing: -0.022em;
+               margin-top: 7px; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .tile .foot { color: var(--text-3); font-size: 12px; margin-top: 5px; }
 
 /* ---------------------------------------------------------------- controls */
@@ -135,40 +139,34 @@ button, .btn {
   background: var(--surface); color: var(--text); cursor: pointer;
   transition: background .12s ease, border-color .12s ease;
 }
-button:hover:not(:disabled), .btn:hover { background: var(--hover); }
-button:disabled { opacity: .42; cursor: not-allowed; }
-button.primary {
-  background: var(--accent); border-color: var(--accent); color: #fff;
-}
-button.primary:hover:not(:disabled) { background: var(--accent-hi); }
+button:hover:not(:disabled), .btn:hover { background: var(--hover); border-color: var(--green-line); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--green); border-color: var(--green); color: #fff; }
+button.primary:hover:not(:disabled) { background: var(--green-hi); border-color: var(--green-hi); }
 button.small { padding: 5px 11px; font-size: 12.5px; }
+button.link { border: 0; background: none; color: var(--green-hi); padding: 0; }
+button.link:hover { background: none; text-decoration: underline; }
 
-select, input[type="text"] {
-  font: inherit; padding: 7px 11px; border-radius: var(--r-sm);
+select, input[type="text"], input[type="email"], input[type="password"] {
+  font: inherit; padding: 8px 11px; border-radius: var(--r-sm);
   border: 1px solid var(--line-2); background: var(--surface); color: var(--text);
 }
-select:focus, input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+input:focus, select:focus {
+  outline: 3px solid var(--green-soft); border-color: var(--green); }
 label { color: var(--text-2); font-size: 13px; }
 
-/* Segmented control - one table at a time, rather than everything at once. */
 .seg {
   display: inline-flex; background: var(--surface-2); padding: 3px;
-  border: 1px solid var(--line); border-radius: 9px; gap: 2px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: 10px; gap: 2px; flex-wrap: wrap;
 }
-.seg button {
-  border: 0; background: transparent; color: var(--text-2);
-  padding: 6px 14px; border-radius: 7px; font-size: 13px; font-weight: 500;
-}
+.seg button { border: 0; background: transparent; color: var(--text-2);
+              padding: 6px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; }
 .seg button:hover { background: transparent; color: var(--text); }
-.seg button.on {
-  background: var(--surface); color: var(--text); font-weight: 550;
-  box-shadow: 0 1px 2px rgba(29,29,31,.07);
-}
+.seg button.on { background: var(--teal); color: #fff; font-weight: 550; }
 
 /* ---------------------------------------------------------------- tables */
 
 .scroll { overflow-x: auto; }
-
 table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
 thead th {
   text-align: left; padding: 11px 16px; color: var(--text-2);
@@ -181,7 +179,7 @@ tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: var(--hover); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.strong { font-weight: 550; }
-tr.total td { font-weight: 600; background: var(--sand-soft); }
+tr.total td { font-weight: 600; background: var(--green-soft); }
 
 .muted { color: var(--text-3); }
 .small { font-size: 12.5px; }
@@ -190,20 +188,17 @@ tr.total td { font-weight: 600; background: var(--sand-soft); }
 
 .pill {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  padding: 3px 11px; border-radius: 999px; font-size: 12px; font-weight: 500;
   background: var(--surface-2); border: 1px solid var(--line-2); color: var(--text-2);
 }
-.pill.good  { background: #EEF5F1; border-color: #CFE3D8; color: var(--good); }
-.pill.warn  { background: var(--sand-soft); border-color: #E7DAC2; color: var(--warn); }
-.pill.alert { background: #FAEFEE; border-color: #EFD5D2; color: var(--alert); }
+.pill.good  { background: var(--green-soft); border-color: var(--green-line); color: var(--green-hi); }
+.pill.warn  { background: #FBF3E3; border-color: #EEDFC0; color: var(--warn); }
+.pill.alert { background: #FBEFEE; border-color: #F0D5D2; color: var(--alert); }
 
-/* Notes. Severity never travels as colour alone - each carries a word. */
 .note { display: flex; gap: 13px; padding: 14px 0; border-bottom: 1px solid var(--line); }
 .note:last-child { border-bottom: 0; }
-.note .tag {
-  flex: none; width: 74px; font-size: 11px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: .05em; padding-top: 2px;
-}
+.note .tag { flex: none; width: 74px; font-size: 11px; font-weight: 600;
+             text-transform: uppercase; letter-spacing: .05em; padding-top: 2px; }
 .note.action  .tag { color: var(--alert); }
 .note.warning .tag { color: var(--warn); }
 .note.info    .tag { color: var(--text-3); }
@@ -217,12 +212,47 @@ tr.total td { font-weight: 600; background: var(--sand-soft); }
   background: var(--surface-2); cursor: pointer;
   transition: border-color .15s ease, background .15s ease;
 }
-.drop:hover { border-color: var(--sand); background: var(--sand-soft); }
-.drop.over  { border-color: var(--accent); background: var(--accent-soft); }
-.drop .big { font-weight: 550; color: var(--text); font-size: 15px; }
+.drop:hover { border-color: var(--green-line); background: var(--green-soft); }
+.drop.over  { border-color: var(--green); background: var(--green-soft); }
+.drop .big  { font-weight: 550; color: var(--text); font-size: 15px; }
 
 .bar { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; }
-.bar span { display: block; height: 100%; background: var(--accent); transition: width .2s ease; }
+.bar span { display: block; height: 100%; background: var(--green); transition: width .2s ease; }
 
 .empty { color: var(--text-3); padding: 30px; text-align: center; }
 .err   { color: var(--alert); }
+
+/* ---------------------------------------------------------------- sign in */
+
+.gate {
+  min-height: 100vh; display: grid; place-items: center; padding: 24px;
+  background:
+    radial-gradient(1100px 520px at 50% -12%, var(--teal-soft), transparent 62%),
+    var(--bg);
+}
+.gate .panel {
+  width: 100%; max-width: 400px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 18px;
+  box-shadow: 0 2px 6px rgba(14,59,53,.05), 0 18px 46px rgba(14,59,53,.09);
+  padding: 32px 32px 28px;
+}
+.gate .mark {
+  width: 40px; height: 40px; border-radius: 12px; background: var(--teal);
+  color: #fff; display: grid; place-items: center;
+  font-weight: 650; font-size: 17px; margin-bottom: 18px;
+}
+.gate h1 { font-size: 21px; }
+.gate .lede { color: var(--text-2); margin: 6px 0 24px; font-size: 13.5px; }
+.gate .field { margin-bottom: 14px; }
+.gate .field label { display: block; margin-bottom: 6px; font-weight: 500;
+                     color: var(--text); font-size: 13px; }
+.gate .field input { width: 100%; }
+.gate .field .hint { color: var(--text-3); font-size: 12px; margin-top: 5px; }
+.gate button.primary { width: 100%; padding: 10px; margin-top: 6px; font-weight: 550; }
+.gate .swap { text-align: center; margin-top: 18px; color: var(--text-2);
+              font-size: 13px; }
+.gate .problem {
+  background: #FBEFEE; border: 1px solid #F0D5D2; color: var(--alert);
+  border-radius: var(--r-sm); padding: 10px 12px; font-size: 13px;
+  margin-bottom: 16px;
+}

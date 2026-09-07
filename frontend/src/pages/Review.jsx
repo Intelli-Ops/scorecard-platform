@@ -33,7 +33,7 @@ export default function Review() {
   async function approve() {
     setBusy(true);
     try {
-      await api.approve(id, "web");
+      await api.approve(id);
       setData(await api.run(id));
     } catch (e) { setError(e); }
     finally { setBusy(false); }

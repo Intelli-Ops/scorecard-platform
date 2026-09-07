@@ -49,7 +49,7 @@ export default function Weeks() {
     setError(null); setResult(null); setProgress(0);
     try {
       const r = await api.upload(week, files, {
-        forReport: forReport || undefined, uploadedBy: "web",
+        forReport: forReport || undefined,
         onProgress: setProgress,
       });
       setResult(r); setStatus(r.status);

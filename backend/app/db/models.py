@@ -13,7 +13,7 @@ from __future__ import annotations
 import datetime as dt
 
 from sqlalchemy import (String, Integer, Float, DateTime, ForeignKey, Text,
-                        UniqueConstraint, Index, JSON)
+                        UniqueConstraint, Index, JSON, Boolean)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -23,6 +23,57 @@ class Base(DeclarativeBase):
 
 def _now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
+
+
+class User(Base):
+    """An Appedology account.
+
+    Two rules, both enforced here and in the API rather than only in the browser,
+    because a form can be bypassed and an API cannot:
+
+      * the email must end @appedology.com - this is an internal tool
+      * the APD id is the company's internal identifier, APD- followed by
+        exactly four digits
+
+    The password is never stored. What is stored is a PBKDF2-SHA256 hash with a
+    per-user random salt, so two people with the same password still have
+    different hashes and the stored value cannot be reversed.
+    """
+    __tablename__ = "user_account"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    apd_id: Mapped[str] = mapped_column(String(8), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True),
+                                                    default=_now)
+    last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    @property
+    def name(self) -> str:
+        """The part before the @, for showing in the corner of the screen."""
+        return self.email.split("@")[0]
+
+
+class Session(Base):
+    """A signed-in browser.
+
+    Opaque random tokens in a table, rather than a self-contained token: signing
+    out has to actually revoke access, and a token that carries its own validity
+    cannot be taken back before it expires.
+    """
+    __tablename__ = "user_session"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user_account.id"), index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True),
+                                                    default=_now)
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    user: Mapped[User] = relationship()
 
 
 class Upload(Base):

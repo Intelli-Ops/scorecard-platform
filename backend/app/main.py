@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .api.auth_routes import router as auth_router
 from .api.routes import router
 from .config import settings
 from .db.session import create_all
@@ -43,9 +44,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(router)
+app.include_router(auth_router)   # open - how you get a token
+app.include_router(router)        # everything else needs one
 
 
 @app.get("/")
 def root() -> dict:
     return {"name": "Scorecard Platform", "docs": "/docs", "api": "/api"}
+
+
+@app.get("/api/health")
+def health() -> dict:
+    """Public on purpose. A health check that needs credentials is not a health
+    check - whatever is watching the service has to be able to ask without an
+    account. It says nothing about the data."""
+    return {"ok": True, "queued_builds": worker.depth()}

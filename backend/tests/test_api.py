@@ -16,12 +16,21 @@ from app.db import session as db_session
 
 @pytest.fixture
 def client(tmp_path):
+    """A signed-in client.
+
+    Every data route requires an account now, so the fixture signs one up and
+    attaches the token - the same thing the browser does after sign-in.
+    """
     settings.use(tmp_path / "data")
     db_session.reset()
     from app.db.session import create_all
     create_all()
     from app.main import app
     with TestClient(app) as c:
+        token = c.post("/api/auth/signup", json={
+            "email": "tester@appedology.com", "apd_id": "APD-0001",
+            "password": "a good long password"}).json()["token"]
+        c.headers["Authorization"] = f"Bearer {token}"
         yield c
 
 
@@ -31,6 +40,16 @@ def upload(client, week, name, body=b"stand-in", for_report=None):
                        files=[("files", (name, body,
                                          "application/octet-stream"))],
                        data=data)
+
+
+def test_uploads_are_recorded_against_the_signed_in_account(client):
+    """Who uploaded comes from the account, not from a field the caller sets."""
+    upload(client, "2026-W36", "Supporting File.xlsx")
+    from sqlalchemy import select
+    from app.db.models import Upload
+    from app.db.session import session
+    with session() as s:
+        assert s.execute(select(Upload.uploaded_by)).scalar_one() == "tester@appedology.com"
 
 
 def test_health(client):
@@ -98,4 +117,5 @@ def test_weeks_lists_what_has_been_uploaded(client):
 
 def test_missing_run_is_a_404(client):
     assert client.get("/api/runs/999").status_code == 404
-    assert client.post("/api/runs/999/approve", params={"by": "x"}).status_code == 404
+    assert client.post("/api/runs/999/approve").status_code == 404
+    assert client.get("/api/runs/999/tables/raw_data/csv").status_code == 404

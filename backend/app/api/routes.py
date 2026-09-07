@@ -7,11 +7,15 @@ drift between the API and a background job.
 """
 from __future__ import annotations
 import datetime as dt
+import io
 import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+import polars as pl
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
 from ..config import settings
@@ -22,17 +26,15 @@ from ..reports import CASE_AR_SOURCES, REPORTS, get as get_report
 from ..service import review as review_service, runner
 from ..service.ingest import ingest, week_status
 from ..storage.files import FileStore
+from .deps import current_user
 
-router = APIRouter(prefix="/api")
+# Applied to the whole router rather than route by route: a rule you have to
+# remember to add is a rule that gets forgotten on the one route that mattered.
+router = APIRouter(prefix="/api", dependencies=[Depends(current_user)])
 
 
 def _store() -> FileStore:
     return FileStore(settings.object_dir)
-
-
-@router.get("/health")
-def health() -> dict:
-    return {"ok": True, "queued_builds": worker.depth()}
 
 
 @router.get("/reports")
@@ -67,7 +69,7 @@ def get_week(week: str) -> dict:
 async def upload(week: str,
                  files: list[UploadFile] = File(...),
                  for_report: str | None = Form(None),
-                 uploaded_by: str | None = Form(None)) -> dict:
+                 user=Depends(current_user)) -> dict:
     """Receive this week's files.
 
     for_report is needed only for the two Case AR files. Anything that is not
@@ -90,7 +92,7 @@ async def upload(week: str,
 
         with session() as s:
             result = ingest(s, _store(), week, landed, for_report=for_report,
-                            uploaded_by=uploaded_by)
+                            uploaded_by=user.email)
             return {
                 "week": week,
                 "accepted": [{"source_key": a.source_key, "label": a.label,
@@ -148,13 +150,15 @@ def get_run(run_id: int) -> dict:
 
 
 @router.post("/runs/{run_id}/approve")
-def approve_run(run_id: int, by: str = Query(...)) -> dict:
+def approve_run(run_id: int, user=Depends(current_user)) -> dict:
+    """Approving is a person's act, so it is recorded as that person - taken
+    from the signed-in account rather than from whatever the caller typed."""
     with session() as s:
         run = s.get(Run, run_id)
         if run is None:
             raise HTTPException(404, f"no run {run_id}")
         try:
-            runner.approve(s, run, by=by)
+            runner.approve(s, run, by=user.email)
         except ValueError as e:
             raise HTTPException(409, str(e))
         return {"run_id": run.id, "status": run.status,
@@ -193,6 +197,47 @@ def get_table(run_id: int, name: str, limit: int = Query(100, le=5000),
         except KeyError as e:
             raise HTTPException(404, str(e))
         page = df.slice(offset, limit)
+        # The column types travel with the page. Guessing per cell in the
+        # browser made one money column render "$3,071" beside a bare "614",
+        # because 614.0 is a whole number and 3070.59 is not.
+        kinds = {c: ("float" if dt in (pl.Float32, pl.Float64)
+                     else "int" if dt in (pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+                                          pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64)
+                     else "text")
+                 for c, dt in zip(df.columns, df.dtypes)}
         return {"name": name, "rows": df.height, "columns": df.columns,
-                "offset": offset, "limit": limit,
+                "kinds": kinds, "offset": offset, "limit": limit,
                 "data": page.to_dicts()}
+
+
+# A separate path segment, not a ".csv" suffix: "{name}" would otherwise match
+# "raw_data.csv" first and look for a table by that name.
+@router.get("/runs/{run_id}/tables/{name}/csv")
+def download_table(run_id: int, name: str):
+    """The whole table as a CSV file.
+
+    Not a page - the whole thing, 278,930 rows of Raw Data included. The
+    dashboard is for reading; this is for the times someone needs the figures
+    somewhere else, and a scorecard nobody can get data out of just gets worked
+    around.
+
+    Written to a buffer with polars rather than assembled by hand, so quoting,
+    commas inside values and nulls come out the way every spreadsheet expects.
+    """
+    with session() as s:
+        run = s.get(Run, run_id)
+        if run is None:
+            raise HTTPException(404, f"no run {run_id}")
+        try:
+            df = runner.table(s, run, name)
+        except KeyError as e:
+            raise HTTPException(404, str(e))
+
+        buf = io.BytesIO()
+        df.write_csv(buf)
+        buf.seek(0)
+        filename = f"{run.report_key}-{run.week}-{name}.csv"
+        return StreamingResponse(
+            buf, media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                     "X-Row-Count": str(df.height)})

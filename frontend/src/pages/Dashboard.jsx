@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, bucketLabel, bucketSort, count, money, monthName, pct } from "../api";
+import { api, bucketLabel, bucketSort, count, money, money2, monthName, pct } from "../api";
 import { Card, DataTable, ErrorBox, Loading, Segmented, Tile } from "../components";
 
 /* The dashboard: figures and tables, nothing else.
@@ -63,7 +63,18 @@ function TablePage({ runId, name, note }) {
   const [page, setPage] = useState(null);
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState(null);
+  const [exporting, setExporting] = useState(false);
   const limit = 50;
+
+  /* Export the WHOLE table, not the page on screen. Raw Data is 278,930 rows
+     and that is exactly the case someone needs a file for; exporting only the
+     50 rows they happen to be looking at would be a trap. */
+  async function exportCsv() {
+    setExporting(true);
+    try { await api.downloadCsv(runId, name); }
+    catch (e) { setError(e); }
+    finally { setExporting(false); }
+  }
 
   useEffect(() => { setOffset(0); }, [name]);
 
@@ -79,16 +90,31 @@ function TablePage({ runId, name, note }) {
   if (error) return <ErrorBox error={error} />;
   if (!page) return <Loading />;
 
-  const columns = page.columns.map((c) => ({
-    key: c, label: c,
-    num: page.data.length > 0 && typeof page.data[0][c] === "number",
-    render: (r) => {
-      const v = r[c];
-      if (v == null) return "";
-      if (typeof v !== "number") return String(v);
-      return Number.isInteger(v) ? count(v) : money(v);
-    },
-  }));
+  /* Format by COLUMN, using the type the server sent - not per cell.
+     A cell-by-cell guess put "$3,071" beside a bare "614" in one money column,
+     because 614.0 is a whole number and 3070.59 is not. Identifiers are
+     printed plain: 861,440 is not a quantity and should not wear a comma. */
+  /* Identifiers, listed rather than matched. A pattern for "ends in id" also
+     catches PAID, which is money. */
+  const ID_COLUMNS = new Set(["caseid", "case_id", "businessregid", "regid",
+                              "provider_id", "providerid", "mrn"]);
+  const isId = (c) => {
+    const k = c.trim().toLowerCase();
+    return ID_COLUMNS.has(k) || k.endsWith("_id");
+  };
+  const columns = page.columns.map((c) => {
+    const kind = page.kinds?.[c] ?? "text";
+    return {
+      key: c, label: c, num: kind !== "text",
+      render: (r) => {
+        const v = r[c];
+        if (v == null) return "";
+        if (kind === "text") return String(v);
+        if (isId(c)) return String(v);
+        return kind === "float" ? money2(v) : count(v);
+      },
+    };
+  });
 
   const pages = Math.max(1, Math.ceil(page.rows / limit));
   const current = Math.floor(offset / limit);
@@ -97,19 +123,26 @@ function TablePage({ runId, name, note }) {
     <Card flush
           title={name.replace(/_/g, " ")}
           sub={`${count(page.rows)} rows${note ? ` · ${note}` : ""}`}
-          right={page.rows > limit && (
+          right={
             <div className="row">
-              <button className="small" disabled={current === 0}
-                      onClick={() => setOffset(Math.max(0, offset - limit))}>
-                Previous
-              </button>
-              <span className="small muted">{current + 1} of {count(pages)}</span>
-              <button className="small" disabled={current >= pages - 1}
-                      onClick={() => setOffset(offset + limit)}>
-                Next
+              {page.rows > limit && (
+                <>
+                  <button className="small" disabled={current === 0}
+                          onClick={() => setOffset(Math.max(0, offset - limit))}>
+                    Previous
+                  </button>
+                  <span className="small muted">{current + 1} of {count(pages)}</span>
+                  <button className="small" disabled={current >= pages - 1}
+                          onClick={() => setOffset(offset + limit)}>
+                    Next
+                  </button>
+                </>
+              )}
+              <button className="small" onClick={exportCsv} disabled={exporting}>
+                {exporting ? "Preparing…" : "Export CSV"}
               </button>
             </div>
-          )}>
+          }>
       <DataTable columns={columns} rows={page.data} />
     </Card>
   );
