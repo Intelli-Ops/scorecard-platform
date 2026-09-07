@@ -63,6 +63,21 @@ SHARED_SOURCES: tuple[SourceFile, ...] = (
                label="KPI numbers", required=False),
 )
 
+# All Providers needs a tenth file that GFS does not.
+#
+# Its KPI blocks are not declared in rules.yml - they are READ OUT of last
+# week's delivered workbook, because that sheet's shape changes: the provider
+# list runs to 33 rows and grows when a provider is taken on, and the grids
+# gain a week column every week of the month. Any row map typed into config
+# would be wrong within a fortnight, and wrong quietly.
+#
+# Matched on "provider" + "score" so it can never pick up the GFS workbook by
+# accident. Nothing opens Excel to read it - an .xlsx is a zip of XML.
+TEMPLATE_SOURCE = SourceFile(
+    "template", ("provider", "score"), exts=(".xlsx",),
+    label="Last week's All Providers workbook (for the KPI layout)")
+
+
 # Uploaded once PER REPORT, because each report uses its own day's copy.
 CASE_AR_SOURCES: tuple[SourceFile, ...] = (
     SourceFile("owner_case_ar", ("combined owner case ar",),
@@ -79,11 +94,13 @@ class ReportType:
     send_day: str            # the day this report is mailed to the client
     rules_path: Path
     sheets: tuple[str, ...] = ()
+    extra_sources: tuple[SourceFile, ...] = ()
 
     @property
     def sources(self) -> tuple[SourceFile, ...]:
-        """Every file this report needs: the shared seven plus its own two."""
-        return SHARED_SOURCES + CASE_AR_SOURCES
+        """Every file this report needs: the shared seven, its own two Case ARs,
+        and anything only it requires."""
+        return SHARED_SOURCES + CASE_AR_SOURCES + self.extra_sources
 
 
 HERE = Path(__file__).parent
@@ -102,6 +119,7 @@ REPORTS: dict[str, ReportType] = {
         label="All Providers Weekly Scorecard",
         send_day="Thursday",
         rules_path=HERE / "all_providers" / "rules.yml",
+        extra_sources=(TEMPLATE_SOURCE,),
     ),
 }
 

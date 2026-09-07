@@ -16,10 +16,26 @@ detail for the current month and monthly totals for the ones before it.
 from __future__ import annotations
 
 
+def _split(value):
+    """The two pipelines hand back different grid shapes.
+
+    GFS returns (amounts, pcts, totals) per block, because its sheet shows a
+    Settlement % beside every amount. All Providers returns just the amounts,
+    because its sheet does not. Rather than force one into the other's shape -
+    which would mean inventing percentages All Providers never calculated -
+    both are accepted and the missing percentages simply are not there.
+    """
+    if isinstance(value, tuple):
+        amounts, pcts, totals = value
+        return amounts, pcts, totals
+    return value, {}, {}
+
+
 def settlement_records(grids: dict) -> list[dict]:
-    """{block: (amounts, pcts, totals)} -> one row per group per bucket."""
+    """{block: amounts} or {block: (amounts, pcts, totals)} -> one row per cell."""
     out: list[dict] = []
-    for block, (amounts, pcts, _totals) in grids.items():
+    for block, value in grids.items():
+        amounts, pcts, _totals = _split(value)
         for (group, bucket), amount in amounts.items():
             out.append({
                 "block": block,              # In House | Board
@@ -27,7 +43,8 @@ def settlement_records(grids: dict) -> list[dict]:
                 "bucket": bucket,            # W32 (week) or M5 (month)
                 "period": "week" if bucket.startswith("W") else "month",
                 "amount": float(amount),
-                "settlement_pct": float(pcts.get((group, bucket), 0.0)),
+                **({"settlement_pct": float(pcts[(group, bucket)])}
+                   if (group, bucket) in pcts else {}),
             })
     return sorted(out, key=lambda r: (r["block"], r["group"], r["bucket"]))
 
@@ -39,13 +56,14 @@ def settlement_total_records(grids: dict) -> list[dict]:
     block's billed - the same formula as a group row, one level up. Kept
     separate so nobody can total the group rows and expect to get it.
     """
-    return sorted(
-        [{"block": block, "bucket": bucket,
-          "period": "week" if bucket.startswith("W") else "month",
-          "settlement_pct": float(pct)}
-         for block, (_a, _p, totals) in grids.items()
-         for bucket, pct in totals.items()],
-        key=lambda r: (r["block"], r["bucket"]))
+    rows = []
+    for block, value in grids.items():
+        _a, _p, totals = _split(value)
+        for bucket, pct in totals.items():
+            rows.append({"block": block, "bucket": bucket,
+                         "period": "week" if bucket.startswith("W") else "month",
+                         "settlement_pct": float(pct)})
+    return sorted(rows, key=lambda r: (r["block"], r["bucket"]))
 
 
 def cp_settled_records(cp: dict) -> list[dict]:

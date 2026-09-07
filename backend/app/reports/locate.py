@@ -85,6 +85,46 @@ def locate(report: ReportType, paths: list[Path]) -> SourceSet:
 def locate_dir(report: ReportType, directory: Path) -> SourceSet:
     """Locate against a folder on disk - used by the golden-master test, which
     runs against the same inputs/<week>/ folders the .bat pipeline uses."""
-    if not directory.exists():
-        raise FileNotFoundError(f"{directory} does not exist")
-    return locate(report, [p for p in sorted(directory.iterdir()) if p.is_file()])
+    return locate_dirs(report, [directory])
+
+
+def locate_dirs(report: ReportType, directories: list[Path]) -> SourceSet:
+    """Locate across several folders, EARLIER FOLDERS WINNING.
+
+    The All-Providers .bat pipeline reads from its own week folder and the GFS
+    one, in that order, because the seven shared files live with GFS while its
+    own Case ARs live with it. Order is the whole mechanism: both folders hold a
+    file called "Combined Custom Case AR.xlsb", and they are different files -
+    Tuesday's and Thursday's.
+
+    Merging the folders into one list and matching over that loses the
+    preference, and picks whichever name happens to sort first. It did: the
+    golden-master fixture silently read Tuesday's 239.7 MB copy for an
+    All-Providers run and produced 467,233 rows instead of 468,267.
+
+    The platform itself does not rely on this - uploads carry their report - but
+    anything reading the legacy folders must honour the order.
+    """
+    for d in directories:
+        if not Path(d).exists():
+            raise FileNotFoundError(f"{d} does not exist")
+
+    found: dict[str, Path] = {}
+    missing: list[SourceFile] = []
+    ambiguous: dict[str, tuple[Path, ...]] = {}
+
+    for spec in report.sources:
+        for d in directories:
+            hits = sorted((p for p in Path(d).iterdir()
+                           if p.is_file() and _matches(spec, p)),
+                          key=lambda p: p.name)
+            if hits:
+                found[spec.key] = hits[0]
+                if len(hits) > 1:
+                    ambiguous[spec.key] = tuple(hits)
+                break
+        else:
+            missing.append(spec)
+
+    return SourceSet(report=report, found=found,
+                     missing=tuple(missing), ambiguous=ambiguous)

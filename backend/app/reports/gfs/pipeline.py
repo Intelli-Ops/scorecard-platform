@@ -57,8 +57,10 @@ class RunResult:
                 "collections": self.collections}
 
 
-def run(src: GfsSources, rules: dict,
-        as_of: dt.date | None = None) -> RunResult:
+def run(src: GfsSources, rules: dict, as_of: dt.date | None = None,
+        week: str | None = None) -> RunResult:
+    """`week` is accepted so both pipelines share one call shape; GFS does not
+    need it, because its sheet has a fixed set of week columns."""
     import time
     t0 = time.perf_counter()
     as_of = as_of or dt.date.today()

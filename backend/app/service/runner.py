@@ -31,6 +31,8 @@ from .ingest import source_set
 _PIPELINES = {
     "gfs": ("app.reports.gfs.readers", "read_gfs",
             "app.reports.gfs.pipeline", "run"),
+    "all_providers": ("app.reports.all_providers.readers", "read_all_providers",
+                      "app.reports.all_providers.pipeline", "run"),
 }
 
 
@@ -79,7 +81,7 @@ def execute(session: Session, store: FileStore, report_key: str, week: str,
         rules = yaml.safe_load(report.rules_path.read_text())
         cache = ParquetCache(settings.data_dir / "cache" / week / report_key)
         src = read_sources(ss, rules, cache)
-        result = run_pipeline(src, rules, as_of=as_of)
+        result = run_pipeline(src, rules, as_of=as_of, week=week)
 
         # What was read, tied to the exact bytes. Several reads can come from
         # one uploaded file - the delta workbooks give three sheets from two

@@ -54,6 +54,8 @@ backend/
         rules.yml            lifted verbatim from config/rules.yml
       all_providers/
         core/                lifted verbatim from ap/marts/
+        layout.py            reads the KPI block layout out of last week's .xlsx
+        readers.py, pipeline.py
         rules.yml
     config.py     every path in the project
     db/           models + session (SQLite locally, Postgres in production)
@@ -94,6 +96,7 @@ re-running the golden-master test.
 | 7 | Run results become structured data, not console text | done |
 | 8a | API, background builds, upload | done |
 | 8b | Browser screens | done |
+| 9 | All Providers wired to a pipeline | done |
 
 Steps 0–5 carry the whole risk. Once the golden master passes, the rest is
 ordinary web work.
@@ -229,3 +232,21 @@ anyway.
     bucket labels as text would put Wk 32 before Feb
   * severity never travels as colour alone: every note carries an icon and the
     word
+
+
+## All Providers
+
+Wired and golden-mastered: raw_data, case_ar, delta_comparison, collections,
+the settlement grids and the current month all match the All-Providers .bat
+pipeline for Week 35.
+
+It needs a TENTH file that GFS does not - last week's delivered workbook. Its
+KPI blocks are not declared in rules.yml, they are read out of that sheet,
+because the sheet's shape changes: the provider list grows when a provider is
+taken on and the grids gain a week column every week of the month. Nothing
+opens Excel to read it; an .xlsx is a zip of XML.
+
+Its settlement grids are a different shape from GFS's - amounts only, no
+Settlement % - because its sheet does not show percentages. Both shapes are
+accepted rather than one being forced into the other, which would mean
+inventing percentages All Providers never calculated.

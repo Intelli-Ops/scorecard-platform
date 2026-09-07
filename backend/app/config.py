@@ -9,9 +9,17 @@ from pathlib import Path
 import os
 
 
+# The project root: .../scorecard-platform, two levels above this file.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
 class Settings:
     def __init__(self) -> None:
-        root = os.environ.get("SCORECARD_DATA", str(Path.cwd() / "data"))
+        # Anchored to the project, NOT to the shell's working directory.
+        # Defaulting to cwd meant starting the server from backend/ and running
+        # a script from the project root used two different databases, each
+        # looking empty to the other - a silent, confusing kind of wrong.
+        root = os.environ.get("SCORECARD_DATA", str(PROJECT_ROOT / "data"))
         self.data_dir = Path(root)
         self.object_dir = self.data_dir / "objects"     # uploaded source files
         self.results_dir = self.data_dir / "results"    # parquet the runs produce

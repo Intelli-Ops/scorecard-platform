@@ -56,7 +56,7 @@ def test_upload_accepts_a_source_and_reports_what_it_ignored(client):
     assert body["accepted"][0]["scope"] == "shared"
 
     r = upload(client, "2026-W36", "GFS - Weekly Scorecard (Week -36) 2026.xlsx")
-    assert r.json()["rejected"][0]["reason"] == "not one of the nine inputs"
+    assert r.json()["rejected"][0]["reason"] == "not one of the report inputs"
 
 
 def test_upload_refuses_a_case_ar_without_a_report(client):

@@ -12,8 +12,8 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..reports import (CASE_AR_SOURCES, SHARED_SOURCES, ReportType, SourceFile,
-                       get as get_report)
+from ..reports import (CASE_AR_SOURCES, REPORTS, SHARED_SOURCES, ReportType,
+                       SourceFile, get as get_report)
 from ..reports.locate import SourceSet, _matches
 from ..storage.files import FileStore
 from ..db.models import Upload
@@ -47,9 +47,24 @@ class IngestResult:
         return out
 
 
+def _all_sources() -> tuple[SourceFile, ...]:
+    """Every input any report declares, deduplicated.
+
+    Built from the registry rather than from the shared + Case AR lists, so a
+    file only one report needs - All Providers reads its KPI layout out of last
+    week's workbook - is still recognised. Hard-coding the two lists here meant
+    that file was silently rejected as "not one of the nine inputs".
+    """
+    seen: dict[str, SourceFile] = {}
+    for report in REPORTS.values():
+        for spec in report.sources:
+            seen.setdefault(spec.key, spec)
+    return tuple(seen.values())
+
+
 def classify(path: Path) -> SourceFile | None:
-    """Which of the nine inputs is this file? None if it is not one of them."""
-    for spec in SHARED_SOURCES + CASE_AR_SOURCES:
+    """Which input is this file? None if it is not one of them."""
+    for spec in _all_sources():
         if _matches(spec, path):
             return spec
     return None
@@ -73,7 +88,7 @@ def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
         path = Path(path)
         spec = classify(path)
         if spec is None:
-            result.rejected.append((path.name, "not one of the nine inputs"))
+            result.rejected.append((path.name, "not one of the report inputs"))
             continue
 
         if spec.key in case_ar_keys and for_report is None:
