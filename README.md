@@ -213,25 +213,22 @@ day gets more from readable JSX than from type annotations, and the API
 contract is already enforced on the Python side. Converting later is
 mechanical if that changes.
 
-### Chart decisions
+### Look
 
-Colours are the validated categorical palette, checked with the data-viz
-validator in both modes rather than chosen by eye: all six slots pass the
-lightness, chroma, colourblind-separation and normal-vision gates. Three
-light-mode series sit below 3:1 against the surface, so **every chart carries a
-table toggle** - the documented relief, and the right thing for a scorecard
-anyway.
+Light only. The palette is taken from a reference photograph: a warm off-white
+ground, sand as the quiet fill, deep denim as the single accent, gum-sole tan
+for anything needing attention. Hairlines instead of boxes, one accent used
+sparingly, generous space, tabular figures so columns line up down the page.
 
-  * one axis per chart, always - settlement amount and settlement % are two
-    charts, never one with two y-scales
-  * top five groups by total, the tail folded into a grey "Other" rather than
-    inventing a ninth hue a colourblind reader could not separate
-  * colour follows the group, not its rank, so changing the block filter never
-    repaints the survivors
-  * months in calendar order then the current month's weeks - sorting the raw
-    bucket labels as text would put Wk 32 before Feb
-  * severity never travels as colour alone: every note carries an icon and the
-    word
+**Figures and tables only - no charts.** A scorecard is read for its numbers.
+The only concession to shape is the tiles along the top, where a single
+headline figure is clearer as a number than as anything drawn. Dropping the
+chart library took the bundle from 627 kB to 251 kB.
+
+One section at a time: the workbook puts six sheets in front of you at once and
+that is part of why it is hard to read, so a segmented control keeps the page
+to one table. Severity never travels as colour alone - every note carries the
+word.
 
 
 ## All Providers

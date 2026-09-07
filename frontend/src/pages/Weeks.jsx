@@ -3,14 +3,13 @@ import { useNavigate } from "react-router-dom";
 import { api, bytes, when } from "../api";
 import { Card, DataTable, ErrorBox, Loading } from "../components";
 
-/* The upload screen.
+/* Uploading a week.
 
-   The shape of it follows the actual working week: seven files are shared and
-   go up once, and each report brings its own Case ARs on the day it is mailed -
-   GFS on Tuesday, All Providers on Thursday. So the page asks WHICH REPORT the
-   Case ARs belong to rather than guessing, because a wrong guess attaches
-   Thursday's case activity to Tuesday's report and nothing in the file would
-   ever show it. */
+   Shaped like the actual working week: seven files are shared and go up once,
+   and each report brings its own Case ARs on the day it is mailed - GFS on
+   Tuesday, All Providers on Thursday. The page asks which report a Case AR is
+   for rather than guessing, because guessing wrong attaches Thursday's case
+   activity to Tuesday's report and nothing in the file would ever show it. */
 
 function isoWeek(d = new Date()) {
   const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -32,34 +31,34 @@ export default function Weeks() {
   const [over, setOver] = useState(false);
   const fileInput = useRef();
 
-  const load = async (w) => {
-    setError(null);
-    try {
-      setWeeks(await api.weeks());
-      setStatus(await api.week(w));
-    } catch (e) { setError(e); }
-  };
-
-  useEffect(() => { load(week); }, [week]);
+  useEffect(() => {
+    let alive = true;
+    setStatus(null);
+    (async () => {
+      try {
+        const [w, s] = await Promise.all([api.weeks(), api.week(week)]);
+        if (!alive) return;
+        setWeeks(w); setStatus(s);
+      } catch (e) { alive && setError(e); }
+    })();
+    return () => { alive = false; };
+  }, [week]);
 
   async function send(files) {
     if (!files?.length) return;
     setError(null); setResult(null); setProgress(0);
     try {
       const r = await api.upload(week, files, {
-        forReport: forReport || undefined,
-        uploadedBy: "web",
+        forReport: forReport || undefined, uploadedBy: "web",
         onProgress: setProgress,
       });
-      setResult(r);
-      setStatus(r.status);
+      setResult(r); setStatus(r.status);
       setWeeks(await api.weeks());
     } catch (e) { setError(e); }
     finally { setProgress(null); }
   }
 
   async function build(reportKey) {
-    setError(null);
     try {
       const { run_id } = await api.startRun(reportKey, week);
       nav(`/runs/${run_id}`);
@@ -71,35 +70,38 @@ export default function Weeks() {
       <div className="head">
         <h1>Upload a week</h1>
         <div className="sub">
-          Seven files are shared. The two Case ARs belong to one report each.
+          Seven files are shared between the reports. The two Case ARs belong to
+          one report each.
         </div>
       </div>
 
       <ErrorBox error={error} />
 
       <Card>
-        <div className="row">
-          <label>Week</label>
-          <input type="text" value={week} size={10}
-                 onChange={(e) => setWeek(e.target.value.trim())} />
-          {weeks.length > 0 && (
-            <select value="" onChange={(e) => e.target.value && setWeek(e.target.value)}>
-              <option value="">earlier weeks…</option>
-              {weeks.map((w) => <option key={w.week} value={w.week}>{w.week}</option>)}
+        <div className="spread" style={{ marginBottom: 16 }}>
+          <div className="row">
+            <label>Week</label>
+            <input type="text" value={week} size={9}
+                   onChange={(e) => setWeek(e.target.value.trim())} />
+            {weeks.length > 0 && (
+              <select value="" onChange={(e) => e.target.value && setWeek(e.target.value)}>
+                <option value="">earlier weeks…</option>
+                {weeks.map((w) => <option key={w.week} value={w.week}>{w.week}</option>)}
+              </select>
+            )}
+          </div>
+          <div className="row">
+            <label>These Case ARs are for</label>
+            <select value={forReport} onChange={(e) => setForReport(e.target.value)}>
+              <option value="">Shared files only</option>
+              <option value="gfs">GFS · Tuesday</option>
+              <option value="all_providers">All Providers · Thursday</option>
             </select>
-          )}
-          <span style={{ flex: 1 }} />
-          <label>These Case ARs are for</label>
-          <select value={forReport} onChange={(e) => setForReport(e.target.value)}>
-            <option value="">— shared files only —</option>
-            <option value="gfs">GFS (Tuesday)</option>
-            <option value="all_providers">All Providers (Thursday)</option>
-          </select>
+          </div>
         </div>
 
         <div
           className={`drop ${over ? "over" : ""}`}
-          style={{ marginTop: 14 }}
           onDragOver={(e) => { e.preventDefault(); setOver(true); }}
           onDragLeave={() => setOver(false)}
           onDrop={(e) => { e.preventDefault(); setOver(false); send([...e.dataTransfer.files]); }}
@@ -109,36 +111,36 @@ export default function Weeks() {
                  onChange={(e) => send([...e.target.files])} />
           {progress == null ? (
             <>
-              <div style={{ fontWeight: 560 }}>Drop this week's files here</div>
-              <div className="mono" style={{ marginTop: 6 }}>
-                Do not rename them. Anything that is not one of the nine inputs
-                is ignored, not read.
+              <div className="big">Drop this week's files here</div>
+              <div className="small" style={{ marginTop: 6 }}>
+                Keep their names as they are. Anything that is not one of the
+                inputs is ignored, not read.
               </div>
             </>
           ) : (
-            <div>
-              <div style={{ fontWeight: 560 }}>Uploading… {Math.round(progress * 100)}%</div>
-              <div style={{ height: 4, background: "var(--grid)", borderRadius: 2,
-                            marginTop: 10, overflow: "hidden" }}>
-                <div style={{ width: `${progress * 100}%`, height: "100%",
-                              background: "var(--series-1)" }} />
+            <>
+              <div className="big">Uploading {Math.round(progress * 100)}%</div>
+              <div className="bar" style={{ marginTop: 14, maxWidth: 420,
+                                            marginInline: "auto" }}>
+                <span style={{ width: `${progress * 100}%` }} />
               </div>
-            </div>
+            </>
           )}
         </div>
 
         {!forReport && (
-          <div className="mono" style={{ marginTop: 10 }}>
-            Case AR files will be refused until you say which report they are for.
+          <div className="small muted" style={{ marginTop: 12 }}>
+            Case AR files are refused until you say which report they belong to.
           </div>
         )}
       </Card>
 
       {result && (
-        <Card title="What was received">
+        <Card flush title="What was received"
+              sub={`${result.accepted.length} accepted, ${result.rejected.length} ignored`}>
           <DataTable
             columns={[
-              { key: "label", label: "Input" },
+              { key: "label", label: "Input", strong: true },
               { key: "filename", label: "File" },
               { key: "scope", label: "Used by" },
               { key: "size_bytes", label: "Size", num: true,
@@ -149,14 +151,11 @@ export default function Weeks() {
             rows={result.accepted}
           />
           {result.rejected.length > 0 && (
-            <>
-              <h3 style={{ marginTop: 16 }}>Ignored</h3>
-              <DataTable
-                columns={[{ key: "filename", label: "File" },
-                          { key: "reason", label: "Why" }]}
-                rows={result.rejected}
-              />
-            </>
+            <DataTable
+              columns={[{ key: "filename", label: "Ignored" },
+                        { key: "reason", label: "Why" }]}
+              rows={result.rejected}
+            />
           )}
         </Card>
       )}
@@ -164,22 +163,17 @@ export default function Weeks() {
       {status ? (
         <div className="grid cols-2">
           {Object.entries(status.reports).map(([key, r]) => (
-            <Card key={key} title={r.label} sub={`mailed ${r.send_day}`}
+            <Card key={key} flush title={r.label} sub={`Mailed ${r.send_day}`}
                   right={
-                    <button className="primary" disabled={!r.ready}
-                            onClick={() => build(key)}>
-                      {r.ready ? "Build" : "Not ready"}
-                    </button>
+                    r.ready
+                      ? <button className="primary" onClick={() => build(key)}>Build</button>
+                      /* Not a button when there is nothing to press: a greyed-out
+                         primary still reads as the thing to click. */
+                      : <span className="pill">{r.missing.length} still needed</span>
                   }>
-              {r.missing.length > 0 && (
-                <div style={{ marginBottom: 12 }}>
-                  <h3>Still needed</h3>
-                  {r.missing.map((m) => <div key={m}>· {m}</div>)}
-                </div>
-              )}
               <DataTable
                 columns={[
-                  { key: "filename", label: "Held", render: (h) => h.filename },
+                  { key: "filename", label: "File" },
                   { key: "uploaded_at", label: "Received",
                     render: (h) => when(h.uploaded_at) },
                   { key: "size_bytes", label: "Size", num: true,
@@ -188,6 +182,14 @@ export default function Weeks() {
                 rows={r.have}
                 empty="Nothing uploaded for this week yet."
               />
+              {r.missing.length > 0 && (
+                <div style={{ padding: "14px 22px", borderTop: "1px solid var(--line)" }}>
+                  <h3>Still needed</h3>
+                  {r.missing.map((m) => (
+                    <div key={m} className="small muted">{m}</div>
+                  ))}
+                </div>
+              )}
             </Card>
           ))}
         </div>

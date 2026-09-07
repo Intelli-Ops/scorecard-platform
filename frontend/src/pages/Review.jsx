@@ -3,18 +3,16 @@ import { Link, useParams } from "react-router-dom";
 import { api, bytes, count, when } from "../api";
 import { Card, DataTable, ErrorBox, Loading, Notes, Status, Tile } from "../components";
 
-/* The review screen - STEP 4, given somewhere to live.
+/* The review: what a build wants a person to know before the report goes out.
 
-   A build stops at `review`, not `done`. This is the page that decides whether
-   the report goes out, so it leads with what changed rather than with what
-   worked: the warnings that are new or whose counts have moved, then the row
-   counts against last week, then the audit trail of exactly which bytes were
-   read. */
+   It leads with what CHANGED rather than with what worked - warnings that are
+   new or whose counts have moved, then row counts against last week, then
+   exactly which files were read. */
 export default function Review() {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const [approving, setApproving] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let alive = true, timer;
@@ -23,7 +21,6 @@ export default function Review() {
         const d = await api.run(id);
         if (!alive) return;
         setData(d);
-        // A build takes about a minute. Poll while it is still working.
         if (["pending", "running"].includes(d.run.status)) {
           timer = setTimeout(tick, 1500);
         }
@@ -34,12 +31,12 @@ export default function Review() {
   }, [id]);
 
   async function approve() {
-    setApproving(true);
-    try { setData(await api.run(id).then(async () => {
-      await api.approve(id, "web"); return api.run(id);
-    })); }
-    catch (e) { setError(e); }
-    finally { setApproving(false); }
+    setBusy(true);
+    try {
+      await api.approve(id, "web");
+      setData(await api.run(id));
+    } catch (e) { setError(e); }
+    finally { setBusy(false); }
   }
 
   if (error) return <ErrorBox error={error} />;
@@ -51,20 +48,13 @@ export default function Review() {
     return (
       <>
         <div className="head">
-          <h1>{run.week} · building</h1>
+          <h1>{run.week}</h1>
           <div className="sub">
-            {run.status === "pending"
-              ? `Queued${data.queued_ahead > 1 ? `, ${data.queued_ahead - 1} ahead` : ""}.`
-              : "Reading the source files and working out the numbers."}
+            {run.status === "pending" ? "Queued." : "Reading the files and working out the numbers."}
+            {" "}This takes about a minute. The page updates itself.
           </div>
         </div>
-        <Card>
-          <div className="row"><Status value={run.status} />
-            <span className="mono">
-              This takes about a minute. The page updates itself.
-            </span>
-          </div>
-        </Card>
+        <Card><Status value={run.status} /></Card>
       </>
     );
   }
@@ -84,32 +74,31 @@ export default function Review() {
     <>
       <div className="head spread">
         <div>
-          <h1>{run.report} · {run.week}</h1>
+          <h1>{run.report}</h1>
           <div className="sub">
-            Run #{run.id} · built in {run.seconds?.toFixed(0)}s ·{" "}
+            {run.week} · run #{run.id} · built in {run.seconds?.toFixed(0)}s ·{" "}
             {data.compared_with
-              ? <>compared with {data.compared_with.week}</>
+              ? `compared with ${data.compared_with.week}`
               : "no earlier week to compare with"}
           </div>
         </div>
         <div className="row">
           <Status value={run.status} />
           {run.status === "review" ? (
-            <button className="primary" onClick={approve} disabled={approving}>
-              {approving ? "Approving…" : "Approve"}
+            <button className="primary" onClick={approve} disabled={busy}>
+              {busy ? "Approving…" : "Approve"}
             </button>
           ) : (
-            <span className="mono">
+            <span className="small muted">
               approved by {run.approved_by} · {when(run.approved_at)}
             </span>
           )}
-          <Link className="btn" to={`/dashboard/${run.id}`}>Open dashboard</Link>
+          <Link className="btn" to={`/dashboard/${run.id}`}>Open scorecard</Link>
         </div>
       </div>
 
-      <div className="grid cols-3" style={{ marginBottom: 16 }}>
-        <Tile label="Needs attention"
-              value={data.needs_attention ? "Yes" : "No"}
+      <div className="grid cols-4" style={{ marginBottom: 26 }}>
+        <Tile label="Needs attention" value={data.needs_attention ? "Yes" : "No"}
               foot={actions ? `${actions} figure${actions > 1 ? "s" : ""} missing a source`
                             : "nothing blocking"} />
         <Tile label="Warnings" value={count(data.note_counts.warning)}
@@ -117,18 +106,23 @@ export default function Review() {
         <Tile label="Rows produced"
               value={count(data.tables.reduce((s, t) => s + t.rows, 0))}
               foot={`${data.tables.length} tables`} />
+        <Tile label="Files read" value={count(data.inputs.length)}
+              foot="each pinned to its exact bytes" />
       </div>
 
-      <Card title="What this run is telling you"
+      <Card flush title="What this run is telling you"
             sub="The wording is the pipeline's own. What is new is the comparison.">
-        <Notes notes={data.notes} />
+        <div style={{ padding: "4px 22px 10px" }}>
+          <Notes notes={data.notes} />
+        </div>
       </Card>
 
       <div className="grid cols-2">
-        <Card title="What it produced">
+        <Card flush title="What it produced">
           <DataTable
             columns={[
-              { key: "name", label: "Table" },
+              { key: "name", label: "Table", strong: true,
+                render: (t) => t.name.replace(/_/g, " ") },
               { key: "rows", label: "Rows", num: true, render: (t) => count(t.rows) },
               { key: "rows_last_week", label: "Last week", num: true,
                 render: (t) => t.rows_last_week == null ? "—" : count(t.rows_last_week) },
@@ -140,7 +134,7 @@ export default function Review() {
           />
         </Card>
 
-        <Card title="What it read"
+        <Card flush title="What it read"
               sub="Every file pinned to the exact bytes it contained.">
           <DataTable
             columns={[

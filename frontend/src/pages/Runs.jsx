@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, count, when } from "../api";
-import { Card, DataTable, ErrorBox, Loading, Status } from "../components";
+import { Card, DataTable, ErrorBox, Loading, Segmented, Status } from "../components";
 
-/* Run history - the thing dated folders on one laptop could never provide.
-
-   Every build of every report, who approved it, and how many warnings it
-   raised. A count that jumps week on week is visible from this list alone. */
+/* Run history - what dated folders on one laptop could never provide.
+   Every build of every report, who approved it, and what it warned about. */
 export default function Runs() {
   const [runs, setRuns] = useState(null);
   const [error, setError] = useState(null);
@@ -14,6 +12,7 @@ export default function Runs() {
 
   useEffect(() => {
     let alive = true;
+    setRuns(null);
     api.runs(report || undefined)
       .then((r) => alive && setRuns(r))
       .catch((e) => alive && setError(e));
@@ -21,45 +20,53 @@ export default function Runs() {
   }, [report]);
 
   if (error) return <ErrorBox error={error} />;
-  if (!runs) return <Loading what="Loading runs" />;
 
   return (
     <>
-      <div className="head">
-        <h1>Run history</h1>
-        <div className="sub">Every build, and what it warned about.</div>
+      <div className="head spread">
+        <div>
+          <h1>Run history</h1>
+          <div className="sub">Every build, and what it warned about.</div>
+        </div>
+        <Segmented
+          value={report}
+          onChange={setReport}
+          options={[
+            { value: "", label: "Both" },
+            { value: "gfs", label: "GFS" },
+            { value: "all_providers", label: "All Providers" },
+          ]}
+        />
       </div>
 
-      <Card right={
-        <select value={report} onChange={(e) => setReport(e.target.value)}>
-          <option value="">Both reports</option>
-          <option value="gfs">GFS</option>
-          <option value="all_providers">All Providers</option>
-        </select>
-      }>
-        <DataTable
-          columns={[
-            { key: "week", label: "Week",
-              render: (r) => <Link to={`/runs/${r.id}`}>{r.week}</Link> },
-            { key: "status", label: "Status", render: (r) => <Status value={r.status} /> },
-            { key: "actions", label: "Action", num: true,
-              render: (r) => (r.actions ? `! ${r.actions}` : "—") },
-            { key: "warnings", label: "Warnings", num: true,
-              render: (r) => r.warnings || "—" },
-            { key: "raw", label: "Raw Data rows", num: true,
-              render: (r) => count(r.rows?.raw_data) },
-            { key: "seconds", label: "Built in", num: true,
-              render: (r) => (r.seconds ? `${r.seconds.toFixed(0)}s` : "—") },
-            { key: "started_at", label: "Started", render: (r) => when(r.started_at) },
-            { key: "approved_by", label: "Approved by",
-              render: (r) => r.approved_by ?? "—" },
-            { key: "open", label: "",
-              render: (r) => <Link to={`/dashboard/${r.id}`}>Dashboard</Link> },
-          ]}
-          rows={runs}
-          empty="No builds yet. Upload a week to get started."
-        />
-      </Card>
+      {!runs ? <Loading what="Loading runs" /> : (
+        <Card flush>
+          <DataTable
+            columns={[
+              { key: "week", label: "Week", strong: true,
+                render: (r) => <Link to={`/runs/${r.id}`}>{r.week}</Link> },
+              { key: "status", label: "Status",
+                render: (r) => <Status value={r.status} /> },
+              { key: "actions", label: "Action", num: true,
+                render: (r) => r.actions || "—" },
+              { key: "warnings", label: "Warnings", num: true,
+                render: (r) => r.warnings || "—" },
+              { key: "rows", label: "Raw data rows", num: true,
+                render: (r) => count(r.rows?.raw_data) },
+              { key: "seconds", label: "Built in", num: true,
+                render: (r) => (r.seconds ? `${r.seconds.toFixed(0)}s` : "—") },
+              { key: "started_at", label: "Started",
+                render: (r) => when(r.started_at) },
+              { key: "approved_by", label: "Approved by",
+                render: (r) => r.approved_by ?? "—" },
+              { key: "open", label: "",
+                render: (r) => <Link to={`/dashboard/${r.id}`}>Scorecard</Link> },
+            ]}
+            rows={runs}
+            empty="No builds yet. Upload a week to get started."
+          />
+        </Card>
+      )}
     </>
   );
 }
