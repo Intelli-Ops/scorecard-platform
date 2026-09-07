@@ -61,7 +61,7 @@ backend/
     service/      ingest uploads, execute runs, read results back
   tests/
     golden/       golden-master: new output must equal the .bat pipeline's
-frontend/         (not started - step 8b)
+frontend/         React + Vite: upload, run history, review, dashboard
 docs/
 ```
 
@@ -93,7 +93,7 @@ re-running the golden-master test.
 | 6 | Replace week folders with object storage + database | done |
 | 7 | Run results become structured data, not console text | done |
 | 8a | API, background builds, upload | done |
-| 8b | Browser screens | next |
+| 8b | Browser screens | done |
 
 Steps 0–5 carry the whole risk. Once the golden master passes, the rest is
 ordinary web work.
@@ -190,3 +190,42 @@ since the reports go out on different days.
 Verified over HTTP against the real Week 35 files: 385 MB uploaded, three
 delivered workbooks refused, build queued in 23 ms and finished in 67 s, all
 four tables reproduced, and 236 dashboard records served.
+
+
+## The screens
+
+```
+cd frontend && npm install && npm run dev      # http://localhost:5173
+```
+
+| Page | |
+|---|---|
+| Upload a week | drag the files in; says what is missing per report |
+| Run history | every build, its warnings, who approved it |
+| Review | the STEP 4 look - warnings, what changed, the audit trail |
+| Dashboard | what the client opens instead of the workbook |
+
+Plain JavaScript, not TypeScript. One maintainer who does not write JS day to
+day gets more from readable JSX than from type annotations, and the API
+contract is already enforced on the Python side. Converting later is
+mechanical if that changes.
+
+### Chart decisions
+
+Colours are the validated categorical palette, checked with the data-viz
+validator in both modes rather than chosen by eye: all six slots pass the
+lightness, chroma, colourblind-separation and normal-vision gates. Three
+light-mode series sit below 3:1 against the surface, so **every chart carries a
+table toggle** - the documented relief, and the right thing for a scorecard
+anyway.
+
+  * one axis per chart, always - settlement amount and settlement % are two
+    charts, never one with two y-scales
+  * top five groups by total, the tail folded into a grey "Other" rather than
+    inventing a ninth hue a colourblind reader could not separate
+  * colour follows the group, not its rank, so changing the block filter never
+    repaints the survivors
+  * months in calendar order then the current month's weeks - sorting the raw
+    bucket labels as text would put Wk 32 before Feb
+  * severity never travels as colour alone: every note carries an icon and the
+    word

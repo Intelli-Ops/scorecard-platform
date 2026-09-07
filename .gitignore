@@ -33,3 +33,7 @@ Thumbs.db
 
 # local database + object store
 data/
+
+# frontend build output + local env
+frontend/dist/
+frontend/.env.local
