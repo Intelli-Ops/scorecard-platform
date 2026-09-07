@@ -1,5 +1,7 @@
 # Scorecard Platform
 
+**New here? Read [HOW-IT-WORKS.md](HOW-IT-WORKS.md)** - a plain-English walkthrough of a week, with examples. This file is the technical notes.
+
 A web application that produces the weekly scorecards — **GFS** and
 **All Providers** — as a dashboard rather than an Excel workbook.
 
