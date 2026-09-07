@@ -74,10 +74,15 @@ export const api = {
   startRun: (report, week, asOf) =>
     json(`/api/runs?report=${report}&week=${week}` +
          (asOf ? `&as_of=${asOf}` : ""), { method: "POST" }),
-  runs: (report) => json("/api/runs" + (report ? `?report=${report}` : "")),
+  // Twelve weeks, not twenty rows: a week holds two runs and more when one is
+  // rebuilt, so a row limit cuts the list in the middle of a week.
+  runs: (report, weeks = 12) =>
+    json(`/api/runs?weeks=${weeks}` + (report ? `&report=${report}` : "")),
   run: (id) => json(`/api/runs/${id}`),
   // Who approved comes from the signed-in account, not from the caller.
   approve: (id) => json(`/api/runs/${id}/approve`, { method: "POST" }),
+  unapprove: (id) => json(`/api/runs/${id}/unapprove`, { method: "POST" }),
+  deleteRun: (id) => json(`/api/runs/${id}`, { method: "DELETE" }),
   figures: (id, name) => json(`/api/runs/${id}/figures/${name}`),
   table: (id, name, { limit = 100, offset = 0 } = {}) =>
     json(`/api/runs/${id}/tables/${name}?limit=${limit}&offset=${offset}`),

@@ -130,15 +130,34 @@ def review(session: Session, run: Run) -> dict:
     }
 
 
-def history(session: Session, report_key: str, limit: int = 20) -> list[dict]:
-    """Every run of one report, newest first. The thing folders could not do."""
-    stmt = (select(Run).where(Run.report_key == report_key)
-            .order_by(Run.week.desc(), Run.id.desc()).limit(limit))
+def history(session: Session, report_key: str, weeks: int = 12) -> list[dict]:
+    """Runs of one report for the last `weeks` weeks, newest first.
+
+    Bounded by WEEKS rather than by a row count. A row limit cuts in the wrong
+    place: rebuild Week 36 four times and a limit of 20 rows quietly drops
+    Week 32 off the screen even though the list still claims to be a history.
+    Twelve weeks is a quarter - far enough back to see a trend, short enough
+    that the page stays a page.
+    """
+    recent = [w for (w,) in session.execute(
+        select(Run.week).where(Run.report_key == report_key)
+        .distinct().order_by(Run.week.desc()).limit(weeks))]
+    if not recent:
+        return []
+
+    stmt = (select(Run)
+            .where(Run.report_key == report_key, Run.week.in_(recent))
+            .order_by(Run.week.desc(), Run.id.desc()))
     runs = session.execute(stmt).scalars().all()
+    report = get_report(report_key)
     return [{
         "id": r.id, "week": r.week, "status": r.status,
+        # The history shows both reports together, so each row has to say
+        # which one it is. Without it a week is two rows that look identical.
+        "report_key": r.report_key, "report": report.short,
+        "report_full": report.label,
         "seconds": r.seconds, "started_at": r.started_at,
-        "approved_by": r.approved_by,
+        "approved_by": r.approved_by, "approved_at": r.approved_at,
         "actions": sum(1 for n in r.notes if n.severity == ACTION),
         "warnings": sum(1 for n in r.notes if n.severity == WARNING),
         "rows": {t.name: t.rows for t in r.tables},

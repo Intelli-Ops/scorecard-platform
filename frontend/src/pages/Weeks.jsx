@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, bytes, when } from "../api";
-import { Card, DataTable, ErrorBox, Loading } from "../components";
+import { Card, DataTable, ErrorBox, Loading, Picker } from "../components";
 
 /* Uploading a week.
 
@@ -79,25 +79,25 @@ export default function Weeks() {
 
       <Card>
         <div className="spread" style={{ marginBottom: 16 }}>
-          <div className="row">
-            <label>Week</label>
+          <div className="filter">
+            <span className="filter-label">Week</span>
             <input type="text" value={week} size={9}
                    onChange={(e) => setWeek(e.target.value.trim())} />
             {weeks.length > 0 && (
-              <select value="" onChange={(e) => e.target.value && setWeek(e.target.value)}>
+              <select className="picker" value=""
+                      onChange={(e) => e.target.value && setWeek(e.target.value)}>
                 <option value="">earlier weeks…</option>
                 {weeks.map((w) => <option key={w.week} value={w.week}>{w.week}</option>)}
               </select>
             )}
           </div>
-          <div className="row">
-            <label>These Case ARs are for</label>
-            <select value={forReport} onChange={(e) => setForReport(e.target.value)}>
-              <option value="">Shared files only</option>
-              <option value="gfs">GFS · Tuesday</option>
-              <option value="all_providers">All Providers · Thursday</option>
-            </select>
-          </div>
+          <Picker label="These Case ARs are for" value={forReport}
+                  onChange={setForReport}
+                  options={[
+                    { value: "", label: "Shared files only" },
+                    { value: "gfs", label: "GFS · Tuesday" },
+                    { value: "all_providers", label: "All Providers · Thursday" },
+                  ]} />
         </div>
 
         <div

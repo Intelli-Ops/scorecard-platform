@@ -91,6 +91,7 @@ CASE_AR_SOURCES: tuple[SourceFile, ...] = (
 class ReportType:
     key: str
     label: str
+    short: str               # for table columns, where the full label is noise
     send_day: str            # the day this report is mailed to the client
     rules_path: Path
     sheets: tuple[str, ...] = ()
@@ -109,6 +110,7 @@ REPORTS: dict[str, ReportType] = {
     "gfs": ReportType(
         key="gfs",
         label="GFS Weekly Scorecard",
+        short="GFS",
         send_day="Tuesday",
         rules_path=HERE / "gfs" / "rules.yml",
         sheets=("Settlement High-Level", "Collection High-Level",
@@ -117,6 +119,7 @@ REPORTS: dict[str, ReportType] = {
     "all_providers": ReportType(
         key="all_providers",
         label="All Providers Weekly Scorecard",
+        short="All Providers",
         send_day="Thursday",
         rules_path=HERE / "all_providers" / "rules.yml",
         extra_sources=(TEMPLATE_SOURCE,),

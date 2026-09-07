@@ -16,6 +16,7 @@ from pathlib import Path
 
 import polars as pl
 import yaml
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -150,3 +151,65 @@ def approve(session: Session, run: Run, by: str) -> Run:
     run.approved_by = by
     session.flush()
     return run
+
+
+def unapprove(session: Session, run: Run, by: str) -> Run:
+    """Take an approval back.
+
+    Approving is a person clicking a button, and people click the wrong button.
+    Without this the only way back was to build the week again, which changes
+    the run id every screenshot and email already refers to.
+
+    The run returns to `review` - the state it was in before - so it is once
+    again visibly waiting on somebody, rather than sitting in a limbo state
+    nothing else in the app knows how to read.
+    """
+    if run.status != "approved":
+        raise ValueError(f"run {run.id} is {run.status}, not approved")
+    session.add(RunNote(
+        run_id=run.id, seq=_next_seq(session, run), code="approval.withdrawn",
+        severity="info",
+        text=f"Approval withdrawn by {by} "
+             f"(was approved by {run.approved_by or 'unknown'}).",
+        detail={"was_approved_by": run.approved_by,
+                "was_approved_at": run.approved_at.isoformat()
+                if run.approved_at else None}))
+    run.status = "review"
+    run.approved_at = None
+    run.approved_by = None
+    session.flush()
+    return run
+
+
+def _next_seq(session: Session, run: Run) -> int:
+    return 1 + max((n.seq for n in run.notes), default=0)
+
+
+def delete(session: Session, run: Run, results: FileStore | None = None) -> dict:
+    """Remove a run and everything it recorded.
+
+    Two things are deliberately NOT touched:
+
+      * the uploaded source files, which belong to the week and to the other
+        report as well - deleting a run must never cost you the inputs;
+      * any result parquet another run also produced. Results are addressed by
+        the hash of their own bytes, so two identical builds share one file.
+        A blob is removed only once nothing points at it any more.
+    """
+    results = results or FileStore(settings.results_dir)
+    mine = [(t.sha256, t.rows) for t in run.tables]
+    summary = {"run_id": run.id, "report_key": run.report_key, "week": run.week,
+               "tables": len(mine), "rows": sum(r for _, r in mine)}
+
+    session.delete(run)          # cascades to inputs, notes, figures, tables
+    session.flush()
+
+    freed = 0
+    for sha, _ in mine:
+        still_used = session.execute(
+            select(RunTable.id).where(RunTable.sha256 == sha).limit(1)
+        ).scalar_one_or_none()
+        if still_used is None and results.remove(sha, ".parquet"):
+            freed += 1
+    summary["files_removed"] = freed
+    return summary

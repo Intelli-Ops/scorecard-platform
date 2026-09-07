@@ -300,8 +300,55 @@ folder: `gfs-2026-W35-raw_data.csv`.
 
 ### Run history
 
-Every build ever made, both reports, with warning counts and who approved each
-one. Your dated folders could only be read by someone sitting at that laptop.
+Every build of the **last 12 weeks**, both reports, with warning counts and who
+approved each one. Your dated folders could only be read by someone sitting at
+that laptop.
+
+Twelve weeks is a quarter. Far enough back to see whether something is drifting,
+short enough that the page is still a page — a list that grows forever stops
+being read.
+
+A week is normally **two rows**: GFS on Tuesday, All Providers on Thursday. They
+are told apart by the **Scorecard** column, and each week's rows sit in their own
+block with a gap above them:
+
+```
+  WEEK      SCORECARD       STATUS     ACTION  WARNINGS  APPROVED BY   OPEN
+
+  2026-W36  GFS             approved      1       3     ali.asghar    Scorecard
+  ─────────────────────────────── gap ───────────────────────────────
+  2026-W35  All Providers   review        4       2        —          Scorecard
+  2026-W35  GFS             approved      1       3     ali.asghar    Scorecard
+```
+
+**Unapprove.** Approving is one click, so taking it back is one click too. The
+build goes back to `review` and can be approved again. Why it matters: without
+it, the only way out of a mis-click was to build the week again — and that gives
+you a new run number, while the screenshot you already emailed still points at
+the old one.
+
+Un-approving is written into the run's own notes: who withdrew it, and who had
+approved it. A report that was signed off on Tuesday and unsigned on Wednesday
+should not be a mystery on Thursday.
+
+**Delete.** Removes a build and everything it recorded — its figures, its tables,
+its notes.
+
+Two things it deliberately does *not* touch:
+
+- **The files you uploaded.** They belong to the week, and the other report needs
+  them too. Deleting a build must never cost you the inputs.
+- **A result another build still uses.** Results are stored under a fingerprint
+  of their own contents, so two identical builds share one file. It is only
+  removed once nothing points at it any more.
+
+Deleting asks twice, in the row itself — **Delete** turns into **Really delete?**
+and **Keep**, and gives up after five seconds if you walk away. A pop-up box is
+too easy to click through without reading; a second button in the row you are
+about to destroy makes you look at it.
+
+> Anyone signed in can delete today. Restricting it to an admin is a later step —
+> there is no admin to be yet, because accounts have no roles.
 
 ---
 
@@ -435,6 +482,10 @@ Being straight about it:
 - **Anyone with an @appedology.com address can create an account.** There is no
   approval step and no admin who can remove someone. That is fine inside the
   company; it is not enough before an outside client is given a link.
+- **Anyone signed in can delete a build, or take an approval back.** Both are
+  recorded against the account that did it, but nothing stops anyone doing
+  either. Accounts have no roles yet, which is what an "only an admin can
+  delete" rule would need first.
 - **The sign-in token is kept in the browser's storage.** Fine on one company
   network. Once this is on a real server it should move to a cookie that
   JavaScript cannot read at all.

@@ -39,6 +39,18 @@ export default function Review() {
     finally { setBusy(false); }
   }
 
+  /* Approving is one click, so un-approving has to be one too. Otherwise the
+     only way back from a mis-click is to build the week again, which changes
+     the run id that every screenshot and email already points at. */
+  async function unapprove() {
+    setBusy(true);
+    try {
+      await api.unapprove(id);
+      setData(await api.run(id));
+    } catch (e) { setError(e); }
+    finally { setBusy(false); }
+  }
+
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Loading what="Loading the run" />;
 
@@ -88,11 +100,16 @@ export default function Review() {
             <button className="primary" onClick={approve} disabled={busy}>
               {busy ? "Approving…" : "Approve"}
             </button>
-          ) : (
-            <span className="small muted">
-              approved by {run.approved_by} · {when(run.approved_at)}
-            </span>
-          )}
+          ) : run.status === "approved" ? (
+            <>
+              <span className="small muted">
+                approved by {run.approved_by} · {when(run.approved_at)}
+              </span>
+              <button className="quiet" onClick={unapprove} disabled={busy}>
+                {busy ? "Working…" : "Unapprove"}
+              </button>
+            </>
+          ) : null}
           <Link className="btn" to={`/dashboard/${run.id}`}>Open scorecard</Link>
         </div>
       </div>

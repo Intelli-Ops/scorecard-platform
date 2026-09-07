@@ -42,7 +42,8 @@ def list_reports() -> list[dict]:
     """The two scorecards, and which files each one needs."""
     case_ar = {s.key for s in CASE_AR_SOURCES}
     return [{
-        "key": r.key, "label": r.label, "send_day": r.send_day,
+        "key": r.key, "label": r.label, "short": r.short,
+        "send_day": r.send_day,
         "sheets": list(r.sheets),
         "sources": [{"key": s.key, "label": s.label, "required": s.required,
                      "per_report": s.key in case_ar}
@@ -125,12 +126,19 @@ def start_run(report: str = Query(...), week: str = Query(...),
 
 
 @router.get("/runs")
-def list_runs(report: str | None = Query(None), limit: int = 20) -> list[dict]:
+def list_runs(report: str | None = Query(None),
+              weeks: int = Query(12, ge=1, le=104)) -> list[dict]:
+    """Run history for the last `weeks` weeks - twelve by default.
+
+    Bounded by weeks and not by rows: a week holds two runs when both reports
+    are built and more when one is rebuilt, so a row limit would cut the list
+    in the middle of a week.
+    """
     with session() as s:
         keys = [report] if report else list(REPORTS)
         out: list[dict] = []
         for k in keys:
-            out += review_service.history(s, k, limit=limit)
+            out += review_service.history(s, k, weeks=weeks)
         return sorted(out, key=lambda r: (r["week"], r["id"]), reverse=True)
 
 
@@ -163,6 +171,49 @@ def approve_run(run_id: int, user=Depends(current_user)) -> dict:
             raise HTTPException(409, str(e))
         return {"run_id": run.id, "status": run.status,
                 "approved_by": run.approved_by, "approved_at": run.approved_at}
+
+
+@router.post("/runs/{run_id}/unapprove")
+def unapprove_run(run_id: int, user=Depends(current_user)) -> dict:
+    """Take an approval back.
+
+    People click the wrong button. Before this the only way out was to build
+    the week again, which changes the run id that screenshots and emails
+    already point at.
+    """
+    with session() as s:
+        run = s.get(Run, run_id)
+        if run is None:
+            raise HTTPException(404, f"no run {run_id}")
+        try:
+            runner.unapprove(s, run, by=user.email)
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        return {"run_id": run.id, "status": run.status,
+                "approved_by": None, "approved_at": None}
+
+
+@router.delete("/runs/{run_id}")
+def delete_run(run_id: int, user=Depends(current_user)) -> dict:
+    """Delete a scorecard.
+
+    A build that was started for the wrong week, or twice by mistake, should
+    not sit in the history forever confusing the next person.
+
+    Uploads are untouched - they belong to the week and to the other report as
+    well. A running build cannot be deleted out from under itself.
+
+    Anyone signed in can do this today. Restricting it to an admin is a later
+    step and needs a role on the account first; there is no admin to be.
+    """
+    with session() as s:
+        run = s.get(Run, run_id)
+        if run is None:
+            raise HTTPException(404, f"no run {run_id}")
+        if run.status in ("pending", "running"):
+            raise HTTPException(
+                409, "This build is still running. Wait for it to finish.")
+        return runner.delete(s, run) | {"deleted_by": user.email}
 
 
 @router.get("/runs/{run_id}/figures/{name}")

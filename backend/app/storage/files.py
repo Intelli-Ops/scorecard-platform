@@ -80,3 +80,17 @@ class FileStore:
     def verify(self, sha: str, suffix: str) -> bool:
         """Re-read the bytes and check they still hash to their own address."""
         return sha256_of(self.path(sha, suffix)) == sha
+
+    def remove(self, sha: str, suffix: str) -> bool:
+        """Delete one stored blob. True if it was there.
+
+        Only ever called for RESULTS, and only once nothing in the database
+        points at the hash any more. Source uploads are never removed: they are
+        the audit trail, and a run from December has to still be able to name
+        the exact bytes it read.
+        """
+        p = self._path_for(sha, suffix)
+        if not p.exists():
+            return False
+        p.unlink()
+        return True

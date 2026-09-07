@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, bucketLabel, bucketSort, count, money, money2, monthName, pct } from "../api";
-import { Card, DataTable, ErrorBox, Loading, Segmented, Tile } from "../components";
+import { Card, DataTable, ErrorBox, Loading, Picker, Segmented, Tile } from "../components";
 
 /* The dashboard: figures and tables, nothing else.
 
@@ -221,12 +221,8 @@ export default function Dashboard() {
       <div className="spread" style={{ marginBottom: 18 }}>
         <Segmented options={tabs} value={tab} onChange={setTab} />
         {tab === "settlement" && blocks.length > 1 && (
-          <div className="row">
-            <label>Block</label>
-            <select value={current} onChange={(e) => setBlock(e.target.value)}>
-              {blocks.map((b) => <option key={b}>{b}</option>)}
-            </select>
-          </div>
+          <Picker label="Block" value={current} onChange={setBlock}
+                  options={blocks} />
         )}
       </div>
 
