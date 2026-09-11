@@ -86,12 +86,47 @@ def kpi_records(kpi: dict) -> list[dict]:
     return sorted(out, key=lambda r: (r["block"], r["group"]))
 
 
+def settlement_pace_records(paced: dict) -> list[dict]:
+    """{block: {(group, week): paced}} -> one row per cell.
+
+    The sheet's two Pace blocks. Only the current month has these - a pace is a
+    projection of a month in progress, and there is nothing to project about a
+    month that has closed.
+    """
+    return sorted(
+        ({"block": block, "group": group, "bucket": bucket, "period": "week",
+          "pace": float(value)}
+         for block, cells in paced.items()
+         for (group, bucket), value in cells.items()),
+        key=lambda r: (r["block"], r["group"], r["bucket"]))
+
+
+def collections_pace_records(paced: dict) -> list[dict]:
+    """{(group, week): paced} -> one row per cell.
+
+    Flat, not per block: Collections has no In House / Board split - it is one
+    grid, and its pace is one block under it.
+    """
+    return sorted(
+        ({"group": group, "bucket": bucket, "period": "week",
+          "pace": float(value)}
+         for (group, bucket), value in paced.items()),
+        key=lambda r: (r["group"], r["bucket"]))
+
+
 def all_figures(result) -> dict[str, list[dict]]:
     """Everything a dashboard needs that is not one of the four tables."""
     return {
         "settlement": settlement_records(result.settlement_grids),
         "settlement_totals": settlement_total_records(result.settlement_grids),
+        "settlement_pace": settlement_pace_records(
+            getattr(result, "settlement_pace", {}) or {}),
+        "collections_pace": collections_pace_records(
+            getattr(result, "collections_pace", {}) or {}),
         "cp_settled": cp_settled_records(result.cp_settled),
         "kpi": kpi_records(result.kpi),
-        "meta": [{"current_month": result.current_month}],
+        # The dashboard needs the year as well as the month: "the current month"
+        # is a column heading, and a heading has to say which August it is.
+        "meta": [{"current_month": result.current_month,
+                  "year": getattr(result, "year", None)}],
     }

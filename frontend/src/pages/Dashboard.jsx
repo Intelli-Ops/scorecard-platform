@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, bucketLabel, bucketSort, count, money, money2, monthName, pct } from "../api";
-import { Card, DataTable, ErrorBox, Loading, Picker, Segmented, Tile } from "../components";
+import { api, count, money, monthName } from "../api";
+import { Card, DataTable, ErrorBox, Loading, Segmented } from "../components";
+import { col } from "../columns";
+import { Stat, Stats } from "../ui";
+import Settlement, { SettlementTiles } from "../settlement";
+import Collections, { CollectionsTiles } from "../collections";
+import Delta from "../delta";
+import Kpi from "../kpi";
 
 /* The dashboard: figures and tables, nothing else.
 
@@ -13,47 +19,44 @@ import { Card, DataTable, ErrorBox, Loading, Picker, Segmented, Tile } from "../
    and that is part of why it is hard to read; a segmented control keeps the
    page to one table. */
 
-const TOTAL = "Total";
-
 function useDashboard(runId) {
   const [state, setState] = useState({ loading: true });
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const [run, settlement, totals, cp, kpi] = await Promise.all([
+        const [run, settlement, totals, pace, cp, kpi, meta,
+               collections, collectionsPace, delta] = await Promise.all([
           api.run(runId),
           api.figures(runId, "settlement"),
           api.figures(runId, "settlement_totals"),
+          /* Older runs were built before the Pace blocks existed and have no
+             such figure. That is a missing section, not a broken dashboard,
+             so these resolve to nothing rather than failing the whole page. */
+          api.figures(runId, "settlement_pace").catch(() => []),
           api.figures(runId, "cp_settled"),
           api.figures(runId, "kpi"),
+          api.figures(runId, "meta").catch(() => []),
+          /* Collections is a produced TABLE, not figures - but a small one,
+             one row per group per week per payment type. Fetched whole rather
+             than paged, because the sheet's grid needs all of it at once. */
+          api.table(runId, "collections", { limit: 5000 })
+             .then((t) => t.data).catch(() => []),
+          api.figures(runId, "collections_pace").catch(() => []),
+          /* The delta rows, whole. The pivot and its filters are built from
+             them in the browser, so they all have to be here - and there are
+             hundreds, not hundreds of thousands. */
+          api.table(runId, "delta_comparison", { limit: 5000 })
+             .then((t) => t.data).catch(() => []),
         ]);
-        alive && setState({ run, settlement, totals, cp, kpi, loading: false });
+        alive && setState({ run, settlement, totals, pace, cp, kpi, meta,
+                            collections, collectionsPace, delta,
+                            loading: false });
       } catch (error) { alive && setState({ error, loading: false }); }
     })();
     return () => { alive = false; };
   }, [runId]);
   return state;
-}
-
-/* One row per group, one column per period, plus a Total row. The buckets are
-   the sheet's own: months for the year so far, then the current month's weeks. */
-function pivotSettlement(rows, block) {
-  const inBlock = rows.filter((r) => r.block === block);
-  const buckets = [...new Set(inBlock.map((r) => r.bucket))].sort(bucketSort);
-  const byGroup = {};
-  for (const r of inBlock) {
-    (byGroup[r.group] ??= { group: r.group, _total: 0 });
-    byGroup[r.group][r.bucket] = (byGroup[r.group][r.bucket] ?? 0) + r.amount;
-    byGroup[r.group]._total += r.amount;
-  }
-  const body = Object.values(byGroup).sort((a, b) => b._total - a._total);
-  const total = { group: TOTAL, _total: 0 };
-  for (const b of buckets) {
-    total[b] = body.reduce((s, g) => s + (g[b] ?? 0), 0);
-    total._total += total[b];
-  }
-  return { buckets, rows: [...body, total] };
 }
 
 /* A page of one produced table, fetched when it is looked at. Raw Data is
@@ -102,18 +105,16 @@ function TablePage({ runId, name, note }) {
     const k = c.trim().toLowerCase();
     return ID_COLUMNS.has(k) || k.endsWith("_id");
   };
+  /* Built from the same column builders as every other table, so a figure in
+     Raw Data is drawn like a figure on the Settlement sheet. An id is text
+     that happens to be digits - it must never be grouped with thousands
+     separators or read as money. */
   const columns = page.columns.map((c) => {
     const kind = page.kinds?.[c] ?? "text";
-    return {
-      key: c, label: c, num: kind !== "text",
-      render: (r) => {
-        const v = r[c];
-        if (v == null) return "";
-        if (kind === "text") return String(v);
-        if (isId(c)) return String(v);
-        return kind === "float" ? money2(v) : count(v);
-      },
-    };
+    if (kind === "text" || isId(c)) {
+      return col.text(c, c, { render: (r) => (r[c] == null ? "" : String(r[c])) });
+    }
+    return kind === "float" ? col.money2(c, c) : col.count(c, c);
   });
 
   const pages = Math.max(1, Math.ceil(page.rows / limit));
@@ -150,23 +151,16 @@ function TablePage({ runId, name, note }) {
 
 export default function Dashboard() {
   const { id } = useParams();
-  const { run, settlement, totals, cp, kpi, loading, error } = useDashboard(id);
+  const { run, settlement, totals, pace, cp, kpi, meta, collections,
+          collectionsPace, delta, loading, error } = useDashboard(id);
   const [tab, setTab] = useState("settlement");
-  const [block, setBlock] = useState(null);
 
-  const blocks = useMemo(
-    () => [...new Set((settlement ?? []).map((r) => r.block))], [settlement]);
-  const current = block ?? blocks[0];
-
-  const pivot = useMemo(
-    () => (settlement && current
-      ? pivotSettlement(settlement, current)
-      : { buckets: [], rows: [] }),
-    [settlement, current]);
-
-  const totalRows = useMemo(() => (totals ?? [])
-    .filter((t) => t.block === current)
-    .sort((a, b) => bucketSort(a.bucket, b.bucket)), [totals, current]);
+  /* Which month the run is reporting on, named. The pipeline records it, and
+     the column headings need to say WHICH August this is. */
+  const currentMonth = meta?.[0]?.current_month;
+  const monthLabel = currentMonth
+    ? `${monthName(currentMonth)}${meta[0].year ? ` ${meta[0].year}` : ""}`
+    : null;
 
   const kpiBlocks = useMemo(() => {
     const by = {};
@@ -178,18 +172,22 @@ export default function Dashboard() {
   if (loading) return <Loading what="Loading the scorecard" />;
   if (error) return <ErrorBox error={error} />;
 
+  const rawRows = run.tables.find((t) => t.name === "raw_data")?.rows;
   const settledYtd = cp.reduce((s, m) => s + m.settled, 0);
   const casesYtd = cp.reduce((s, m) => s + m.cases, 0);
-  const grand = pivot.rows.find((r) => r.group === TOTAL)?._total ?? 0;
-  const rawRows = run.tables.find((t) => t.name === "raw_data")?.rows;
 
+  /* Sheet order, which is the order the workbook prints them and the order the
+     people reading it expect. Raw Data sits last because it is the evidence
+     under the others rather than one of them. */
   const tabs = [
     { value: "settlement", label: "Settlement" },
-    { value: "kpi", label: "KPI" },
-    { value: "cp", label: "CP settled" },
     { value: "collections", label: "Collections" },
+    { value: "delta", label: "Delta" },
+    /* The rows the Delta pivot is built from, beside it rather than under it:
+       666 rows below the grid would bury the grid. */
+    { value: "delta_comparison", label: "Delta raw data" },
+    { value: "kpi", label: "KPI" },
     { value: "case_ar", label: "Case AR" },
-    { value: "delta_comparison", label: "Delta" },
     { value: "raw_data", label: "Raw data" },
   ];
 
@@ -206,108 +204,54 @@ export default function Dashboard() {
         <Link className="btn" to={`/runs/${id}`}>Review</Link>
       </div>
 
-      <div className="grid cols-4" style={{ marginBottom: 26 }}>
-        <Tile label={`Settlement · ${current ?? ""}`} value={money(grand)}
-              foot="year to date, all groups" />
-        <Tile label="CP settled cases" value={count(casesYtd)}
-              foot={`${money(settledYtd)} settled`} />
-        <Tile label="Provider groups"
-              value={count(new Set((kpi ?? []).map((k) => k.group)).size)}
-              foot={`across ${Object.keys(kpiBlocks).length} KPI blocks`} />
-        <Tile label="Raw data rows" value={count(rawRows)}
-              foot="queried on demand" />
-      </div>
+      {/* The tiles follow the tab. On Settlement they are this month's, which
+          is what the scorecard is reporting on; elsewhere they describe the
+          run itself. A fixed row of headline figures that ignores what is on
+          screen under it is furniture, not information. */}
+      {tab === "settlement" ? (
+        <SettlementTiles settlement={settlement} pace={pace} cp={cp}
+                         monthLabel={monthLabel} currentMonth={currentMonth} />
+      ) : tab === "collections" ? (
+        <CollectionsTiles rows={collections} pace={collectionsPace}
+                          monthLabel={monthLabel} />
+      ) : ["delta", "delta_comparison", "kpi"].includes(tab) ? (
+        /* None of these carries tiles. Delta's figure changes with every
+           filter and the grid already shows it; its raw rows are evidence, not
+           a headline; KPI is eight categories at once, with no single figure
+           to head them. See the notes in each. */
+        null
+      ) : (
+        <Stats cols={4}>
+          <Stat label="CP settled cases" value={count(casesYtd)}
+                foot={`${money(settledYtd)} settled, year to date`} />
+          <Stat label="Provider groups"
+                value={count(new Set((kpi ?? []).map((k) => k.group)).size)}
+                foot={`across ${Object.keys(kpiBlocks).length} KPI blocks`} />
+          <Stat label="Raw data rows" value={count(rawRows)}
+                foot="queried on demand" />
+          <Stat label="Week" value={run.run.week} foot={run.run.status} />
+        </Stats>
+      )}
 
       <div className="spread" style={{ marginBottom: 18 }}>
         <Segmented options={tabs} value={tab} onChange={setTab} />
-        {tab === "settlement" && blocks.length > 1 && (
-          <Picker label="Block" value={current} onChange={setBlock}
-                  options={blocks} />
-        )}
       </div>
 
       {tab === "settlement" && (
-        <>
-          <Card flush title={`Settlement · ${current}`}
-                sub="Months are totals for the year so far; weeks are the current month.">
-            <DataTable
-              isTotal={(r) => r.group === TOTAL}
-              columns={[
-                { key: "group", label: "Group", strong: true },
-                ...pivot.buckets.map((b) => ({
-                  key: b, label: bucketLabel(b), num: true,
-                  render: (r) => (r[b] ? money(r[b]) : "—"),
-                })),
-                { key: "_total", label: "Total", num: true, strong: true,
-                  render: (r) => money(r._total) },
-              ]}
-              rows={pivot.rows}
-            />
-          </Card>
-
-          {totalRows.length > 0 && (
-            <Card flush title="Settlement %"
-                  sub="The whole block's settlement plus paid, over its billed — not an average of the group percentages.">
-              <DataTable
-                columns={[
-                  { key: "bucket", label: "Period", strong: true,
-                    render: (r) => bucketLabel(r.bucket) },
-                  { key: "settlement_pct", label: "Settlement %", num: true,
-                    render: (r) => pct(r.settlement_pct) },
-                ]}
-                rows={totalRows}
-              />
-            </Card>
-          )}
-        </>
+        <Settlement settlement={settlement} totals={totals} pace={pace}
+                    cp={cp} monthLabel={monthLabel} />
       )}
 
-      {tab === "kpi" && (
-        <div className="grid cols-2">
-          {Object.entries(kpiBlocks).map(([name, values]) => {
-            const sum = values.reduce((s, v) => s + v.value, 0);
-            return (
-              <Card key={name} flush title={name}
-                    sub={`${values.length} groups`}>
-                <DataTable
-                  isTotal={(r) => r.group === TOTAL}
-                  columns={[
-                    { key: "group", label: "Group" },
-                    { key: "value", label: "Value", num: true,
-                      render: (r) => count(r.value) },
-                  ]}
-                  rows={[...values, { group: TOTAL, value: sum }]}
-                />
-              </Card>
-            );
-          })}
-        </div>
+      {tab === "kpi" && <Kpi kpi={kpi} monthLabel={monthLabel} />}
+
+      {tab === "delta" && <Delta rows={delta} />}
+
+      {tab === "collections" && (
+        <Collections rows={collections} pace={collectionsPace}
+                     monthLabel={monthLabel} />
       )}
 
-      {tab === "cp" && (
-        <Card flush title="CP settled cases"
-              sub="From the Hearing Calendar, by month.">
-          <DataTable
-            isTotal={(r) => r.month === TOTAL}
-            columns={[
-              { key: "month", label: "Month", strong: true,
-                render: (r) => (r.month === TOTAL ? TOTAL : monthName(r.month)) },
-              { key: "cases", label: "Cases", num: true,
-                render: (r) => count(r.cases) },
-              { key: "settled", label: "Settled", num: true,
-                render: (r) => money(r.settled) },
-              { key: "outstanding", label: "Outstanding", num: true,
-                render: (r) => money(r.outstanding) },
-            ]}
-            rows={[...cp, {
-              month: TOTAL, cases: casesYtd, settled: settledYtd,
-              outstanding: cp.reduce((s, m) => s + m.outstanding, 0),
-            }]}
-          />
-        </Card>
-      )}
-
-      {["collections", "case_ar", "delta_comparison", "raw_data"].includes(tab) && (
+      {["case_ar", "delta_comparison", "raw_data"].includes(tab) && (
         <TablePage
           runId={id} name={tab}
           note={tab === "raw_data"

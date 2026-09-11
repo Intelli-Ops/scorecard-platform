@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..db.models import Run, RunFigure, RunInput, RunNote, RunTable
+from ..db.models import Run, RunFigure, RunInput, RunNote, RunTable, Upload
 from ..reports import ReportType, get as get_report
 from ..reports.cache import ParquetCache
 from ..storage.files import FileStore
@@ -185,19 +185,60 @@ def _next_seq(session: Session, run: Run) -> int:
     return 1 + max((n.seq for n in run.notes), default=0)
 
 
-def delete(session: Session, run: Run, results: FileStore | None = None) -> dict:
-    """Remove a run and everything it recorded.
+def _retire_uploads(session: Session, upload_ids, objects: FileStore) -> tuple[int, int]:
+    """Remove uploads nothing reads any more, and the bytes behind them.
 
-    Two things are deliberately NOT touched:
+    Two levels of reference counting, because both are shared on purpose:
 
-      * the uploaded source files, which belong to the week and to the other
-        report as well - deleting a run must never cost you the inputs;
-      * any result parquet another run also produced. Results are addressed by
-        the hash of their own bytes, so two identical builds share one file.
-        A blob is removed only once nothing points at it any more.
+      * the ROW goes only once no RunInput names it. An upload belongs to the
+        week, not to one run - the seven shared files feed both reports and
+        every rebuild reads them again.
+      * the BLOB goes only once no Upload row names its hash. Identical files
+        are stored once, and Thursday's Case AR is often byte-for-byte
+        Tuesday's, so one stored file can back two rows - and two weeks.
+
+    Returns (rows removed, blobs unlinked).
+    """
+    rows_gone, blobs_gone = 0, 0
+    for upload_id in upload_ids:
+        still_read = session.execute(
+            select(RunInput.id).where(RunInput.upload_id == upload_id).limit(1)
+        ).scalar_one_or_none()
+        if still_read is not None:
+            continue                      # another run still reads this file
+        upload = session.get(Upload, upload_id)
+        if upload is None:
+            continue
+        sha, suffix = upload.sha256, upload.suffix
+        session.delete(upload)
+        session.flush()
+        rows_gone += 1
+        shared = session.execute(
+            select(Upload.id).where(Upload.sha256 == sha).limit(1)
+        ).scalar_one_or_none()
+        if shared is None and objects.remove(sha, suffix):
+            blobs_gone += 1
+    return rows_gone, blobs_gone
+
+
+def delete(session: Session, run: Run, results: FileStore | None = None,
+           objects: FileStore | None = None) -> dict:
+    """Remove a run, everything it recorded, and the files it consumed.
+
+    Everything is reference counted, never deleted outright - see
+    _retire_uploads for the inputs. The same holds for the outputs: a result
+    parquet is addressed by the hash of its own bytes, so two identical builds
+    share one file, and the blob goes only once no RunTable points at the hash.
+
+    Deleting the GFS run leaves the files All Providers still needs; the last
+    run to be deleted takes them with it. An upload no run ever read is not
+    this run's to remove - use delete_week for that.
     """
     results = results or FileStore(settings.results_dir)
+    objects = objects or FileStore(settings.object_dir)
+
     mine = [(t.sha256, t.rows) for t in run.tables]
+    consumed = [i.upload_id for i in run.inputs]
     summary = {"run_id": run.id, "report_key": run.report_key, "week": run.week,
                "tables": len(mine), "rows": sum(r for _, r in mine)}
 
@@ -212,4 +253,49 @@ def delete(session: Session, run: Run, results: FileStore | None = None) -> dict
         if still_used is None and results.remove(sha, ".parquet"):
             freed += 1
     summary["files_removed"] = freed
+
+    rows_gone, blobs_gone = _retire_uploads(session, consumed, objects)
+    summary["uploads_removed"] = rows_gone
+    summary["upload_files_removed"] = blobs_gone
+    return summary
+
+
+def delete_week(session: Session, week: str, results: FileStore | None = None,
+                objects: FileStore | None = None) -> dict:
+    """Remove a whole week: its builds, and every file uploaded for it.
+
+    This exists because deleting runs one by one cannot get you back to a clean
+    slate. Uploads OUTLIVE runs by design - they are the week's inputs, not one
+    build's - so a week whose builds have all been deleted keeps its files and
+    goes on offering a Build button with nothing behind it. Reference counting
+    has nothing left to count against; only asking for the week itself does.
+
+    Runs go first, so each one retires what it alone was holding, and whatever
+    remains is what no build ever read.
+    """
+    results = results or FileStore(settings.results_dir)
+    objects = objects or FileStore(settings.object_dir)
+
+    runs = session.execute(select(Run).where(Run.week == week)).scalars().all()
+    busy = [r.id for r in runs if r.status in ("pending", "running")]
+    if busy:
+        raise ValueError(
+            f"week {week} still has a build running (run {busy[0]}). "
+            f"Wait for it to finish.")
+
+    summary = {"week": week, "runs_removed": 0, "tables": 0, "rows": 0,
+               "files_removed": 0, "uploads_removed": 0,
+               "upload_files_removed": 0}
+    for run in runs:
+        one = delete(session, run, results, objects)
+        summary["runs_removed"] += 1
+        for key in ("tables", "rows", "files_removed", "uploads_removed",
+                    "upload_files_removed"):
+            summary[key] += one[key]
+
+    left = [u.id for u in session.execute(
+        select(Upload).where(Upload.week == week)).scalars()]
+    rows_gone, blobs_gone = _retire_uploads(session, left, objects)
+    summary["uploads_removed"] += rows_gone
+    summary["upload_files_removed"] += blobs_gone
     return summary

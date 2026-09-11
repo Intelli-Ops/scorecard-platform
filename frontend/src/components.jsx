@@ -52,12 +52,17 @@ export function Segmented({ options, value, onChange, label }) {
 }
 
 /* A dropdown, dressed the same way as the segmented control so the two read
-   as one family. Used where the choices are too many to sit in a row. */
-export function Picker({ label, value, onChange, options, placeholder }) {
+   as one family. Used where the choices are too many to sit in a row.
+
+   `active` marks it as narrowing something. A row of filters all looking
+   identical whether or not they are set is how you end up reading a filtered
+   table as if it were the whole thing - so a set filter colours itself, and
+   its label goes dark. */
+export function Picker({ label, value, onChange, options, placeholder, active }) {
   return (
-    <div className="filter">
+    <div className={`filter${active ? " on" : ""}`}>
       {label && <span className="filter-label">{label}</span>}
-      <select className="picker" value={value}
+      <select className={`picker${active ? " on" : ""}`} value={value}
               onChange={(e) => onChange(e.target.value)}>
         {placeholder && <option value="">{placeholder}</option>}
         {options.map((o) =>
@@ -78,15 +83,41 @@ export function Picker({ label, value, onChange, options, placeholder }) {
    groupBy draws a heavier rule wherever its value changes. The run history
    holds two runs per week, and without that break a week's pair is not
    visually distinguishable from the week above it. */
+/* How a column is drawn - shared by the heading and its cells, so the two can
+   never disagree about where a column sits.
+
+   `align` is the current way to say it ("left" | "center" | "right"); `num` is
+   the older flag and still means right, so tables written before this keep
+   working unchanged. */
+function cellClass(c) {
+  const align = c.align ?? (c.num ? "right" : "left");
+  return [align === "right" ? "num" : `al-${align}`,
+          c.strong ? "strong" : "", c.nowrap ? "nowrap" : "",
+          c.className ?? ""].filter(Boolean).join(" ");
+}
+
+/* `spans` is an optional row of grouped headings above the column names -
+   [{ label: "August 2026", span: 2 }, ...] - so a month can sit over its own
+   Settlement Amount and Settlement % the way the workbook prints it. Without
+   it the two columns read as unrelated, and a sheet with a pair per month
+   becomes a wall of alternating headings. */
 export function DataTable({ columns, rows, empty = "Nothing to show",
-                            isTotal, rowClass, groupBy }) {
+                            isTotal, rowClass, groupBy, spans }) {
   if (!rows?.length) return <div className="empty">{empty}</div>;
   return (
     <div className="scroll">
       <table className="grid-table">
         <thead>
+          {spans && (
+            <tr className="spans">
+              {spans.map((g, i) => (
+                <th key={i} colSpan={g.span ?? 1}
+                    className={`span ${g.className ?? ""}`}>{g.label}</th>
+              ))}
+            </tr>
+          )}
           <tr>{columns.map((c) => (
-            <th key={c.key} className={c.num ? "num" : ""}
+            <th key={c.key} className={cellClass(c)}
                 style={c.width ? { width: c.width } : undefined}>{c.label}</th>
           ))}</tr>
         </thead>
@@ -102,8 +133,7 @@ export function DataTable({ columns, rows, empty = "Nothing to show",
                   const v = c.render ? c.render(r) : (r[c.key] ?? "");
                   return (
                     <td key={c.key}
-                        className={[c.num ? "num" : "", c.strong ? "strong" : "",
-                                    c.nowrap ? "nowrap" : ""].filter(Boolean).join(" ")}
+                        className={cellClass(c)}
                         /* Cells are one line and clip. The whole value is on
                            the tooltip, so nothing is actually lost. */
                         title={typeof v === "string" ? v : undefined}>

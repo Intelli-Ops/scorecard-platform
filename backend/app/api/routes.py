@@ -66,6 +66,31 @@ def get_week(week: str) -> dict:
         return week_status(s, week)
 
 
+@router.delete("/weeks/{week}")
+def delete_week(week: str, user=Depends(current_user)) -> dict:
+    """Delete a week: its builds, and every file uploaded for it.
+
+    Deleting builds one at a time cannot get you back to a clean slate. Uploads
+    outlive runs on purpose - they belong to the week, not to one build - so a
+    week whose builds are all gone keeps its files and still offers a Build
+    button with nothing behind it. This is how you actually remove a week you
+    uploaded by mistake, or a test week you no longer want.
+
+    It cannot be undone: the files would have to be uploaded again.
+    """
+    with session() as s:
+        known = s.execute(select(Upload.id).where(Upload.week == week)
+                          .limit(1)).scalar_one_or_none()
+        has_runs = s.execute(select(Run.id).where(Run.week == week)
+                             .limit(1)).scalar_one_or_none()
+        if known is None and has_runs is None:
+            raise HTTPException(404, f"nothing uploaded for {week}")
+        try:
+            return runner.delete_week(s, week) | {"deleted_by": user.email}
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+
+
 @router.post("/weeks/{week}/uploads")
 async def upload(week: str,
                  files: list[UploadFile] = File(...),
@@ -200,8 +225,12 @@ def delete_run(run_id: int, user=Depends(current_user)) -> dict:
     A build that was started for the wrong week, or twice by mistake, should
     not sit in the history forever confusing the next person.
 
-    Uploads are untouched - they belong to the week and to the other report as
-    well. A running build cannot be deleted out from under itself.
+    The files it read go with it, but only the ones nothing else needs: an
+    upload feeds both reports and every rebuild of its week, so it is removed
+    once no surviving run consumes it. Delete the GFS run and All Providers
+    keeps its inputs; delete the last run for a week and the files go too.
+
+    A running build cannot be deleted out from under itself.
 
     Anyone signed in can do this today. Restricting it to an admin is a later
     step and needs a role on the account first; there is no admin to be.

@@ -83,6 +83,10 @@ export const api = {
   approve: (id) => json(`/api/runs/${id}/approve`, { method: "POST" }),
   unapprove: (id) => json(`/api/runs/${id}/unapprove`, { method: "POST" }),
   deleteRun: (id) => json(`/api/runs/${id}`, { method: "DELETE" }),
+
+  // Uploads outlive runs, so deleting builds one by one never clears a
+  // week. This is what removes the files themselves.
+  deleteWeek: (w) => json(`/api/weeks/${w}`, { method: "DELETE" }),
   figures: (id, name) => json(`/api/runs/${id}/figures/${name}`),
   table: (id, name, { limit = 100, offset = 0 } = {}) =>
     json(`/api/runs/${id}/tables/${name}?limit=${limit}&offset=${offset}`),
@@ -109,42 +113,7 @@ export const api = {
   },
 };
 
-export const money = (n) =>
-  n == null ? "" : n.toLocaleString(undefined,
-    { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-
-export const money2 = (n) =>
-  n == null ? "" : n.toLocaleString(undefined,
-    { style: "currency", currency: "USD", minimumFractionDigits: 2 });
-
-export const pct = (n) =>
-  n == null ? "" : `${(n * 100).toFixed(1)}%`;
-
-export const count = (n) =>
-  n == null ? "" : n.toLocaleString();
-
-export const bytes = (n) =>
-  n < 1e6 ? `${(n / 1e3).toFixed(0)} KB` : `${(n / 1e6).toFixed(1)} MB`;
-
-export const when = (iso) =>
-  iso ? new Date(iso).toLocaleString(undefined,
-    { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
-
-/* Bucket labels come from the .bat pipeline: W32 is week 32, M5 is month 5.
-   Both appear because the report shows weekly detail for the current month and
-   monthly totals for the months before it. */
-const MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-export const bucketLabel = (b) =>
-  b?.startsWith("M") ? MONTHS[+b.slice(1)] ?? b : `Wk ${b?.slice(1)}`;
-
-export const monthName = (m) => MONTHS[m] ?? String(m);
-
-/* Ordering for the x axis: months first in calendar order, then the current
-   month's weeks. Sorting the raw labels as text would put W32 before M2. */
-export const bucketSort = (a, b) => {
-  const rank = (s) => (s.startsWith("M") ? [0, +s.slice(1)] : [1, +s.slice(1)]);
-  const [ka, va] = rank(a), [kb, vb] = rank(b);
-  return ka - kb || va - vb;
-};
+/* Formatting lives in format.js - pure, and importable without a bundler.
+   Re-exported here because every screen has always reached for it through
+   api.js, and moving a file is not a reason to touch twenty imports. */
+export * from "./format.js";

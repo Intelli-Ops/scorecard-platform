@@ -24,6 +24,11 @@ import datetime as dt
 
 import polars as pl
 
+# The run-rate formula is shared with the GFS settlement sheet, which asks the
+# same question of its own numbers. Re-exported here: this module's callers
+# have always imported it from collections.
+from ...pacing import business_days, pace   # noqa: F401
+
 
 def _i64(c: str) -> pl.Expr:
     return pl.col(c).cast(pl.Float64, strict=False).round(0).cast(pl.Int64)
@@ -101,24 +106,3 @@ def build_collections(payments: pl.DataFrame,
              .sort(["Group", "Week", "PT"]), rep)
 
 
-def pace(cumulative: float, week_index: int, business_days: int,
-         week_days: int = 5) -> float:
-    """Run-rate: project the month from what has landed so far.
-
-    cumulative / min(week_days * week_index, business_days) * business_days
-
-    This is the template's own =SUM(J9)/5*21 formula, generalised. At month end the
-    divisor reaches the multiplier and the pace becomes the actual.
-    """
-    elapsed = min(week_days * week_index, business_days)
-    return cumulative / elapsed * business_days if elapsed else 0.0
-
-
-def business_days(year: int, month: int) -> int:
-    d = dt.date(year, month, 1)
-    n = 0
-    while d.month == month:
-        if d.weekday() < 5:
-            n += 1
-        d += dt.timedelta(days=1)
-    return n

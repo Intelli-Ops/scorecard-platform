@@ -26,6 +26,7 @@ from .core.delta import combine_delta, build_delta
 from .core.kpi import build_kpi_sql, build_kpi_scorecard
 from .core.settlement import settlement_grids, cp_settled
 from ..notes import Note, info, warning, action, sort_notes
+from ..pacing import pace_grid
 from .readers import GfsSources
 
 YEAR = 2026
@@ -46,6 +47,17 @@ class RunResult:
     cp_settled: dict
     kpi: dict
     current_month: int
+
+    # Settlements (In House - Pace) and (Board - Pace): the current month's
+    # weeks projected to a full month at the rate seen so far. Empty for a
+    # month with no weekly buckets yet.
+    settlement_pace: dict = field(default_factory=dict)
+
+    # Collections Pace, the block under the Collection High-Level grid. Built
+    # from the week TOTALS - the sheet paces a group's whole week, not each
+    # payment type separately.
+    collections_pace: dict = field(default_factory=dict)
+    year: int = YEAR
 
     notes: list[Note] = field(default_factory=list)
     seconds: float = 0.0
@@ -77,12 +89,33 @@ def run(src: GfsSources, rules: dict, as_of: dt.date | None = None,
     grids, cur_month = settlement_grids(comb, src.gfs_cases, src.providers)
     cp = cp_settled(src.hearing_noi, cur_month)
 
+    # The sheet's two Pace blocks. Built from the same grids rather than from a
+    # second pass over the data, so a pace can never disagree with the amount
+    # it is projected from.
+    weeks = sorted({b for _g, b in next(iter(grids.values()))[0] if b.startswith("W")},
+                   key=lambda w: int(w[1:]))
+    paced = {block: pace_grid(amounts, weeks, YEAR, cur_month)
+             for block, (amounts, _pcts, _totals) in grids.items()}
+
+    # The same projection over Collections. Its buckets are Excel WEEKNUMs in a
+    # Week column rather than "W32" strings, so they are named to match the
+    # settlement grids and the one pace_grid serves both.
+    coll_weeks = sorted({int(w) for w in coll["Week"].unique()})
+    coll_amounts = {(g, f"W{w}"): amt for g, w, amt in
+                    coll.group_by(["Group", "Week"])
+                        .agg(pl.col("Payment").sum().alias("amt"))
+                        .select("Group", "Week", "amt").rows()}
+    collections_paced = pace_grid(coll_amounts, [f"W{w}" for w in coll_weeks],
+                                  YEAR, cur_month)
+
     kpi, krep = build_kpi_sql(src.sql_doc, src.providers, rules, YEAR, cur_month)
     kpi.update(build_kpi_scorecard(src.scorecard, src.providers, rules, krep))
 
     return RunResult(
         raw_data=raw, case_ar=case_ar, delta_comparison=delta, collections=coll,
         settlement_grids=grids, cp_settled=cp, kpi=kpi, current_month=cur_month,
+        settlement_pace=paced, collections_pace=collections_paced,
+        year=YEAR,
         notes=_notes(rep, drep, krep, src, rules),
         seconds=time.perf_counter() - t0,
     )

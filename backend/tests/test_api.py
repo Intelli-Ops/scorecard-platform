@@ -202,17 +202,197 @@ def test_deleting_a_run_removes_it_and_everything_it_recorded(client):
                              ).scalars().all() == []
 
 
-def test_deleting_a_run_leaves_the_uploaded_files_alone(client):
-    """The files belong to the week and to the other report as well. Deleting
-    a build must never cost you the inputs."""
+def _consume(run_id, upload_ids):
+    """Record that a run read these uploads, the way a real build does."""
+    from app.db.models import RunInput
+    from app.db.session import session
+    with session() as s:
+        for upload_id in upload_ids:
+            s.add(RunInput(run_id=run_id, upload_id=upload_id, rows_read=1))
+        s.commit()
+
+
+def _upload_ids():
+    from sqlalchemy import select
+    from app.db.models import Upload
+    from app.db.session import session
+    with session() as s:
+        return [u.id for u in s.execute(select(Upload)).scalars()]
+
+
+def _uploads_left():
+    return len(_upload_ids())
+
+
+def test_deleting_the_last_run_removes_the_files_it_read(client):
+    """Deleting a build takes its inputs with it - both the row and the bytes,
+    once nothing else names them."""
+    from sqlalchemy import select
+    from app.config import settings
+    from app.db.models import Upload
+    from app.db.session import session
+    from app.storage.files import FileStore
+
+    upload(client, "2026-W35", "Supporting File.xlsx")
+    with session() as s:
+        row = s.execute(select(Upload)).scalar_one()
+        upload_id, sha, suffix = row.id, row.sha256, row.suffix
+
+    blob = FileStore(settings.object_dir).path(sha, suffix)
+    assert blob.exists()
+
+    run_id = _finished_run()
+    _consume(run_id, [upload_id])
+
+    body = client.delete(f"/api/runs/{run_id}").json()
+    assert body["uploads_removed"] == 1
+    assert body["upload_files_removed"] == 1
+    assert _uploads_left() == 0
+    assert not blob.exists()
+
+
+def test_deleting_one_run_keeps_files_the_other_report_still_reads(client):
+    """The seven shared files feed BOTH reports. Deleting the GFS run must
+    never cost All Providers its inputs."""
+    from app.config import settings
+    from app.storage.files import FileStore
+
+    upload(client, "2026-W35", "Supporting File.xlsx")
+    [upload_id] = _upload_ids()
+
+    gfs = _finished_run(report="gfs")
+    all_providers = _finished_run(report="all_providers")
+    _consume(gfs, [upload_id])
+    _consume(all_providers, [upload_id])
+
+    body = client.delete(f"/api/runs/{gfs}").json()
+    assert body["uploads_removed"] == 0
+    assert _uploads_left() == 1
+
+    body = client.delete(f"/api/runs/{all_providers}").json()
+    assert body["uploads_removed"] == 1          # the last run took them
+    assert _uploads_left() == 0
+    assert not list(FileStore(settings.object_dir).root.rglob("*.xlsx"))
+
+
+def test_deleting_a_run_leaves_uploads_no_run_ever_read(client):
+    """A file uploaded but never built is not this run's to remove."""
+    upload(client, "2026-W35", "Supporting File.xlsx")
+    upload(client, "2026-W35", "Payment Detail.xlsx")
+    read, unread = _upload_ids()
+
+    run_id = _finished_run()
+    _consume(run_id, [read])
+
+    assert client.delete(f"/api/runs/{run_id}").json()["uploads_removed"] == 1
+    assert _upload_ids() == [unread]
+
+
+def test_deleting_keeps_bytes_a_second_upload_row_shares(client):
+    """Thursday's Case AR is often byte-for-byte Tuesday's, so two Upload rows
+    share one stored blob. The blob goes only with the last row naming it."""
+    from sqlalchemy import select
+    from app.config import settings
+    from app.db.models import Upload
+    from app.db.session import session
+    from app.storage.files import FileStore
+
+    same = b"identical bytes"
+    name = "Combined Owner Case AR.xlsx"       # the one file uploaded per report
+    assert upload(client, "2026-W35", name, body=same,
+                  for_report="gfs").status_code == 200
+    assert upload(client, "2026-W35", name, body=same,
+                  for_report="all_providers").status_code == 200
+
+    with session() as s:
+        rows = s.execute(select(Upload)).scalars().all()
+        assert len({u.sha256 for u in rows}) == 1        # one blob, two rows
+        tuesday, thursday = rows[0].id, rows[1].id
+        blob = FileStore(settings.object_dir).path(rows[0].sha256, rows[0].suffix)
+
+    gfs, all_providers = _finished_run(), _finished_run(report="all_providers")
+    _consume(gfs, [tuesday])
+    _consume(all_providers, [thursday])
+
+    body = client.delete(f"/api/runs/{gfs}").json()
+    assert body["uploads_removed"] == 1          # its own row went
+    assert body["upload_files_removed"] == 0     # the bytes did not
+    assert blob.exists()
+
+    body = client.delete(f"/api/runs/{all_providers}").json()
+    assert body["upload_files_removed"] == 1
+    assert not blob.exists()
+
+
+def test_deleting_a_week_removes_its_files_and_its_builds(client):
+    """Deleting builds one by one cannot reach the uploads - they outlive runs
+    by design. Asking for the week itself is what clears it."""
+    from app.config import settings
+    from app.storage.files import FileStore
+
+    upload(client, "2026-W35", "Supporting File.xlsx", body=b"one")
+    upload(client, "2026-W35", "Payment Detail.xlsx", body=b"two")
+    [read, _] = _upload_ids()
+    _consume(_finished_run(week="2026-W35"), [read])
+
+    body = client.delete("/api/weeks/2026-W35").json()
+    assert body["runs_removed"] == 1
+    assert body["uploads_removed"] == 2          # the read one AND the unread
+    assert body["upload_files_removed"] == 2
+    assert body["deleted_by"] == "tester@appedology.com"
+    assert _uploads_left() == 0
+    assert not list(FileStore(settings.object_dir).root.rglob("*.xlsx"))
+
+
+def test_a_deleted_week_stops_being_listed(client):
+    """The weeks list is built from uploads, so a week with none is gone from
+    it - no Build button with nothing behind it."""
+    upload(client, "2026-W35", "Supporting File.xlsx")
+    upload(client, "2026-W36", "Supporting File.xlsx", body=b"another week")
+    assert {w["week"] for w in client.get("/api/weeks").json()} == {
+        "2026-W35", "2026-W36"}
+
+    client.delete("/api/weeks/2026-W35")
+    assert {w["week"] for w in client.get("/api/weeks").json()} == {"2026-W36"}
+
+
+def test_deleting_a_week_leaves_another_weeks_identical_file(client):
+    """Two weeks can upload byte-identical files, which are stored once. The
+    blob must survive until the last week naming it goes."""
+    from app.config import settings
+    from app.storage.files import FileStore
     from sqlalchemy import select
     from app.db.models import Upload
     from app.db.session import session
 
-    upload(client, "2026-W35", "Supporting File.xlsx")
-    client.delete(f"/api/runs/{_finished_run()}")
+    same = b"the very same bytes"
+    upload(client, "2026-W35", "Supporting File.xlsx", body=same)
+    upload(client, "2026-W36", "Supporting File.xlsx", body=same)
     with session() as s:
-        assert len(s.execute(select(Upload)).scalars().all()) == 1
+        row = s.execute(select(Upload)).scalars().first()
+        blob = FileStore(settings.object_dir).path(row.sha256, row.suffix)
+
+    assert client.delete("/api/weeks/2026-W35").json()["upload_files_removed"] == 0
+    assert blob.exists()                     # W36 still names these bytes
+    assert client.delete("/api/weeks/2026-W36").json()["upload_files_removed"] == 1
+    assert not blob.exists()
+
+
+def test_a_week_with_a_running_build_cannot_be_deleted(client):
+    upload(client, "2026-W35", "Supporting File.xlsx")
+    _finished_run(week="2026-W35", status="running")
+    r = client.delete("/api/weeks/2026-W35")
+    assert r.status_code == 409 and "still has a build running" in r.json()["detail"]
+    assert _uploads_left() == 1
+
+
+def test_deleting_a_week_that_is_not_there_is_a_404(client):
+    assert client.delete("/api/weeks/2026-W99").status_code == 404
+
+
+def test_deleting_a_week_needs_an_account(client):
+    bare = TestClient(client.app)
+    assert bare.delete("/api/weeks/2026-W35").status_code == 401
 
 
 def test_a_running_build_cannot_be_deleted(client):

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..reports import (CASE_AR_SOURCES, REPORTS, SHARED_SOURCES, ReportType,
@@ -150,7 +150,12 @@ def source_set(session: Session, store: FileStore, report: ReportType,
 
 def week_status(session: Session, week: str) -> dict:
     """What the upload screen shows: which files are in, which are still needed."""
-    out = {"week": week, "reports": {}}
+    # Every row held for the week, not just the latest per source. A corrected
+    # re-upload is a new row and the old one is kept, so this is larger than
+    # what `have` lists - and it is the number deleting the week would remove.
+    files = session.execute(select(func.count()).select_from(Upload)
+                            .where(Upload.week == week)).scalar_one()
+    out = {"week": week, "files": files, "reports": {}}
     for key in ("gfs", "all_providers"):
         report = get_report(key)
         uploads = latest_uploads(session, report, week)

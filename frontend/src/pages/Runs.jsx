@@ -113,7 +113,8 @@ export default function Runs() {
                       disabled={["pending", "running"].includes(r.status)}
                       title={["pending", "running"].includes(r.status)
                         ? "Still building - wait for it to finish."
-                        : `Delete ${r.report} ${r.week}`}
+                        : `Delete ${r.report} ${r.week}, and the files it `
+                          + `read once no other run needs them`}
                     />
                   </span>
                 ) },

@@ -25,6 +25,7 @@
   --green:       #21B47E;
   --green-hi:    #1B9E6E;
   --green-soft:  #E3F5EC;
+  --green-mid:   #CFEDDF;   /* the current month inside a total row */
   --green-line:  #BFE6D4;
 
   /* Ink */
@@ -41,11 +42,22 @@
   --warn:        #C08A2E;
   --alert:       #C1544A;
 
+  /* Tile accents. Six hues, walked in order so a row of tiles never repeats
+     one - see TONES in ui.jsx. Muted on purpose: the rail says which figure
+     is which, the figure itself is what gets read. */
+  --t-green:  #21B47E;
+  --t-teal:   #157B6C;
+  --t-blue:   #3C7EA6;
+  --t-violet: #7A63A8;
+  --t-amber:  #C08A2E;
+  --t-rose:   #C1706A;
+
   --r-lg: 14px;
   --r-md: 10px;
   --r-sm: 8px;
 
   --shadow: 0 1px 2px rgba(14, 59, 53, .05), 0 6px 20px rgba(14, 59, 53, .05);
+  --shadow-hi: 0 2px 4px rgba(14, 59, 53, .07), 0 10px 28px rgba(14, 59, 53, .09);
 
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
           "Segoe UI", Inter, system-ui, sans-serif;
@@ -130,7 +142,13 @@ h3 { font-size: 12px; font-weight: 600; color: var(--text-2); margin: 0 0 8px;
   letter-spacing: .04em;
 }
 
-.main { flex: 1; min-width: 0; padding: 34px 40px 64px; max-width: 1460px; }
+/* The page takes the whole width the sidebar is not using. There was a
+   1460px cap here, which on a wide monitor left a band of empty desk down the
+   right while a settlement table with a column per month was scrolling
+   sideways inside it. Wide tables are the reason this app exists, so the
+   width goes to them; `flex: 1` with `min-width: 0` means collapsing the
+   sidebar hands its 154px straight to the content. */
+.main { flex: 1; min-width: 0; padding: 34px 40px 64px; }
 .head { margin-bottom: 26px; }
 .head .sub { color: var(--text-2); margin-top: 5px; }
 
@@ -148,19 +166,76 @@ h3 { font-size: 12px; font-weight: 600; color: var(--text-2); margin: 0 0 8px;
 }
 
 .grid { display: grid; gap: 14px; }
+/* One thing under the next, full width. The cards carry their own bottom
+   margin, so this is a column rather than a gapped grid. */
+.stack { display: block; }
 .cols-2 { grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); }
+/* auto-fit, so the tiles spread into whatever width they are given rather than
+   sitting in a fixed four and leaving a gap. Collapsing the sidebar can fit
+   another tile on the row; a narrow window drops to two. */
 .cols-4 { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.cols-5 { grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .spread { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 
+/* The headline figures.
+
+   A tile carries an accent rail down its left edge rather than a coloured
+   fill: the colour says which family the figure belongs to without competing
+   with the figure itself, which is the thing being read. */
 .tile {
+  position: relative; overflow: hidden;
   background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 17px 19px;
+  border-radius: var(--r-lg); box-shadow: var(--shadow);
+  padding: 16px 18px 17px 20px;
+  text-align: left; font: inherit; color: inherit;
+  transition: box-shadow .16s ease, border-color .16s ease, transform .16s ease;
 }
-.tile .label { color: var(--text-2); font-size: 12.5px; font-weight: 500; }
-.tile .value { font-size: 27px; font-weight: 600; letter-spacing: -0.022em;
-               margin-top: 7px; font-variant-numeric: tabular-nums; line-height: 1.15; }
-.tile .foot { color: var(--text-3); font-size: 12px; margin-top: 5px; }
+.tile::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 3px;
+  background: var(--line-2);
+  transition: background .16s ease;
+}
+.tile.tone-green::before  { background: var(--t-green); }
+.tile.tone-teal::before   { background: var(--t-teal); }
+.tile.tone-blue::before   { background: var(--t-blue); }
+.tile.tone-violet::before { background: var(--t-violet); }
+.tile.tone-amber::before  { background: var(--t-amber); }
+.tile.tone-rose::before   { background: var(--t-rose); }
+/* The rail widens on hover rather than changing colour, so a tile stays
+   identifiable as itself while it responds. */
+.tile:hover::before { width: 4px; }
+
+.tile .label {
+  color: var(--text-2); font-size: 11.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tile .value {
+  font-size: 27px; font-weight: 600; letter-spacing: -0.024em;
+  margin-top: 9px; line-height: 1.1; color: var(--text);
+}
+.tile .foot {
+  color: var(--text-3); font-size: 12px; margin-top: 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Hover lifts the card a hair and warms its rule. Only tiles that DO something
+   get the pointer and the press - a figure that is not a control must not
+   look like one. */
+.tile:hover { box-shadow: var(--shadow-hi); border-color: var(--line-2); }
+.tile.clickable { cursor: pointer; }
+.tile.clickable:hover { transform: translateY(-1px); border-color: var(--green-line); }
+.tile.clickable:active { transform: translateY(0); }
+.tile.clickable:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.tile.active { border-color: var(--green-line); background: var(--green-soft); }
+.tile.active::before { background: var(--green); }
+
+.stats { margin-bottom: 26px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tile, .tile.clickable:hover { transition: none; transform: none; }
+}
 
 /* ---------------------------------------------------------------- controls */
 
@@ -243,6 +318,39 @@ select.picker {
 select.picker:hover { border-color: var(--green-line);
                       background-color: var(--surface-2); }
 
+/* A filter that is narrowing something says so: ruled and inked in the accent,
+   with a dot in front of its label. Reading a filtered table as though it were
+   the whole thing is the mistake this prevents.
+
+   The CONTROL is marked, not filled. A background colour on a <select> is
+   inherited by the native option list the browser opens over it, so tinting
+   the closed control turned the open dropdown green - a menu tinted for a
+   reason that has nothing to do with the menu. A heavier rule and accented
+   text say the same thing and stop at the control's edge. */
+select.picker.on {
+  border-color: var(--green); border-width: 1.5px;
+  padding: 6.5px 31.5px 6.5px 14.5px;      /* hold the size against the rule */
+  color: var(--green-hi); font-weight: 600;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='7' viewBox='0 0 10 7'><path d='M1 1.5 5 5.5 9 1.5' fill='none' stroke='%231B9E6E' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
+/* Hover stays neutral too. A hovered select keeps :hover while its popup is
+   open, so any fill here would reach the menu by the same route. */
+select.picker.on:hover { background-color: var(--surface-2); }
+select.picker:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+
+/* And belt and braces: the options carry their own colours, so the open list
+   is a plain menu whatever the control beside it is doing. */
+select.picker option {
+  background-color: var(--surface); color: var(--text); font-weight: 400;
+}
+
+.filter.on .filter-label { color: var(--green-hi); }
+.filter.on .filter-label::before {
+  content: ""; display: inline-block; vertical-align: middle;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--green);
+  margin-right: 6px; margin-top: -1px;
+}
+
 /* ---------------------------------------------------------------- tables */
 
 /* Tables.
@@ -262,6 +370,30 @@ thead th {
   position: sticky; top: 0; z-index: 1;
 }
 thead th:last-child { border-right: 0; }
+
+/* The grouped heading row - a month sitting over its amount and its per cent.
+   Centred and rule-separated so the pair below reads as belonging to it, and
+   stickied above the column names rather than with them, or it scrolls away
+   and the columns lose the only thing that says which month they are. */
+thead tr.spans th.span {
+  text-align: center; top: 0;
+  border-right: 1px solid var(--line-2);
+  background: var(--surface-2); letter-spacing: .03em;
+  padding-bottom: 8px;
+}
+thead tr.spans th.span.lead { text-align: left; }
+/* The corner cell: pinned both ways, and above everything, or the Group
+   heading slides under the month headings as the year scrolls past. */
+thead tr.spans th.span.lead,
+thead tr th.sticky { position: sticky; left: 0; z-index: 4; }
+thead tr.spans th.span.current { color: var(--teal); }
+thead tr.spans + tr th { top: 31px; }
+
+/* The current month's columns, tinted the whole way down so the eye can find
+   this month in a table that carries the entire year across. */
+td.current, th.current { background: var(--green-soft); }
+tbody tr:hover td.current { background: var(--green-soft); }
+tr.total td.current { background: var(--green-mid); }
 tbody td {
   padding: 10px 15px;
   border-bottom: 1px solid var(--line);
@@ -276,9 +408,30 @@ tbody td {
 tbody td:last-child { border-right: 0; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover td { background: var(--hover); }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* Alignment. Figures are centred by default across the app - these tables are
+   read ACROSS, a provider's row against the month columns beside it, and a
+   centred column under a centred heading holds that line. `tabular-nums` is on
+   for every alignment, so digits still stack under each other and a column of
+   figures stays a column rather than a ragged edge. */
+td.num, th.num       { text-align: right; }
+td.al-center, th.al-center { text-align: center; }
+td.al-left, th.al-left     { text-align: left; }
+td, th               { font-variant-numeric: tabular-nums; }
 td.strong { font-weight: 550; }
+/* The first column stays put while the year scrolls past it. A settlement
+   table is eight months plus four weeks wide; without this you scroll to
+   August and no longer know whose row you are reading. */
+tbody td.sticky, thead th.sticky {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--surface);
+  border-right: 1px solid var(--line-2);
+}
+thead th.sticky { z-index: 3; background: var(--surface-2); }
+tbody tr:hover td.sticky { background: var(--hover); }
+tr.total td.sticky { background: var(--green-soft); }
+
 tr.total td { font-weight: 600; background: var(--green-soft); }
+tr.total td:first-child { box-shadow: inset 2px 0 0 var(--green); }
 tr.total:hover td { background: var(--green-soft); }
 
 /* The break between groups - a week's runs, in the history.
@@ -340,8 +493,27 @@ td.nowrap { white-space: nowrap; }
 .drop.over  { border-color: var(--green); background: var(--green-soft); }
 .drop .big  { font-weight: 550; color: var(--text); font-size: 15px; }
 
+/* A filter row: the pickers that drive a pivot, wrapping on a narrow window
+   rather than pushing the table sideways. */
+.filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px;
+  margin-bottom: 18px; padding: 13px 16px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: var(--shadow);
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+/* The whole bar picks up the accent while anything in it is set, so the state
+   is visible from the table rather than only from the control. */
+.filters.on { border-color: var(--green-line); }
+.filters .spacer { flex: 1; }
+.filters .count {
+  font-size: 12px; color: var(--text-2); white-space: nowrap;
+}
+.filters .count strong { color: var(--text); font-weight: 600; }
+
 .bar { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; }
-.bar span { display: block; height: 100%; background: var(--green); transition: width .2s ease; }
+.bar span { display: block; height: 100%; background: var(--green);
+            transition: width .2s ease; }
 
 .empty { color: var(--text-3); padding: 30px; text-align: center; }
 .err   { color: var(--alert); }

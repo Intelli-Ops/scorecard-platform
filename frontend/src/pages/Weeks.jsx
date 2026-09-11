@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, bytes, when } from "../api";
-import { Card, DataTable, ErrorBox, Loading, Picker } from "../components";
+import { Card, ConfirmButton, DataTable, ErrorBox, Loading, Picker }
+  from "../components";
 
 /* Uploading a week.
 
@@ -65,6 +66,20 @@ export default function Weeks() {
     } catch (e) { setError(e); }
   }
 
+  // Every row held for the week, which is what deleting it would remove - not
+  // the deduplicated list the two cards show.
+  const uploaded = status?.files ?? 0;
+
+  async function removeWeek() {
+    try {
+      setError(null);
+      await api.deleteWeek(week);
+      setResult(null);
+      setWeeks(await api.weeks());
+      setStatus(await api.week(week));      // now an empty week, not a stale one
+    } catch (e) { setError(e); }
+  }
+
   return (
     <>
       <div className="head">
@@ -91,13 +106,23 @@ export default function Weeks() {
               </select>
             )}
           </div>
-          <Picker label="These Case ARs are for" value={forReport}
-                  onChange={setForReport}
-                  options={[
-                    { value: "", label: "Shared files only" },
-                    { value: "gfs", label: "GFS · Tuesday" },
-                    { value: "all_providers", label: "All Providers · Thursday" },
-                  ]} />
+          <span className="row tight">
+            <Picker label="These Case ARs are for" value={forReport}
+                    onChange={setForReport}
+                    options={[
+                      { value: "", label: "Shared files only" },
+                      { value: "gfs", label: "GFS · Tuesday" },
+                      { value: "all_providers", label: "All Providers · Thursday" },
+                    ]} />
+            {uploaded > 0 && (
+              <ConfirmButton
+                label={`Delete ${week}`}
+                confirm={`Delete ${uploaded} file${uploaded === 1 ? "" : "s"}?`}
+                onConfirm={removeWeek}
+                title={`Remove every file uploaded for ${week}, and its builds. `
+                       + `This cannot be undone.`} />
+            )}
+          </span>
         </div>
 
         <div

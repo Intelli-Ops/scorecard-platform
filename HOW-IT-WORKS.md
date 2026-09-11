@@ -332,15 +332,40 @@ approved it. A report that was signed off on Tuesday and unsigned on Wednesday
 should not be a mystery on Thursday.
 
 **Delete.** Removes a build and everything it recorded — its figures, its tables,
-its notes.
+its notes — **and the files it read**.
 
-Two things it deliberately does *not* touch:
+Files are only ever removed once *nothing else needs them*, because they are
+shared on purpose:
 
-- **The files you uploaded.** They belong to the week, and the other report needs
-  them too. Deleting a build must never cost you the inputs.
-- **A result another build still uses.** Results are stored under a fingerprint
-  of their own contents, so two identical builds share one file. It is only
-  removed once nothing points at it any more.
+- **The files you uploaded** belong to the week, not to one build. The shared
+  files feed both reports, and every rebuild reads them again. So they go only
+  when no remaining build uses them: delete the GFS build and All Providers
+  keeps its inputs; delete the last build for a week and the files go with it.
+  A file you uploaded but never built is left alone.
+- **A result another build still uses** stays. Results are stored under a
+  fingerprint of their own contents, so two identical builds share one file. It
+  is only removed once nothing points at it any more.
+
+The same care applies to the bytes themselves. Thursday's Case AR is often
+identical to Tuesday's, and identical files are stored once — so the stored copy
+is deleted only after the last build naming it is gone.
+
+> This is the one thing here you cannot undo. A deleted build's inputs are gone
+> from the app once no other build needs them, and you would have to upload the
+> week again to rebuild it.
+
+**Delete a week.** On **Upload a week**, next to the week box, there is a
+**Delete 2026-W35** button that removes *everything* for that week — every file
+uploaded for it and every build made from it.
+
+You need this because deleting builds one at a time never clears a week. The
+files belong to the week rather than to any one build, so once you have deleted
+all of a week's builds the files stay, the week keeps appearing in the list, and
+it still offers a **Build** button with nothing behind it. Deleting the week is
+what actually removes them.
+
+It asks twice, the same way, and tells you how many files it is about to remove.
+A week with a build still running cannot be deleted.
 
 Deleting asks twice, in the row itself — **Delete** turns into **Really delete?**
 and **Keep**, and gives up after five seconds if you walk away. A pop-up box is

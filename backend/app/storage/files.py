@@ -84,10 +84,12 @@ class FileStore:
     def remove(self, sha: str, suffix: str) -> bool:
         """Delete one stored blob. True if it was there.
 
-        Only ever called for RESULTS, and only once nothing in the database
-        points at the hash any more. Source uploads are never removed: they are
-        the audit trail, and a run from December has to still be able to name
-        the exact bytes it read.
+        Only ever called once NOTHING IN THE DATABASE points at the hash any
+        more - for a result, no RunTable row; for a source upload, no Upload
+        row. That condition is the whole safety property: while a run still
+        names these bytes they stay, so a run from December can still be asked
+        exactly what it read. Deleting a run is what retires its files, and
+        only after the last run sharing them has gone.
         """
         p = self._path_for(sha, suffix)
         if not p.exists():
