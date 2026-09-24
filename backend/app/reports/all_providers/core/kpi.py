@@ -153,6 +153,61 @@ def _lay_on_rows(block: KpiBlock, by_group: dict[str, float],
     return vals
 
 
+def _split_groups(block: KpiBlock, provider_to_group: dict[str, str]) -> set[str]:
+    """Groups this block lists provider by provider rather than as one group row.
+
+    A block does that when one of its rows is named after a provider whose group has
+    a different name - the DOR and NTP blocks carry "BVHS", a provider of the
+    Dr Dorian group. Those groups must not be summed into one row.
+    """
+    out: set[str] = set()
+    for label in block.rows:
+        g = provider_to_group.get(norm(label))
+        if g and norm(g) != norm(label):
+            out.add(norm(g))
+    return out
+
+
+def _lay_providers(block: KpiBlock,
+                   items: list[tuple[str, str, str, float]],
+                   provider_to_group: dict[str, str], rep: KpiReport,
+                   row_aliases: dict[str, str] | None = None) -> dict[str, float]:
+    """Spread KPI-numbers figures, one per PROVIDER, across the block's rows.
+
+    `items` is (name as written in the numbers file, its Provider List key, its group,
+    value). Each figure goes to, in order:
+      * a row named after that provider ("BVHS", "Mesa care", "Support Claim West")
+      * the group's row ("A Miles" takes Andrew Miles and Inland Empire Healthcare) -
+        unless the block lists that group provider by provider (see _split_groups)
+      * otherwise a NEW row, named exactly as the numbers file names the provider.
+        That is how the sheet is kept by hand: Dorian Chiropractic and Dorian
+        Chiropractic 2 each get their own row next to BVHS.
+    """
+    rows = {norm(label): label for label in block.rows}
+    aliases = {norm(a): norm(b) for a, b in (row_aliases or {}).items()}
+    groups = dict(rows)
+    for label in block.rows:
+        if aliases.get(norm(label)):
+            groups.setdefault(aliases[norm(label)], label)
+    split = _split_groups(block, provider_to_group)
+
+    vals = {label: 0.0 for label in block.rows}
+    extra: dict[str, float] = {}
+    for written, key, group, v in items:
+        if not v:
+            continue
+        label = rows.get(norm(written)) or rows.get(key)
+        if label is None and norm(group) not in split:
+            label = groups.get(norm(group))
+        if label is None:
+            extra[written] = extra.get(written, 0.0) + v
+        else:
+            vals[label] += v
+    for written, v in extra.items():
+        rep.unmapped_groups.append((block.name, written, v))
+    return vals
+
+
 def build_kpi_sql(sql_doc: pl.DataFrame,
                   provider_list: pl.DataFrame,
                   blocks: dict[str, KpiBlock],
@@ -248,7 +303,8 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
     The first column of that table names a PROVIDER, not a group. The group comes
     from the Supporting File's PROVIDER ID column, which is what folds Andrew Miles
     and Inland Empire Healthcare into A Miles, MHE Pharmacy and MHE Assets into
-    MH Express, and DIMG and FMR into Russman.
+    MH Express, and DIMG and FMR into Russman. A provider the sheet has its own row
+    for, or has no row for at all, is kept apart - see _lay_providers.
 
     Two shapes of destination:
       `metrics` columns spread across a block whose rows are provider groups.
@@ -287,14 +343,22 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
     lookup = _provider_to_group(provider_list, rules)
     aliases = {norm(a): norm(b) for a, b in (sc.get("provider_aliases") or {}).items()}
 
+    # The exact name wins; an alias is only tried when the name itself is not in the
+    # Provider List. The other way round, an alias written for an old spelling hides
+    # the provider once the Supporting File is corrected - which is how Support Claim
+    # West's DOR filings went missing in September 2026.
     groups: list[str | None] = []
+    keys: list[str] = []
     for head, r in body:
         key = norm(r[0])
-        key = aliases.get(key, key)
         g = lookup.get(key)
+        if g is None and key in aliases:
+            key = aliases[key]
+            g = lookup.get(key)
         if g is None and str(r[0]).strip():
             rep.unknown_providers_named.append(str(r[0]))
         groups.append(g)
+        keys.append(key)
 
     def number(v) -> float:
         try:
@@ -314,21 +378,18 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
         if block is None:
             rep.scorecard_missing.append(f"{src} -> no '{block_name}' block on the sheet")
             continue
-        by_group: dict[str, float] = {}
-        names: dict[str, str] = {}
+        items: list[tuple[str, str, str, float]] = []
         hits = 0
-        for g, (head, r) in zip(groups, body):
+        for g, key, (head, r) in zip(groups, keys, body):
             col = column(head, src)
             if col is None or g is None:
                 continue
             hits += 1
-            by_group[norm(g)] = by_group.get(norm(g), 0.0) + number(r[col])
-            names[norm(g)] = g
+            items.append((str(r[0]).strip(), key, g, number(r[col])))
         if not hits:
             rep.scorecard_missing.append(src)
             continue
-        out[block_name] = _lay_on_rows(block, by_group, p2g, rep,
-                                       k.get("row_aliases"), names)
+        out[block_name] = _lay_providers(block, items, p2g, rep, k.get("row_aliases"))
         rep.written_blocks.append(block_name)
         rep.totals[block_name] = sum(out[block_name].values())
 

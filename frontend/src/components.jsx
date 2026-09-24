@@ -187,8 +187,8 @@ export function ConfirmButton({ label = "Delete", confirm = "Really delete?",
 
 const WORD = { action: "Action", warning: "Warning", info: "Note" };
 
-export function Notes({ notes }) {
-  if (!notes?.length) return <div className="empty">Nothing unusual.</div>;
+export function Notes({ notes, empty = "Nothing unusual." }) {
+  if (!notes?.length) return <div className="empty">{empty}</div>;
   return (
     <div>
       {notes.map((n, i) => (

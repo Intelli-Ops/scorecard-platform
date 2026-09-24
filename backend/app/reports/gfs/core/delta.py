@@ -1,7 +1,7 @@
 """Delta Comparison — steps doc Phases 4 and 6.
 
 Phase 4: combine WC Delta (WC workbook) + Med-Legal Delta + IMR Delta (MLCR workbook)
-         onto 15 shared columns.
+         onto 15 shared columns; Med-Legal keeps F&F settlements only.
 Phase 6: filter to live GFS settlements and attach the Custom Case AR lookups.
 
 Verified against week 2026-W35: 666 rows, 665 distinct case ids, and every value
@@ -58,6 +58,14 @@ def combine_delta(sheets: dict[str, pl.DataFrame], rules: dict) -> tuple[pl.Data
         rep.per_sheet[name] = part.height
     comb = pl.concat(parts, how="vertical_relaxed")
     rep.add("PHASE 4  combined", comb.height)
+
+    # Med-Legal counts F&F only - applied here so every sheet built from the Delta
+    # data (Delta Comparison and the Settlement grids) sees the same rows.
+    st = pl.col("Settlement_Type").cast(pl.Utf8).str.strip_chars().str.to_lowercase()
+    for sheet, types in (rules["delta"].get("keep_settlement_types") or {}).items():
+        comb = comb.filter((pl.col("_source_sheet") != sheet)
+                           | st.is_in([str(t).strip().lower() for t in types]))
+        rep.add(f"         {sheet}: keep {', '.join(map(str, types))} only", comb.height)
     return comb, rep
 
 

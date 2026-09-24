@@ -9,8 +9,9 @@ A dashboard needs them back, and a chart wants one row per value rather than a
 grid. These functions do that and nothing else - no arithmetic, so nothing here
 can change a number.
 
-The bucket labels are the .bat pipeline's own: "W32" is week 32 of the current
-month, "M5" is the month-5 total. Both appear because the report shows weekly
+The bucket labels are the .bat pipeline's own: "W2" is week 2 of the current
+month (a week belongs to the month of its Wednesday - see reports/period.py),
+"M5" is the month-5 total. Both appear because the report shows weekly
 detail for the current month and monthly totals for the ones before it.
 """
 from __future__ import annotations
@@ -40,7 +41,7 @@ def settlement_records(grids: dict) -> list[dict]:
             out.append({
                 "block": block,              # In House | Board
                 "group": group,
-                "bucket": bucket,            # W32 (week) or M5 (month)
+                "bucket": bucket,            # W2 (week of the month) or M5 (month)
                 "period": "week" if bucket.startswith("W") else "month",
                 "amount": float(amount),
                 **({"settlement_pct": float(pcts[(group, bucket)])}

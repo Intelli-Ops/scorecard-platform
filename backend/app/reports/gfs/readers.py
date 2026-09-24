@@ -24,6 +24,7 @@ import polars as pl
 from ..cache import Cache, NoCache, ParquetCache
 from ..locate import SourceSet
 from ..notes import Note, info, warning
+from .core.case_ar import gfs_case_ids
 
 
 @dataclass
@@ -48,7 +49,7 @@ class FileRead:
 class GfsSources:
     owner_ar: pl.DataFrame            # Raw Data + Case AR
     custom_ar: pl.DataFrame           # Closing Order / Validity / Status lookups
-    gfs_cases: pl.DataFrame           # which cases count as GFS
+    gfs_cases: pl.DataFrame           # which cases count as GFS (from Owner AR)
     providers: pl.DataFrame           # provider -> group map
     delta_sheets: dict[str, pl.DataFrame]
     payments: pl.DataFrame            # Collection High-Level
@@ -100,19 +101,21 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
                           use_columns=["CASEID", "Closing Order", "Case_Validity",
                                        "FileStatus", "Lien Filed"]).to_polars())
 
-    # --- Supporting File: two sheets out of one workbook ----------------
+    # --- Supporting File: only the Provider List ------------------------
+    # Its 'GFS Cases' sheet is Phase 1 output, so it is rebuilt from the Owner
+    # Case AR (same filter as Raw Data) rather than pasted in by hand - the
+    # sheet can stay empty.
     sup_path = sources.path("supporting")
     t = time.perf_counter()
-    sup = fastexcel.read_excel(str(sup_path))
-    gfs_cases = sup.load_sheet("GFS Cases", header_row=0,
-                               use_columns=["CASEID"]).to_polars()
-    providers = sup.load_sheet("Provider List", header_row=0).to_polars()
+    providers = fastexcel.read_excel(str(sup_path)).load_sheet(
+        "Provider List", header_row=0).to_polars()
     reads.append(FileRead("supporting", "supporting", "Supporting File",
-                          sup_path.name,
-                          rows=gfs_cases.height + providers.height,
+                          sup_path.name, rows=providers.height,
                           seconds=time.perf_counter() - t))
+    gfs_cases = gfs_case_ids(owner_ar, rules)
     notes.append(info("supporting_file_contents",
-                      f"{gfs_cases.height:,} GFS cases, {providers.height} providers",
+                      f"{gfs_cases.height:,} GFS cases (from the Owner Case AR), "
+                      f"{providers.height} providers",
                       gfs_cases=gfs_cases.height, providers=providers.height))
 
     # --- the delta workbooks --------------------------------------------
@@ -139,7 +142,9 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
     hc_path = sources.path("hearing_calendar")
     hearing_noi = timed("hearing_calendar", "Hearing Calendar", hc_path,
                         lambda: fastexcel.read_excel(str(hc_path)).load_sheet(
-                            "NOI, CP Settlements", header_row=0).to_polars())
+                            "NOI, CP Settlements", header_row=0,
+                            use_columns=["Hearing Date", "Outstanding",
+                                         "Settlement Amount"]).to_polars())
 
     sql_path = sources.path("document_log")
     sql_doc = timed("document_log", "SQL document log", sql_path,

@@ -24,6 +24,7 @@ case_ar:
     - Workers Compensation                      # "WC" / "Workers Compensation"
     - Copy Record (ML)                          # "CopyRecord"
     - Alternative Dispute Resolution (ADR)      # "Alternative"
+    - WC MED-LEGAL                              # added Sep 2026 - All Providers only
 
   # PHASE 2 - rows whose BUSINESSREGID is not in the Provider List get dropped
   # ("In Group column, filter out all the NA values delete all data").
@@ -93,6 +94,7 @@ delta:   # Phases 4, 5 and 6 -> Settlement grids + the Delta Comparison-2026 she
         Settlement_Payment_Received: Settlement Payment Received?
         Remaining_Payment: Remaining Payment
         File_Status: Settlement Payment Status
+        Settlement_Type: Settlement Type
     - sheet: Med-Legal Delta
       workbook: mlcr
       columns:
@@ -111,6 +113,7 @@ delta:   # Phases 4, 5 and 6 -> Settlement grids + the Delta Comparison-2026 she
         Settlement_Payment_Received: Settlement Payment Received?
         Remaining_Payment: Remaining Payment
         File_Status: File Status
+        Settlement_Type: Settlement Type
     - sheet: IMR Delta
       workbook: mlcr
       columns:
@@ -129,6 +132,7 @@ delta:   # Phases 4, 5 and 6 -> Settlement grids + the Delta Comparison-2026 she
         Settlement_Payment_Received: Settlement Payment Received?   # column to this
         Remaining_Payment: Remaining Payment
         File_Status: New File Status
+        Settlement_Type: Settlement Type
 
   # PHASE 5/6 - the only filter is "delete all NA in Group", i.e. drop providers the
   # Supporting File does not list. There is no Type filter and no "drop closed" here:
@@ -136,7 +140,14 @@ delta:   # Phases 4, 5 and 6 -> Settlement grids + the Delta Comparison-2026 she
   # Verified against the delivered Week-34 workbook: every January figure on both the
   # Settlement grids and the Delta Comparison-2026 grid reproduces exactly.
   drop_na_group: true
-  year: 2026
+
+  # Which Settlement Type values count, per source sheet - the same rule as the GFS
+  # report. A sheet not listed counts every type.
+  #   MED-LEGAL: ONLY "F&F" (FNF) SETTLEMENTS COUNT. Its "Payments" and "Check" rows are
+  #   left out. WC and IMR count every type. Applied once, before the Settlement grids
+  #   and the Delta Comparison grid are built, so the two sheets stay in step.
+  keep_settlement_types:
+    Med-Legal Delta: [F&F]
 
   # PHASE 5 - Location splits the Settlement grids. Matched case-insensitively after
   # trimming, because the data holds "In House", "In house" and "in House".
@@ -154,21 +165,42 @@ delta:   # Phases 4, 5 and 6 -> Settlement grids + the Delta Comparison-2026 she
 # ---------------------------------------------------------------------------
 collections:   # Phase 7 -> the Collections block of Collection High-Level-2026
   sheet: "  Detail Payment Report"     # note the two leading spaces
-  drop_case_types: [PI]
+  # Case types left out of Collections. EMPTY on purpose: this report counts PI
+  # payments too - the manual file does (Week 37: Concierge and Mesa Care's PI
+  # settlements). The GFS report still drops PI. Example to drop again: [PI]
+  drop_case_types: []
   # "in payment type make 'board reps' & 'in house rep', 'settlement'" = fold them
   # INTO settlement, not rename them alongside it.
   fold_into_settlement: [BOARD REPS, IN HOUSE REPS, SETTLEMENT]
   payment_type_order: [BILLING, REBILLING, APPEAL, SETTLEMENT]
-  # The sheet's "Week 01..05" are Excel WEEKNUM buckets - weeks start Sunday and
-  # 1 January always falls in week 1. That is NOT week-of-month, and NOT the ISO
-  # week Python gives by default.
+  # The sheet's "Week 01..05" are the weeks of the month as defined under `holidays:`
+  # below (a week belongs to the month of its Wednesday), the same as the Settlement
+  # grids.
 
 # ---------------------------------------------------------------------------
-pacing:
-  # Run-rate: cumulative / (5 * weeks elapsed) * business days in the month.
-  # The template's own formulas are =SUM(J9)/5*21 style, so the divisor grows by 5
-  # a week and the multiplier is the month's business-day count.
-  week_days: 5
+# Weeks, months and pacing - the same calendar as the GFS report.
+#
+# A Mon-Fri week belongs to the month that holds most of its weekdays - the month its
+# Wednesday falls in. So Mon 31 Aug - Fri 4 Sep is September's week 1 (1-4 Sep; 31 Aug
+# is counted in August's month total), and Mon 28 Sep - Fri 2 Oct is September's week 5
+# (28-30 Sep; 1-2 Oct are added to October's week 1, which then runs 1-9 Oct).
+# The month and week being reported come from the week folder's name.
+#
+# Pacing = month-to-date / working days elapsed * working days in the month, written
+# into the sheet as a formula (e.g. =SUM(J9,K9)/8*21). A working day is a weekday that
+# is not listed below. Source: Holidays.png (night shift) in the main project folder.
+# 4 Jul 2026 is a Saturday, so its observed Friday, 3 Jul, is the day off.
+# Add each new year's dates here.
+holidays:
+  - 2026-01-01   # New Year
+  - 2026-02-16   # Presidents' Day (U.S.)
+  - 2026-03-20   # Eid ul-Fitr (Pakistan)
+  - 2026-05-25   # Memorial Day (U.S.)
+  - 2026-05-27   # Eid ul-Azha
+  - 2026-07-03   # Independence Day (observed U.S.)
+  - 2026-09-07   # Labour Day
+  - 2026-11-26   # Thanksgiving Day (U.S.)
+  - 2026-12-25   # Christmas Day
 
 # ---------------------------------------------------------------------------
 kpi:   # Phase 8 (SQL-Doc) and Phase 9 (the litigation / scorecard numbers table)

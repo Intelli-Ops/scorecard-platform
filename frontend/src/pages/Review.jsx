@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, bytes, count, when } from "../api";
-import { Card, DataTable, ErrorBox, Loading, Notes, Status, Tile } from "../components";
+import { api, count, when } from "../api";
+import { Card, ErrorBox, Loading, Notes, Status, Tile } from "../components";
 
-/* The review: what a build wants a person to know before the report goes out.
+/* The review: what a person has to check before the report goes out.
 
-   It leads with what CHANGED rather than with what worked - warnings that are
-   new or whose counts have moved, then row counts against last week, then
-   exactly which files were read. */
+   Three things, and only these - new providers (and whether their figures made
+   it in), figures with no data for the week, and duplicate case ids. Routine
+   row drops happen every week and are not shown; each check says whether it
+   is new since last week. */
 export default function Review() {
   const { id } = useParams();
   const [data, setData] = useState(null);
@@ -80,7 +81,24 @@ export default function Review() {
     );
   }
 
-  const actions = data.note_counts.action;
+  const bySection = (key) => data.notes.filter((n) => n.section === key);
+  const providers = bySection("providers");
+  const noData = bySection("no_data");
+  const duplicates = bySection("duplicates");
+  const other = bySection("other");
+  const open = (notes) => notes.filter((n) => n.change !== "resolved since last week").length;
+
+  const SECTIONS = [
+    { title: "New providers", notes: providers,
+      sub: "Providers or groups this week's data has that the report had no row for, and whether their figures were added.",
+      empty: "No new providers this week." },
+    { title: "No data for the week", notes: noData,
+      sub: "Figures the report shows that had nothing to go on this week.",
+      empty: "Every figure had data this week." },
+    { title: "Duplicate case IDs", notes: duplicates,
+      sub: "Case IDs that appear more than once in Delta Comparison.",
+      empty: "No duplicate case IDs." },
+  ];
 
   return (
     <>
@@ -116,57 +134,31 @@ export default function Review() {
 
       <div className="grid cols-4" style={{ marginBottom: 26 }}>
         <Tile label="Needs attention" value={data.needs_attention ? "Yes" : "No"}
-              foot={actions ? `${actions} figure${actions > 1 ? "s" : ""} missing a source`
-                            : "nothing blocking"} />
-        <Tile label="Warnings" value={count(data.note_counts.warning)}
-              foot="dropped or corrected rows" />
-        <Tile label="Rows produced"
-              value={count(data.tables.reduce((s, t) => s + t.rows, 0))}
-              foot={`${data.tables.length} tables`} />
-        <Tile label="Files read" value={count(data.inputs.length)}
-              foot="each pinned to its exact bytes" />
+              foot={data.needs_attention ? "check the items below" : "nothing new or blocking"} />
+        <Tile label="New providers" value={count(open(providers))}
+              foot={open(providers) ? "check where their figures landed" : "none this week"} />
+        <Tile label="No data" value={count(open(noData))}
+              foot={open(noData) ? "figures with nothing behind them" : "every figure had data"} />
+        <Tile label="Duplicate case IDs" value={count(duplicates.reduce(
+                (s, n) => s + (n.change === "resolved since last week" ? 0 : n.detail?.count ?? 0), 0))}
+              foot="in Delta Comparison" />
       </div>
 
-      <Card flush title="What this run is telling you"
-            sub="The wording is the pipeline's own. What is new is the comparison.">
-        <div style={{ padding: "4px 22px 10px" }}>
-          <Notes notes={data.notes} />
-        </div>
-      </Card>
-
-      <div className="grid cols-2">
-        <Card flush title="What it produced">
-          <DataTable
-            columns={[
-              { key: "name", label: "Table", strong: true,
-                render: (t) => t.name.replace(/_/g, " ") },
-              { key: "rows", label: "Rows", num: true, render: (t) => count(t.rows) },
-              { key: "rows_last_week", label: "Last week", num: true,
-                render: (t) => t.rows_last_week == null ? "—" : count(t.rows_last_week) },
-              { key: "change", label: "Change", num: true,
-                render: (t) => t.change == null ? "—"
-                  : (t.change > 0 ? "+" : "") + count(t.change) },
-            ]}
-            rows={data.tables}
-          />
+      {SECTIONS.map((sec) => (
+        <Card flush key={sec.title} title={sec.title} sub={sec.sub}>
+          <div style={{ padding: "4px 22px 10px" }}>
+            <Notes notes={sec.notes} empty={sec.empty} />
+          </div>
         </Card>
+      ))}
 
-        <Card flush title="What it read"
-              sub="Every file pinned to the exact bytes it contained.">
-          <DataTable
-            columns={[
-              { key: "filename", label: "File",
-                render: (i) => <span title={i.sha256}>{i.filename}</span> },
-              { key: "scope", label: "Used by" },
-              { key: "rows_read", label: "Rows", num: true,
-                render: (i) => count(i.rows_read) },
-              { key: "size_bytes", label: "Size", num: true,
-                render: (i) => bytes(i.size_bytes) },
-            ]}
-            rows={data.inputs}
-          />
+      {other.length > 0 && (
+        <Card flush title="Other">
+          <div style={{ padding: "4px 22px 10px" }}>
+            <Notes notes={other} />
+          </div>
         </Card>
-      </div>
+      )}
     </>
   );
 }

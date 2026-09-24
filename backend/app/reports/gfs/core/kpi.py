@@ -39,6 +39,7 @@ class KpiReport:
     written_blocks: list[str] = field(default_factory=list)
     skipped_blocks: list[str] = field(default_factory=list)
     unmapped_groups: list[tuple[str, str, float]] = field(default_factory=list)
+    rows_added: list[str] = field(default_factory=list)     # STEP 4 messages
     unknown_providers: list[int] = field(default_factory=list)
     unknown_providers_named: list[str] = field(default_factory=list)
     scorecard_rows: int = 0
@@ -57,17 +58,52 @@ def _group_dim(provider_list: pl.DataFrame, k: dict) -> pl.DataFrame:
 
 
 def _to_rows(spec: dict, by_group: dict[str, float], block: str,
-             rep: KpiReport) -> dict[str, float]:
+             rep: KpiReport, names: dict[str, str] | None = None) -> dict[str, float]:
     """Lay a {group: value} map onto the block's sheet rows.
 
-    Anything left over is a group the sheet has no row for. Those are reported, never
-    dropped quietly - a provider that starts sending appeals would otherwise just
-    never appear in the client's total.
+    Anything left over is a group the sheet has no row for. Those are collected under
+    their real name, and the run adds a row for each one (write_kpi_sheet) - a provider
+    that starts sending appeals would otherwise never appear in the client's total.
     """
     vals = {label: by_group.pop(norm(label), 0.0) for label in spec["rows"]}
     for leftover, v in by_group.items():
         if v:
-            rep.unmapped_groups.append((block, leftover, v))
+            rep.unmapped_groups.append((block, (names or {}).get(leftover, leftover), v))
+    return vals
+
+
+def _lay_providers(spec: dict, items: list[tuple[str, str, float]],
+                   provider_to_group: dict[str, str], block: str,
+                   rep: KpiReport) -> dict[str, float]:
+    """Spread KPI-numbers figures, one per PROVIDER, across the block's rows.
+
+    `items` is (name as written in the numbers file, its group, value). Each figure
+    goes to, in order:
+      * a row named after that provider
+      * the group's row ("A Miles" takes Andrew Miles and Inland Empire Healthcare) -
+        unless the block lists that group provider by provider, i.e. has a row named
+        after one of its providers ("BVHS" for Dr Dorian)
+      * otherwise a NEW row, named exactly as the numbers file names the provider.
+        That is how the sheet is kept by hand: a new provider gets its own row in
+        whichever block it has a figure for.
+    """
+    rows = {norm(label): label for label in spec["rows"]}
+    split = {norm(g) for label in spec["rows"]
+             if (g := provider_to_group.get(norm(label))) and norm(g) != norm(label)}
+    vals = {label: 0.0 for label in spec["rows"]}
+    extra: dict[str, float] = {}
+    for written, group, v in items:
+        if not v:
+            continue
+        label = rows.get(norm(written))
+        if label is None and norm(group) not in split:
+            label = rows.get(norm(group))
+        if label is None:
+            extra[written] = extra.get(written, 0.0) + v
+        else:
+            vals[label] += v
+    for written, v in extra.items():
+        rep.unmapped_groups.append((block, written, v))
     return vals
 
 
@@ -122,10 +158,12 @@ def build_kpi_sql(sql_doc: pl.DataFrame,
             continue
         want = norm(spec["document_type"])
         by_group: dict[str, float] = {}
+        names: dict[str, str] = {}
         for group, doc_type, cases in pivot.iter_rows():
             if norm(doc_type) == want:
                 by_group[norm(group)] = by_group.get(norm(group), 0.0) + (cases or 0.0)
-        vals = _to_rows(spec, by_group, name, rep)
+                names[norm(group)] = group
+        vals = _to_rows(spec, by_group, name, rep, names)
         out[name] = vals
         rep.written_blocks.append(name)
         rep.totals[name] = sum(vals.values())
@@ -146,8 +184,10 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
     Its first column names a provider, not a group. The group comes from the Supporting
     File's PROVIDER ID column, which is what folds Andrew Miles + Inland Empire
     Healthcare into A Miles, MHE Pharmacy + MHE Assets into MH Express, and Eagle Eye +
-    Novatech + Progressive Orthopedic into POS. Verified for 2026-08: every group total
-    reproduced the file's own GFS Total row exactly, all nine metrics.
+    Novatech + Progressive Orthopedic into POS. A provider the sheet has its own row
+    for, or has no row for at all, is kept apart - see _lay_providers. Verified for
+    2026-08: every group total reproduced the file's own GFS Total row exactly, all
+    nine metrics.
 
     Two shapes of destination:
 
@@ -211,12 +251,9 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
         if spec is None or col is None:
             rep.scorecard_missing.append(src)
             continue
-        by_group: dict[str, float] = {}
-        for g, r in zip(groups, body):
-            if g is None:
-                continue
-            by_group[norm(g)] = by_group.get(norm(g), 0.0) + number(r[col])
-        out[block] = _to_rows(spec, by_group, block, rep)
+        items = [(str(r[0]).strip(), g, number(r[col]))
+                 for g, r in zip(groups, body) if g is not None]
+        out[block] = _lay_providers(spec, items, lookup, block, rep)
         rep.written_blocks.append(block)
         rep.totals[block] = sum(out[block].values())
 

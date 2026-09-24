@@ -99,6 +99,7 @@ delta:   # Phases 4 and 6 -> the Delta Comparison sheet
         Settlement_Payment_Received: Settlement Payment Received?
         Remaining_Payment: Remaining Payment
         File_Status: Settlement Payment Status
+        Settlement_Type: Settlement Type
     - sheet: Med-Legal Delta
       workbook: mlcr
       columns:
@@ -117,6 +118,7 @@ delta:   # Phases 4 and 6 -> the Delta Comparison sheet
         Settlement_Payment_Received: Settlement Payment Received?
         Remaining_Payment: Remaining Payment
         File_Status: File Status
+        Settlement_Type: Settlement Type
     - sheet: IMR Delta
       workbook: mlcr
       columns:
@@ -135,6 +137,19 @@ delta:   # Phases 4 and 6 -> the Delta Comparison sheet
         Settlement_Payment_Received: Settlement Payment Received?   # column to this one
         Remaining_Payment: Remaining Payment
         File_Status: New File Status
+        Settlement_Type: Settlement Type
+
+  # PHASE 4 - which Settlement Type values count, per source sheet. A sheet not listed
+  # counts every type. Applied right after the three sheets are combined, so it holds
+  # for EVERYTHING built from the Delta data: the Delta Comparison sheet and the
+  # Settlement High-Level 2026 grids.
+  #   MED-LEGAL: ONLY "F&F" (FNF) SETTLEMENTS COUNT. Its "Payments" and "Check" rows are
+  #   left out - the manual process keeps F&F only wherever the Delta data goes
+  #   (confirmed by the user). Verified on the Settlement grids against the week-37
+  #   manual file (380/380 cells). WC and IMR count every type - applying the same
+  #   filter to them breaks Artheon, Medvantage and POS.
+  keep_settlement_types:
+    Med-Legal Delta: [F&F]
 
   # PHASE 6 - filters, applied in this order (order confirmed by the user)
   gfs_type_value: GFS
@@ -159,6 +174,29 @@ delta:   # Phases 4 and 6 -> the Delta Comparison sheet
   reuse_case_ar_closing_order_rules: true
 
 # ---------------------------------------------------------------------------
+# Weeks, months and pacing
+#
+# A Mon-Fri week belongs to the month that holds most of its weekdays - the month its
+# Wednesday falls in. So Mon 31 Aug - Fri 4 Sep is September's week 1 (1-4 Sep; 31 Aug
+# is counted in August's month total), and Mon 28 Sep - Fri 2 Oct is September's week 5
+# (28-30 Sep; 1-2 Oct are added to October's week 1, which then runs 1-9 Oct).
+#
+# Pacing = month-to-date / working days elapsed * working days in the month, where a
+# working day is a weekday that is not listed below. Source: Holidays.png (night shift).
+# 4 Jul 2026 is a Saturday, so its observed Friday, 3 Jul, is the day off.
+# Add each new year's dates here.
+holidays:
+  - 2026-01-01   # New Year
+  - 2026-02-16   # Presidents' Day (U.S.)
+  - 2026-03-20   # Eid ul-Fitr (Pakistan)
+  - 2026-05-25   # Memorial Day (U.S.)
+  - 2026-05-27   # Eid ul-Azha
+  - 2026-07-03   # Independence Day (observed U.S.)
+  - 2026-09-07   # Labour Day
+  - 2026-11-26   # Thanksgiving Day (U.S.)
+  - 2026-12-25   # Christmas Day
+
+# ---------------------------------------------------------------------------
 collections:   # Phase 7 -> the Collection High-Level 2026 sheet
   # Verified against week 2026-W35: 196/196 grid cells, 45/45 pace cells,
   # 4/4 footer totals - all matching the delivered workbook to the cent.
@@ -170,7 +208,10 @@ collections:   # Phase 7 -> the Collection High-Level 2026 sheet
   fold_into_settlement: [BOARD REPS, IN HOUSE REPS, SETTLEMENT]
   payment_type_order: [BILLING, REBILLING, APPEAL, SETTLEMENT]
   # Sheet layout: 9 group rows, then a Total row; each week is 4 payment-type
-  # columns plus a week-total column.
+  # columns plus a week-total column. The week columns are NOT listed here: they move
+  # one column right every month (a month-total column is added in front of them), so
+  # they are found each run from the BILLING headings on `header_row`.
+  header_row: 9
   group_rows:
     Med-Legal: 10
     Medvantage: 11
@@ -195,8 +236,6 @@ collections:   # Phase 7 -> the Collection High-Level 2026 sheet
     A Miles: 30
     Southern California: 31
   pace_total_row: 32
-  week_first_cols: [10, 15, 20, 25, 30]   # J, O, T, Y, AD
-  pace_cols: [14, 19, 24, 29, 34]         # N, S, X, AC, AH
   footer_rows: {BILLING: 36, REBILLING: 37, APPEAL: 38, SETTLEMENT: 39}
   footer_col: 4                            # column D
 
@@ -254,6 +293,10 @@ kpi:
       CP:              [Med Legal, Cost Petition]
       CP DOR:          [Med Legal, Cost Petition (DOR)]
 
+  # Row numbers below are a FALLBACK. Each run reads the real rows from column B of the
+  # template (sync_kpi_rows), because a provider row added one week moves everything
+  # under it in the next week's template. A provider with a figure and no row gets a
+  # new row, named as the KPI-numbers file (or the Supporting File group) names it.
   blocks:
     SBR:
       source: sql_doc

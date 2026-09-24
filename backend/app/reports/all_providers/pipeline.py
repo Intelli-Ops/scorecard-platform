@@ -5,10 +5,9 @@ audited functions in ap/marts in the same order with the same arguments; the
 workbook-writing that followed them is gone.
 
 It is a different sequence from the GFS pipeline, not a variation on it -
-prepare() before settlement_grids(), the current month taken from the delta
-report rather than from the data's own maximum, the week columns worked out
-from the week being reported rather than from the weeks present, and the KPI
-blocks read out of last week's sheet. That is why the two reports keep separate
+prepare() before settlement_grids(), and the KPI blocks read out of last
+week's sheet. The calendar is shared: the month and its weeks come from the
+week being reported (period.py), the same as GFS. That is why the two reports keep separate
 pipelines instead of one parameterised engine.
 """
 from __future__ import annotations
@@ -18,13 +17,15 @@ import time
 
 import polars as pl
 
-from ..notes import Note, info, warning, action, sort_notes
+from ..notes import Note, sort_notes
+from ..pacing import pace_grid
+from ..period import reporting_period, week_index_expr
+from ..review_notes import add_new_providers, review_notes, week_label
 from .core.case_ar import build_raw_data, build_case_ar
 from .core.collections import build_collections
 from .core.delta import (combine_delta, prepare, settlement_grids,
                          delta_comparison, cp_settled)
 from .core.kpi import build_kpi_sql, build_kpi_scorecard, read_kpi_layout
-from .core.period import month_week_columns
 from .readers import ApSources
 
 
@@ -40,6 +41,12 @@ class RunResult:
     kpi: dict
     current_month: int
 
+    # Settlements (In House / Board - Pace) and Collections Pace: the month's
+    # weeks so far projected to a full month over its working days.
+    settlement_pace: dict = field(default_factory=dict)
+    collections_pace: dict = field(default_factory=dict)
+    year: int = 0
+
     notes: list[Note] = field(default_factory=list)
     seconds: float = 0.0
 
@@ -52,101 +59,54 @@ class RunResult:
 
 def run(src: ApSources, rules: dict, as_of: dt.date | None = None,
         week: str | None = None) -> RunResult:
-    """`week` is the label being reported, e.g. 2026-W35.
+    """`week` is the label being reported, e.g. 2026-W37.
 
-    It is not cosmetic. The sheet shows one column per Monday in the month UP TO
-    the week being reported, not one per week that happens to appear in the
-    data: August 2026 settlements run into week 35, but a Week-34 report stops
-    at week 34. Without the week label the grid would gain columns the delivered
-    workbook does not have.
+    It is not cosmetic. A Mon-Fri week belongs to the month of its Wednesday,
+    and the sheet shows that month's weeks UP TO the week being reported - not
+    one per week that happens to appear in the data. See period.py.
     """
     t0 = time.perf_counter()
-    year = rules["delta"]["year"]
+    as_of = as_of or dt.date.today()
+    period = reporting_period(week_label(week, as_of), rules.get("holidays"))
+    year, month = period.year, period.month
 
     raw, rep = build_raw_data(src.owner_ar, src.providers, src.custom_ar, rules)
     case_ar = build_case_ar(raw, rules)
 
     comb, drep = combine_delta(src.delta_sheets, rules)
-    dd, drep = prepare(comb, src.providers, rules, drep)
-    month = drep.current_month
+    dd, drep = prepare(comb, src.providers, rules, year, drep)
 
-    report_week = int(week.split("W")[1]) if week else dt.date.today().isocalendar()[1]
-    weeks_present = month_week_columns(year, month, report_week)
-
-    grids = settlement_grids(dd, rules, month, weeks_present, drep)
+    grids = settlement_grids(dd, rules, period, drep)
     delta = delta_comparison(dd, rules, drep)
     cp = cp_settled(src.hearing_noi, year, month)
-    coll, crep = build_collections(src.payments, src.providers, rules, year)
+    coll, crep = build_collections(src.payments, src.providers, rules, year,
+                                   month=month,
+                                   week_expr=week_index_expr("paid_on", period))
+
+    weeks = [f"W{i}" for i in range(1, period.weeks_so_far + 1)]
+    paced = {block: pace_grid(amounts, weeks, period)
+             for block, amounts in grids.items()}
+    coll_amounts = {(g, f"W{w}"): amt for g, w, amt in
+                    coll.group_by(["Group", "Week"])
+                        .agg(pl.col("Payment").sum().alias("amt"))
+                        .select("Group", "Week", "amt").rows()}
+    collections_paced = pace_grid(coll_amounts, weeks, period)
 
     kpi_blocks = read_kpi_layout(src.template, rules)
     kpi, krep = build_kpi_sql(src.sql_doc, src.providers, kpi_blocks, rules,
                               year, month)
     kpi.update(build_kpi_scorecard(src.scorecard, src.providers, kpi_blocks,
                                    rules, krep))
+    added = add_new_providers(kpi, krep)
+
+    notes: list[Note] = [n for n in src.notes if n.code == "kpi_numbers_not_supplied"]
+    notes += review_notes(drep, krep, added, delta, grids, coll, kpi, period,
+                          None, has_scorecard=src.scorecard is not None)
 
     return RunResult(
         raw_data=raw, case_ar=case_ar, delta_comparison=delta, collections=coll,
         settlement_grids=grids, cp_settled=cp, kpi=kpi, current_month=month,
-        notes=_notes(rep, drep, krep, src),
+        settlement_pace=paced, collections_pace=collections_paced, year=year,
+        notes=sort_notes(notes),
         seconds=time.perf_counter() - t0,
     )
-
-
-def _notes(rep, drep, krep, src: ApSources) -> list[Note]:
-    """STEP 4, as data. Same wording as the .bat pipeline; same codes as the GFS
-    pipeline wherever the two report the same thing, so a warning means the same
-    on both dashboards."""
-    notes: list[Note] = list(src.notes)
-
-    if getattr(rep, "dropped_no_group", 0):
-        notes.append(warning(
-            "ar_rows_dropped_no_group",
-            f"{rep.dropped_no_group:,} AR rows dropped - provider not in the "
-            f"Provider List (regids {rep.unknown_regids[:6]})",
-            rows=rep.dropped_no_group, regids=list(rep.unknown_regids[:6])))
-    if getattr(rep, "dropped_no_status", 0):
-        notes.append(warning(
-            "ar_rows_dropped_no_status",
-            f"{rep.dropped_no_status:,} AR rows dropped - no match in "
-            f"Custom Case AR", rows=rep.dropped_no_status))
-    for k, v in (getattr(rep, "validity_fixed", None) or {}).items():
-        if v:
-            notes.append(info("case_validity_corrected",
-                              f"{v:,} rows had Case_Validity '{k}' corrected to Valid",
-                              rows=v, value=k))
-
-    if getattr(drep, "duplicate_case_ids", 0):
-        notes.append(warning("delta_duplicate_case_ids",
-                             f"{drep.duplicate_case_ids} duplicate case id(s) in "
-                             f"Delta Comparison", count=drep.duplicate_case_ids))
-    if getattr(drep, "partial_paid_rewritten", 0):
-        notes.append(info("delta_partial_paid_rewritten",
-                          f"{drep.partial_paid_rewritten} Partial Paid row(s): "
-                          f"settlement amount replaced with remaining payment",
-                          count=drep.partial_paid_rewritten))
-
-    if getattr(krep, "skipped_blocks", None):
-        why = ("no column for them in the KPI-numbers file"
-               if src.scorecard is not None else "no KPI-numbers file was supplied")
-        notes.append(action("kpi_block_without_source",
-                            f"KPI blocks left without a figure - {why}: "
-                            f"{', '.join(krep.skipped_blocks)}",
-                            blocks=list(krep.skipped_blocks), reason=why))
-    if getattr(krep, "scorecard_missing", None):
-        notes.append(warning("kpi_columns_not_found",
-                             f"KPI-numbers columns named in rules.yml but not found "
-                             f"in the file: {', '.join(krep.scorecard_missing)}",
-                             columns=list(krep.scorecard_missing)))
-    if getattr(krep, "unknown_providers", None):
-        notes.append(warning("sqldoc_rows_dropped_unknown_provider",
-                             f"SQL-Doc rows dropped - ProviderID not in the "
-                             f"Provider List: {krep.unknown_providers}",
-                             providers=list(krep.unknown_providers)))
-    for entry in (getattr(krep, "unmapped_groups", None) or []):
-        block, group, v = entry
-        notes.append(action("kpi_group_not_in_layout",
-                            f"KPI {block}: '{group}' has {v:,.0f} but the sheet has "
-                            f"no row for it - NOT counted in the {block} total",
-                            block=block, group=group, value=float(v)))
-
-    return sort_notes(notes)

@@ -50,8 +50,16 @@ def build_collections(payments: pl.DataFrame,
                       gfs_cases: pl.DataFrame,
                       provider_list: pl.DataFrame,
                       rules: dict,
-                      year: int = 2026) -> tuple[pl.DataFrame, CollectionReport]:
-    """Payment Detailed Report -> Group x week x payment-type totals."""
+                      year: int = 2026,
+                      month: int | None = None,
+                      week_expr: pl.Expr | None = None,
+                      after: dt.date | None = None) -> tuple[pl.DataFrame, CollectionReport]:
+    """Payment Detailed Report -> Group x week x payment-type totals.
+
+    `month` keeps only that month's payments: the sheet's week blocks belong to one
+    month, and a report pulled across a month end must not spill into them.
+    `week_expr` numbers the weeks (over the `paid_on` column); by default Excel WEEKNUM.
+    `after` keeps only payments dated later than that day."""
     r = rules["collections"]
     rep = CollectionReport()
 
@@ -63,6 +71,12 @@ def build_collections(payments: pl.DataFrame,
         pl.col("PAYMENT").cast(pl.Float64, strict=False).alias("payment"),
         pl.col("PAYMENTDATE").cast(pl.Date, strict=False).alias("paid_on"))
     rep.add("payment rows", d.height)
+    if month is not None:
+        d = d.filter((pl.col("paid_on").dt.year() == year)
+                     & (pl.col("paid_on").dt.month() == month))
+        rep.add(f"in {year}-{month:02d}", d.height)
+    if after is not None:
+        d = d.filter(pl.col("paid_on") > after)
 
     # drop PI case types
     drop = [x.upper() for x in r["drop_case_types"]]
@@ -95,7 +109,8 @@ def build_collections(payments: pl.DataFrame,
           .when(pl.col("ptype") == "RE BILLING").then(pl.lit("REBILLING"))
           .otherwise(pl.col("ptype")).alias("PT"))
 
-    d = d.with_columns(excel_weeknum("paid_on", year).alias("Week"))
+    wk = week_expr if week_expr is not None else excel_weeknum("paid_on", year)
+    d = d.with_columns(wk.alias("Week"))
     rep.weeks = sorted(x for x in d["Week"].unique().to_list() if x is not None)
 
     out = (d.group_by(["Group", "Week", "PT"])

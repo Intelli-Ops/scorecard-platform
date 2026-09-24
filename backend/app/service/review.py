@@ -36,45 +36,74 @@ def previous_run(session: Session, run: Run) -> Run | None:
     return session.execute(stmt).scalar_one_or_none()
 
 
+# Routine notes older runs stored. The filters that produce them run every
+# week and are doing their job; on the review they only buried the checks that
+# matter. Newer runs do not record them at all (see reports/review_notes.py).
+HIDDEN = {"ar_rows_dropped_no_group", "ar_rows_dropped_no_status",
+          "case_validity_corrected", "delta_partial_paid_rewritten",
+          "supporting_file_contents"}
+
+# Which part of the review a note belongs to.
+SECTIONS = {
+    "kpi_new_provider": "providers", "kpi_group_not_in_layout": "providers",
+    "new_group": "providers", "kpi_rows_dropped_unknown_provider": "providers",
+    "sqldoc_rows_dropped_unknown_provider": "providers",
+    "kpi_block_without_source": "no_data", "kpi_block_empty": "no_data",
+    "kpi_columns_not_found": "no_data", "kpi_numbers_not_supplied": "no_data",
+    "collections_empty": "no_data",
+    "delta_duplicate_case_ids": "duplicates",
+}
+
+
+def _shown(notes) -> list:
+    return [n for n in notes if n.code not in HIDDEN]
+
+
+def _key(code: str, detail: dict) -> tuple:
+    """One note per code is not enough: two new providers share a code, and
+    each has to be matched with its own line from last week."""
+    return (code, detail.get("block"), detail.get("provider"))
+
+
 def _note_rows(run: Run) -> list[dict]:
     return [{"code": n.code, "severity": n.severity, "text": n.text,
-             "detail": n.detail or {}} for n in run.notes]
+             "detail": n.detail or {}, "section": SECTIONS.get(n.code, "other")}
+            for n in _shown(run.notes)]
 
 
 def _compare_notes(run: Run, prev: Run | None) -> list[dict]:
-    """Which warnings are new, which have gone, and which counts moved.
+    """Which checks are new, which have gone, and which counts moved.
 
-    A warning that appears every week is background noise. A warning that is
-    NEW this week, or whose count has jumped, is the thing worth a person's
-    attention - and it is only findable because notes carry a stable code and
-    their numbers rather than being sentences.
+    A check that appears every week is background. One that is NEW this week,
+    or whose count has jumped, is the thing worth a person's attention.
     """
     if prev is None:
         return [dict(n, change="no previous run") for n in _note_rows(run)]
 
-    before = {n.code: (n.detail or {}) for n in prev.notes}
+    before = {_key(n.code, n.detail or {}): n for n in _shown(prev.notes)}
     out: list[dict] = []
+    now_keys = set()
 
-    for n in run.notes:
-        detail = n.detail or {}
-        row = {"code": n.code, "severity": n.severity, "text": n.text,
-               "detail": detail}
-        if n.code not in before:
+    for row in _note_rows(run):
+        k = _key(row["code"], row["detail"])
+        now_keys.add(k)
+        if k not in before:
             row["change"] = "new this week"
         else:
-            was, now = before[n.code], detail
-            moved = {k: {"was": was[k], "now": now[k]}
-                     for k in now
-                     if k in was and isinstance(now[k], (int, float))
-                     and not isinstance(now[k], bool) and was[k] != now[k]}
+            was, now = before[k].detail or {}, row["detail"]
+            moved = {f: {"was": was[f], "now": now[f]}
+                     for f in now
+                     if f in was and isinstance(now[f], (int, float))
+                     and not isinstance(now[f], bool) and was[f] != now[f]}
             row["change"] = "changed" if moved else "same as last week"
             if moved:
                 row["moved"] = moved
         out.append(row)
 
-    gone = [c for c in before if c not in {n.code for n in run.notes}]
-    out += [{"code": c, "severity": INFO, "text": "no longer reported",
-             "detail": {}, "change": "resolved since last week"} for c in gone]
+    out += [{"code": n.code, "severity": INFO, "text": n.text,
+             "detail": n.detail or {}, "section": SECTIONS.get(n.code, "other"),
+             "change": "resolved since last week"}
+            for k, n in before.items() if k not in now_keys]
     return out
 
 
@@ -98,7 +127,7 @@ def review(session: Session, run: Run) -> dict:
     report = get_report(run.report_key)
     notes = _compare_notes(run, prev)
 
-    counts = {s: sum(1 for n in run.notes if n.severity == s)
+    counts = {s: sum(1 for n in _shown(run.notes) if n.severity == s)
               for s in (ACTION, WARNING, INFO)}
 
     return {
@@ -158,8 +187,8 @@ def history(session: Session, report_key: str, weeks: int = 12) -> list[dict]:
         "report_full": report.label,
         "seconds": r.seconds, "started_at": r.started_at,
         "approved_by": r.approved_by, "approved_at": r.approved_at,
-        "actions": sum(1 for n in r.notes if n.severity == ACTION),
-        "warnings": sum(1 for n in r.notes if n.severity == WARNING),
+        "actions": sum(1 for n in _shown(r.notes) if n.severity == ACTION),
+        "warnings": sum(1 for n in _shown(r.notes) if n.severity == WARNING),
         "rows": {t.name: t.rows for t in r.tables},
     } for r in runs]
 

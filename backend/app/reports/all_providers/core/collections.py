@@ -2,8 +2,9 @@
 
 Same source and same shape as the GFS Collection High-Level sheet, with one rule
 removed: there is no "Type = GFS" filter. Every provider the Supporting File lists
-is reported, so the only rows that leave are PI case types and payments against a
-provider the Provider List does not carry.
+is reported, so the only rows that leave are payments against a provider the
+Provider List does not carry (and any case type listed in rules.yml
+`drop_case_types` - empty today: PI payments count on this report).
 
 Two things the steps doc leaves implicit, both confirmed against the delivered
 Week-34 workbook:
@@ -23,11 +24,6 @@ from dataclasses import dataclass, field
 import datetime as dt
 
 import polars as pl
-
-# The run-rate formula is shared with the GFS settlement sheet, which asks the
-# same question of its own numbers. Re-exported here: this module's callers
-# have always imported it from collections.
-from ...pacing import business_days, pace   # noqa: F401
 
 
 def _i64(c: str) -> pl.Expr:
@@ -59,8 +55,15 @@ class CollectionReport:
 def build_collections(payments: pl.DataFrame,
                       provider_list: pl.DataFrame,
                       rules: dict,
-                      year: int) -> tuple[pl.DataFrame, CollectionReport]:
-    """Payment Detailed Report -> Group x WEEKNUM x payment-type totals."""
+                      year: int,
+                      month: int | None = None,
+                      week_expr: pl.Expr | None = None,
+                      after: dt.date | None = None) -> tuple[pl.DataFrame, CollectionReport]:
+    """Payment Detailed Report -> Group x week x payment-type totals.
+
+    `month` keeps only that month's payments; `week_expr` numbers the weeks over the
+    `paid_on` column (the week of the month - see ap/period.py; Excel WEEKNUM when not
+    given); `after` keeps only payments dated later than that day."""
     r = rules["collections"]
     rep = CollectionReport()
 
@@ -72,11 +75,18 @@ def build_collections(payments: pl.DataFrame,
         pl.col("PAYMENT").cast(pl.Float64, strict=False).alias("payment"),
         pl.col("PAYMENTDATE").cast(pl.Date, strict=False).alias("paid_on"))
     rep.add("payment rows", d.height)
+    if month is not None:
+        d = d.filter((pl.col("paid_on").dt.year() == year)
+                     & (pl.col("paid_on").dt.month() == month))
+        rep.add(f"in {year}-{month:02d}", d.height)
+    if after is not None:
+        d = d.filter(pl.col("paid_on") > after)
 
     drop = [x.upper() for x in r["drop_case_types"]]
     d = d.filter(~pl.col("case_type").str.to_uppercase().is_in(drop)
                  | pl.col("case_type").is_null())
-    rep.add(f"after dropping {'/'.join(r['drop_case_types'])}", d.height)
+    rep.add(f"after dropping {'/'.join(r['drop_case_types']) or 'no case types'}",
+            d.height)
 
     prov = (provider_list
             .select(_i64("BUSINESSREGID").alias("regid"),
@@ -98,7 +108,8 @@ def build_collections(payments: pl.DataFrame,
     rep.payment_types_seen = sorted(
         {v for v in d["PT"].unique().to_list() if v is not None})
 
-    d = d.with_columns(excel_weeknum("paid_on", year).alias("Week"))
+    wk = week_expr if week_expr is not None else excel_weeknum("paid_on", year)
+    d = d.with_columns(wk.alias("Week"))
     rep.weeks = sorted(x for x in d["Week"].unique().to_list() if x is not None)
 
     return (d.group_by(["Group", "Week", "PT"])

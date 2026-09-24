@@ -40,6 +40,18 @@ class BuildReport:
         return "\n".join(out)
 
 
+def gfs_case_ids(owner_ar: pl.DataFrame, rules: dict) -> pl.DataFrame:
+    """PHASE 1 output: the GFS case list the manual process pastes into the Supporting
+    File's 'GFS Cases' sheet. Built here from the same filter as Raw Data, so that
+    sheet can stay empty - Delta, Settlement and Collections all read this instead."""
+    r = rules["case_ar"]
+    return (owner_ar
+            .filter(pl.col("OWNER NAME").is_in(r["owner_names"])
+                    & pl.col("CASETYPE").is_in(r["case_types"]))
+            .select(_i64("CASEID").alias("CASEID"))
+            .unique())
+
+
 def build_raw_data(owner_ar: pl.DataFrame,
                    provider_list: pl.DataFrame,
                    custom_ar: pl.DataFrame,

@@ -203,205 +203,53 @@ report once everything's there.
 
 ### Review — the important one
 
-This is the "things worth your eyes" step, with somewhere to live.
+This is the "things worth your eyes" step, with somewhere to live. It shows
+only what you have to check before the report goes out - nothing routine.
 
 Four figures across the top:
 
 ```
-Needs attention     Warnings     Rows produced     Files read
-      Yes               3           279,667             9
-1 figure missing                    4 tables      each pinned to
-    a source                                       its exact bytes
+Needs attention     New providers     No data     Duplicate case IDs
+      Yes                 2              1                0
 ```
 
-Then what the run wants to tell you, worst first:
+Then three sections:
 
 ```
-ACTION    KPI blocks left without a figure — no column for them in the
-          KPI-numbers file: 10635 (DDEL)
+NEW PROVIDERS
+ACTION    New provider in KPI DOR: 'Dorian Chiropractic' has 1 and had no
+          row - added as its own row and counted in the DOR total
+WARNING   Provider(s) in the KPI-numbers file but not in the Supporting
+          File - their figures are not counted: Azizi One & Only Chiro
 
-WARNING   112,960 AR rows dropped — provider not in the Provider List
-          (regids [56, 57, 67, 70, 96, 97])
+NO DATA FOR THE WEEK
+ACTION    No data for KPI 10635 (DDEL) this week - no column for it in the
+          KPI-numbers file
+WARNING   No data for KPI Enforcement Of Agreement in September 2026 -
+          every provider is 0
 
-WARNING   1 duplicate case id(s) in Delta Comparison
-
-NOTE      414,413 GFS cases, 56 providers
+DUPLICATE CASE IDS
+WARNING   2 duplicate case id(s) in Delta Comparison: 81234, 90211
 ```
 
-Three levels, and they mean different things:
+Rows dropped by the routine filters (inactive providers, closed files, no
+Case AR match) are not listed. They happen every week and are the filters
+doing their job.
 
 | | What it means |
 |---|---|
-| **ACTION** | A number the client will look at isn't there. You decide whether to send anyway. |
-| **WARNING** | Rows were dropped or corrected. Normal every week — **the count is the thing to watch.** |
-| **NOTE** | Just context. Nothing wrong. |
+| **ACTION** | A number the client will look at is missing, or a new provider's row was added. Check it before sending. |
+| **WARNING** | Worth a look: a provider whose figures could not be counted, a block that came to nothing, a duplicate case. |
 
-**Here's the part your old system could never do.** From the second week
-onwards, each warning tells you what changed:
+From the second week onwards, each item says whether it is new:
 
-```
-WARNING   112,960 AR rows dropped — provider not in the Provider List
-          changed · rows 900 → 112,960
-```
+- **new this week** - the one that deserves attention
+- **changed** - with the before and after
+- **same as last week** - you have seen it before
+- **resolved since last week** - it used to show, now it doesn't
 
-Last week 900. This week 112,960. That jump means something broke in the
-Provider List. Before, the message just said "112,960" and you had no way to
-know it used to be 900 — last week's message no longer existed anywhere.
+A new provider is new once. From the next week it reads "same as last week".
 
-You'll see one of four labels on every warning:
-
-- **new this week** ← the one that deserves attention
-- **changed** — with the before and after
-- **same as last week** — background noise
-- **resolved since last week** — it used to warn, now it doesn't
-
-Below that, two tables: what it produced (with last week's row counts beside
-this week's), and every file it read with its size and row count.
-
-Then the **Approve** button. It records who approved it and when. Pressing it
-twice is refused.
-
-### Scorecard — what the client sees
-
-Four figures at the top, then one section at a time:
-
-```
-[ Settlement ]  KPI   CP settled   Collections   Case AR   Delta   Raw data
-```
-
-The Settlement table shows every group against every period:
-
-```
-Group                Jan       Feb       Mar   …    Wk 35        Total
-Russman         $264,255  $193,844  $366,394       $77,441   $2,213,956
-Artheon          $35,794   $39,968   $42,763        $9,216     $461,771
-Medvantage       $41,537   $30,111   $29,965        $2,652     $253,107
-…
-Total           $412,693  $323,725  $521,898      $104,702   $3,614,847
-```
-
-Months are totals for the year so far; then the current month's weeks.
-
-**Raw data** is worth a mention. It's 278,930 rows — the reason your workbook is
-21 MB and slow to open. Here it stays in storage and the page fetches 50 rows at
-a time, so it opens instantly.
-
-**Export CSV.** Every table — Raw data, Delta, Case AR, Collections — has an
-**Export CSV** button beside the page arrows. It downloads the **whole** table,
-not the 50 rows on screen:
-
-```
-GFS Raw data          278,930 rows    24 MB
-GFS Delta                 666 rows
-```
-
-The file is named for what it is, so it doesn't get lost in your downloads
-folder: `gfs-2026-W35-raw_data.csv`.
-
-### Run history
-
-Every build of the **last 12 weeks**, both reports, with warning counts and who
-approved each one. Your dated folders could only be read by someone sitting at
-that laptop.
-
-Twelve weeks is a quarter. Far enough back to see whether something is drifting,
-short enough that the page is still a page — a list that grows forever stops
-being read.
-
-A week is normally **two rows**: GFS on Tuesday, All Providers on Thursday. They
-are told apart by the **Scorecard** column, and each week's rows sit in their own
-block with a gap above them:
-
-```
-  WEEK      SCORECARD       STATUS     ACTION  WARNINGS  APPROVED BY   OPEN
-
-  2026-W36  GFS             approved      1       3     ali.asghar    Scorecard
-  ─────────────────────────────── gap ───────────────────────────────
-  2026-W35  All Providers   review        4       2        —          Scorecard
-  2026-W35  GFS             approved      1       3     ali.asghar    Scorecard
-```
-
-**Unapprove.** Approving is one click, so taking it back is one click too. The
-build goes back to `review` and can be approved again. Why it matters: without
-it, the only way out of a mis-click was to build the week again — and that gives
-you a new run number, while the screenshot you already emailed still points at
-the old one.
-
-Un-approving is written into the run's own notes: who withdrew it, and who had
-approved it. A report that was signed off on Tuesday and unsigned on Wednesday
-should not be a mystery on Thursday.
-
-**Delete.** Removes a build and everything it recorded — its figures, its tables,
-its notes — **and the files it read**.
-
-Files are only ever removed once *nothing else needs them*, because they are
-shared on purpose:
-
-- **The files you uploaded** belong to the week, not to one build. The shared
-  files feed both reports, and every rebuild reads them again. So they go only
-  when no remaining build uses them: delete the GFS build and All Providers
-  keeps its inputs; delete the last build for a week and the files go with it.
-  A file you uploaded but never built is left alone.
-- **A result another build still uses** stays. Results are stored under a
-  fingerprint of their own contents, so two identical builds share one file. It
-  is only removed once nothing points at it any more.
-
-The same care applies to the bytes themselves. Thursday's Case AR is often
-identical to Tuesday's, and identical files are stored once — so the stored copy
-is deleted only after the last build naming it is gone.
-
-> This is the one thing here you cannot undo. A deleted build's inputs are gone
-> from the app once no other build needs them, and you would have to upload the
-> week again to rebuild it.
-
-**Delete a week.** On **Upload a week**, next to the week box, there is a
-**Delete 2026-W35** button that removes *everything* for that week — every file
-uploaded for it and every build made from it.
-
-You need this because deleting builds one at a time never clears a week. The
-files belong to the week rather than to any one build, so once you have deleted
-all of a week's builds the files stay, the week keeps appearing in the list, and
-it still offers a **Build** button with nothing behind it. Deleting the week is
-what actually removes them.
-
-It asks twice, the same way, and tells you how many files it is about to remove.
-A week with a build still running cannot be deleted.
-
-Deleting asks twice, in the row itself — **Delete** turns into **Really delete?**
-and **Keep**, and gives up after five seconds if you walk away. A pop-up box is
-too easy to click through without reading; a second button in the row you are
-about to destroy makes you look at it.
-
-> Anyone signed in can delete today. Restricting it to an admin is a later step —
-> there is no admin to be yet, because accounts have no roles.
-
----
-
-## 7. Where everything is kept
-
-Two places:
-
-**The files themselves** are stored under a **fingerprint of their contents** —
-a code worked out from every byte in the file.
-
-Three useful things follow from that:
-
-1. **You can prove a file arrived intact.** The app works out the fingerprint of
-   what it received. Same fingerprint means identical bytes — not "probably
-   fine", identical.
-
-2. **The same file is only stored once.** Thursday's Supporting File is usually
-   identical to Tuesday's, so the second copy costs nothing.
-
-3. **A file can never be quietly swapped.** Upload a corrected Payment Detail
-   and it lands in a *new* place. The old one stays. So a run from three months
-   ago still points at the exact bytes it read — not "whatever is called that
-   now".
-
-**Everything else** — which weeks exist, which files arrived when, every build,
-every warning, who approved what — is in a database.
-
----
 
 ## 8. Questions you can now answer
 
@@ -409,9 +257,9 @@ Things that were hard or impossible before:
 
 | Question | Where to look |
 |---|---|
-| Which file produced this number? | Review page → "What it read", with fingerprints |
+| Which file produced this number? | The Files page, with fingerprints |
 | Did anyone approve last week's report? | Run history → Approved by |
-| Are we dropping more rows than usual? | Review page → the warning says what it was last week |
+| Is this provider new? | Review page → New providers, marked "new this week" |
 | What did we send in Week 32? | Run history → open that week's scorecard |
 | Did the client get the right Case AR? | The upload is tagged GFS or All Providers |
 

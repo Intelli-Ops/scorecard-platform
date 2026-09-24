@@ -154,3 +154,26 @@ def test_history_is_bounded_by_weeks_and_not_by_rows(db):
     assert weeks[0] == "2026-W35" and weeks[-1] == "2026-W24"
     # All four builds of the newest week are kept - the cut is between weeks.
     assert sum(1 for r in rows if r["week"] == "2026-W35") == 4
+
+
+def test_routine_row_drops_are_not_on_the_review(db):
+    """Runs stored before the review was trimmed still carry them; they stay hidden."""
+    run = add_run(db, "2026-W35", [
+        warning("ar_rows_dropped_no_group", "112,960 AR rows dropped", rows=112960),
+        info("delta_partial_paid_rewritten", "3 Partial Paid rows", count=3),
+        warning("delta_duplicate_case_ids", "1 duplicate case id(s)", count=1)])
+    out = review(db, run)
+    assert [n["code"] for n in out["notes"]] == ["delta_duplicate_case_ids"]
+    assert out["notes"][0]["section"] == "duplicates"
+    assert out["note_counts"][WARNING] == 1
+
+
+def test_each_new_provider_is_compared_on_its_own(db):
+    """Two new providers share a code; last week's one is not 'new' again."""
+    add_run(db, "2026-W37", [action("kpi_new_provider", "A", block="DOR", provider="A",
+                                    value=1)])
+    this = add_run(db, "2026-W38", [
+        action("kpi_new_provider", "A", block="DOR", provider="A", value=1),
+        action("kpi_new_provider", "B", block="DOR", provider="B", value=2)])
+    change = {n["detail"].get("provider"): n["change"] for n in review(db, this)["notes"]}
+    assert change == {"A": "same as last week", "B": "new this week"}

@@ -12,6 +12,9 @@ What is different from GFS begins after that:
     filter is "delete all NA in Group" - a provider the Supporting File does not
     list is inactive and drops out. Everything else counts.
 
+  * The one rule shared with GFS: Med-Legal counts F&F settlements only
+    (rules.yml delta.keep_settlement_types). WC and IMR count every type.
+
   * NO Partial Paid rewrite. That rule belongs to the GFS delta sheet, which
     reports live settlements; this report totals the year as it stands.
 
@@ -30,9 +33,10 @@ over all locations and the Settlement grids over one location each.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-import datetime as dt
 
 import polars as pl
+
+from ...period import Period, week_index_expr
 
 
 def _i64(c: str) -> pl.Expr:
@@ -50,7 +54,6 @@ class DeltaReport:
     unknown_provider_ids: list[int] = field(default_factory=list)
     locations_seen: dict[str, int] = field(default_factory=dict)
     unknown_payment_received: list[str] = field(default_factory=list)
-    current_month: int = 0
     # (rows, amount, buckets) dated in the current month but outside the week
     # columns this report covers - reported so nothing is lost in silence.
     outside_week_columns: tuple = (0, 0.0, [])
@@ -84,7 +87,8 @@ def combine_delta(sheets: dict[str, pl.DataFrame], rules: dict
 
 
 def prepare(comb: pl.DataFrame, provider_list: pl.DataFrame, rules: dict,
-            rep: DeltaReport | None = None) -> tuple[pl.DataFrame, DeltaReport]:
+            year: int, rep: DeltaReport | None = None
+            ) -> tuple[pl.DataFrame, DeltaReport]:
     """PHASES 5/6 - attach Group, drop the unlisted providers, keep the report year.
 
     This is the one table both the Settlement grids and the Delta Comparison grid
@@ -116,34 +120,39 @@ def prepare(comb: pl.DataFrame, provider_list: pl.DataFrame, rules: dict,
         d = d.filter(pl.col("Group").is_not_null())
     rep.add("1. drop NA Group (providers not in the Provider List)", d.height)
 
-    d = d.filter(pl.col("D").dt.year() == r["year"])
-    rep.add(f"2. keep {r['year']}", d.height)
+    keep = r.get("keep_settlement_types") or {}
+    st = pl.col("Settlement_Type").cast(pl.Utf8).str.strip_chars().str.to_lowercase()
+    for sheet, types in keep.items():
+        d = d.filter((pl.col("_source_sheet") != sheet)
+                     | st.is_in([str(t).strip().lower() for t in types]))
+        rep.add(f"2. {sheet}: keep {', '.join(map(str, types))} only", d.height)
+
+    d = d.filter(pl.col("D").dt.year() == year)
+    rep.add(f"3. keep {year}", d.height)
 
     rep.locations_seen = {k: v for k, v in
                           d.group_by("loc").len().sort("len", descending=True).rows()}
-    rep.current_month = int(d["D"].max().month) if d.height else 0
     return d, rep
 
 
-def settlement_grids(d: pl.DataFrame, rules: dict, month: int, weeks: list[int],
+def settlement_grids(d: pl.DataFrame, rules: dict, period: Period,
                      rep: DeltaReport | None = None
                      ) -> dict[str, dict[tuple[str, str], float]]:
     """PHASE 5 - one grid per Location: {(group, bucket): settlement amount}.
 
-    Buckets are "M1".."M12" for whole months and "W32".."W35" for the weeks of the
-    month being reported. The week columns are the ones the sheet has - one per
-    Monday of the month up to the week being reported - so a settlement dated
-    outside them (1 August fell on a Saturday, and the last days of the month have
-    not been reported yet) has nowhere to go. Those are counted and reported rather
-    than dropped in silence.
+    Buckets are "M1".."M12" for whole calendar months and "W1".."W5" for the weeks of
+    the month being reported (`period`, see ap/period.py). A settlement dated in the
+    month but after the reporting week has no column yet; those are counted and
+    reported rather than dropped in silence.
     """
     r = rules["delta"]
+    month = period.month
     d = d.with_columns(
         pl.when(pl.col("D").dt.month() == month)
-          .then(pl.lit("W") + pl.col("D").dt.week().cast(pl.Utf8))
+          .then(pl.lit("W") + week_index_expr("D", period).cast(pl.Utf8))
           .otherwise(pl.lit("M") + pl.col("D").dt.month().cast(pl.Utf8))
           .alias("Bucket"))
-    shown = {f"W{w}" for w in weeks}
+    shown = {f"W{i}" for i in range(1, period.weeks_so_far + 1)}
     if rep is not None:
         stray = d.filter((pl.col("D").dt.month() == month)
                          & ~pl.col("Bucket").is_in(list(shown)))

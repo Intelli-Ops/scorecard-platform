@@ -6,7 +6,7 @@
 
 export const TOTAL = "Total";
 
-/* Buckets are the pipeline's own: "M5" is the May total, "W32" is week 32 of
+/* Buckets are the pipeline's own: "M5" is the May total, "W2" is week 2 of
    the current month. Months run first in calendar order, then this month's
    weeks - which is exactly the order the columns go in. */
 export const isWeek = (b) => b.startsWith("W");

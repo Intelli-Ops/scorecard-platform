@@ -8,11 +8,16 @@ and must answer it the same way.
 from __future__ import annotations
 import pytest
 
-from app.reports.pacing import business_days, pace, pace_grid
+import datetime as dt
+
+from app.reports.pacing import pace, pace_grid
+from app.reports.period import reporting_period, month_weeks
+
+HOLIDAYS = [dt.date(2026, 9, 7)]                    # Labour Day
 
 
 def test_august_2026_has_twenty_one_working_days():
-    assert business_days(2026, 8) == 21
+    assert reporting_period("2026-W35", HOLIDAYS).business_days == 21
 
 
 def test_pace_reproduces_the_workbook_for_a_miles():
@@ -21,30 +26,52 @@ def test_pace_reproduces_the_workbook_for_a_miles():
     running = 0.0
     for i, (amount, want) in enumerate(zip(weekly, expected), start=1):
         running += amount
-        assert pace(running, i, 21) == pytest.approx(want, abs=1e-4)
+        assert pace(running, 5 * i, 21) == pytest.approx(want, abs=1e-4)
 
 
 def test_pace_grid_accumulates_across_the_month():
-    amounts = {("A Miles", "W32"): 17200.0, ("A Miles", "W33"): 9900.0,
-               ("A Miles", "W34"): 35543.07, ("A Miles", "W35"): 39800.0}
-    grid = pace_grid(amounts, ["W32", "W33", "W34", "W35"], 2026, 8)
-    assert grid[("A Miles", "W35")] == pytest.approx(107565.2235, abs=1e-4)
+    aug = reporting_period("2026-W35", HOLIDAYS)
+    amounts = {("A Miles", "W1"): 17200.0, ("A Miles", "W2"): 9900.0,
+               ("A Miles", "W3"): 35543.07, ("A Miles", "W4"): 39800.0}
+    grid = pace_grid(amounts, ["W1", "W2", "W3", "W4"], aug)
+    assert grid[("A Miles", "W4")] == pytest.approx(107565.2235, abs=1e-4)
     # Week 2 is built from weeks 1 AND 2, not from week 2 alone.
-    assert grid[("A Miles", "W33")] == pytest.approx(56910.0, abs=1e-4)
+    assert grid[("A Miles", "W2")] == pytest.approx(56910.0, abs=1e-4)
 
 
-def test_a_finished_month_paces_to_its_actual():
-    """Once the elapsed days reach the month's, the projection stops being one."""
-    weeks = [f"W{n}" for n in range(1, 6)]           # 5 weeks = 25 > 21 days
+def test_a_week_belongs_to_the_month_of_its_wednesday():
+    # Mon 31 Aug - Fri 4 Sep is September's week 1, shown as 1-4 Sep.
+    sep = reporting_period("2026-W36", HOLIDAYS)
+    assert (sep.month, sep.weeks_so_far) == (9, 1)
+    assert sep.weeks == [(dt.date(2026, 9, 1), dt.date(2026, 9, 4))]
+    # 1-2 Oct join October's week 1, which runs 1-9 Oct.
+    assert month_weeks(2026, 10)[0] == (dt.date(2026, 10, 1), dt.date(2026, 10, 9))
+
+
+def test_holidays_are_not_working_days():
+    """September 2026: 22 weekdays less Labour Day. Week 2 has elapsed 4 + 4 days,
+    the sheet's own =SUM(J9,K9)/8*21."""
+    sep = reporting_period("2026-W37", HOLIDAYS)
+    assert sep.business_days == 21
+    assert sep.pace_divisor(1) == 4
+    assert sep.pace_divisor(2) == 8
+    grid = pace_grid({("G", "W1"): 400.0, ("G", "W2"): 400.0}, ["W1", "W2"], sep)
+    assert grid[("G", "W2")] == pytest.approx(800.0 / 8 * 21)
+
+
+def test_the_last_week_paces_over_the_days_it_covers():
+    """August's weeks end on Fri 28 Aug; Mon 31 Aug is in September's week 1."""
+    aug = reporting_period("2026-W35", HOLIDAYS)
+    weeks = [f"W{n}" for n in range(1, 5)]
     amounts = {("G", w): 100.0 for w in weeks}
-    grid = pace_grid(amounts, weeks, 2026, 8)
-    assert grid[("G", "W5")] == pytest.approx(500.0)
+    grid = pace_grid(amounts, weeks, aug)
+    assert grid[("G", "W4")] == pytest.approx(400.0 / 20 * 21)
 
 
 def test_a_group_that_settled_nothing_paces_to_nothing():
-    grid = pace_grid({("G", "W32"): 0.0}, ["W32"], 2026, 8)
-    assert grid[("G", "W32")] == 0.0
+    grid = pace_grid({("G", "W1"): 0.0}, ["W1"], reporting_period("2026-W35", HOLIDAYS))
+    assert grid[("G", "W1")] == 0.0
 
 
 def test_pace_of_nothing_elapsed_is_nothing_rather_than_a_crash():
-    assert pace(1000.0, 1, 0) == 0.0
+    assert pace(1000.0, 0, 21) == 0.0

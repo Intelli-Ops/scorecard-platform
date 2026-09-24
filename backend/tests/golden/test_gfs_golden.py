@@ -100,6 +100,8 @@ def test_matches_bat_pipeline(result, golden, table):
 
 def test_raw_data_row_count(result):
     """278,930 is the figure recorded as matching the hand-built sheet."""
+    if WEEK != "2026-W35":
+        pytest.skip("the recorded count is for 2026-W35")
     assert result.raw_data.height == 278_930
 
 

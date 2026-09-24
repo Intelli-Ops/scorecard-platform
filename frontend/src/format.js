@@ -28,14 +28,15 @@ export const when = (iso) =>
   iso ? new Date(iso).toLocaleString(undefined,
     { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
 
-/* Bucket labels come from the .bat pipeline: W32 is week 32, M5 is month 5.
+/* Bucket labels come from the .bat pipeline: W2 is week 2 of the month, M5 is month 5.
    Both appear because the report shows weekly detail for the current month and
    monthly totals for the months before it. */
 const MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/* Weeks are written out: "Week-33", not "Wk 33". These are Excel WEEKNUMs and
-   the people reading the sheet say them in full, so the screen does too. One
+/* Weeks are written out: "Week-2", not "Wk 2". These are weeks of the month
+   (a week belongs to the month of its Wednesday) and the people reading the
+   sheet say them in full, so the screen does too. One
    definition, here, because it was written twice and the two could drift. */
 export const weekLabel = (n) => `Week-${n}`;
 
@@ -45,7 +46,7 @@ export const bucketLabel = (b) =>
 export const monthName = (m) => MONTHS[m] ?? String(m);
 
 /* Ordering for the x axis: months first in calendar order, then the current
-   month's weeks. Sorting the raw labels as text would put W32 before M2. */
+   month's weeks. Sorting the raw labels as text would put W2 before M12. */
 export const bucketSort = (a, b) => {
   const rank = (s) => (s.startsWith("M") ? [0, +s.slice(1)] : [1, +s.slice(1)]);
   const [ka, va] = rank(a), [kb, vb] = rank(b);
