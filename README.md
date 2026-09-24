@@ -1,200 +1,481 @@
+# Scorecard Platform
 
+A web app that builds the two weekly client scorecards:
 
-## Accounts
+| Report | Sent on | What it covers |
+|---|---|---|
+| **GFS Weekly Scorecard** | Tuesday | GFS cases only |
+| **All Providers Weekly Scorecard** | Thursday | Every provider |
 
-Every route except sign-up, sign-in and the health check requires an account,
-enforced by one dependency on the whole router rather than route by route.
+Both reports used to be built on one laptop with a `.bat` script and Excel
+(the [gfs-automation](https://github.com/Intelli-Ops/gfs-automation) project).
+This app does the same calculations in a browser. You upload the week's files,
+press **Build**, check the review screen, approve the run, then read the
+scorecard.
 
-Two company rules, checked in the API and not only in the form - a form can be
-bypassed by opening the developer console:
+For a longer, non-technical walkthrough, see [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 
-  * the email must end `@appedology.com`
-  * the APD id is `APD-` and exactly four digits (a bare `1234` is completed,
-    lower case is accepted; anything else is refused)
+---
 
-Passwords are stored as PBKDF2-HMAC-SHA256 with a per-user 16-byte salt at
-240,000 iterations - standard library only, no dependency to keep patched. A
-wrong email and a wrong password give the same message, so nobody can discover
-which addresses have accounts.
+## Contents
 
-Sessions are opaque tokens in a table rather than self-contained tokens,
-because signing out has to actually revoke access. Who uploaded and who
-approved are taken from the signed-in account, never from a field the caller
-sets.
+1. [How it works in one minute](#how-it-works-in-one-minute)
+2. [Tech stack and tools](#tech-stack-and-tools)
+3. [Project structure](#project-structure)
+4. [Getting started](#getting-started)
+5. [Using the app: a worked week](#using-the-app-a-worked-week)
+6. [The input files](#the-input-files)
+7. [What the calculations do](#what-the-calculations-do)
+8. [The review screen](#the-review-screen)
+9. [The API](#the-api)
+10. [Changing the rules](#changing-the-rules)
+11. [Tests](#tests)
+12. [Where data is stored](#where-data-is-stored)
 
-The health check stays open: a health check that needs credentials is not a
-health check.
+---
 
-## A run's life after it is built
+## How it works in one minute
 
-`review` -> `approved` is not one-way. **Unapprove** puts a run back to
-`review`, clears the approver, and writes an `approval.withdrawn` note naming
-who withdrew it and who had approved it. Rebuilding was the only way back
-before, and a rebuild changes the run id that screenshots and emails already
-point at.
+```
+  1. UPLOAD                2. BUILD                    3. REVIEW              4. READ
+  ─────────                ────────                    ─────────              ───────
+  Drag the week's    ──►   Background worker    ──►    What needs a     ──►   Dashboard with
+  Excel / CSV files        reads the files,            person's eyes:         the same tabs as
+  onto "Upload"            runs the calculations,      new providers,         the workbook
+                           saves the results           missing data,          (Settlement,
+                                                       duplicate cases        Collections, KPI…)
+                                                       → Approve
+```
 
-**Delete** removes the run, cascades to its inputs, notes, figures and tables,
-and takes the files with it - both the source uploads it read and the result
-parquet it produced.
+- **A week** is labelled like `2026-W38` (ISO week 38 of 2026).
+- **A run** is one build of one report for one week. Every run records who
+  started it, which exact files it read (by fingerprint), what it produced, and
+  who approved it.
+- Nothing is recalculated when you look at an old run. Its results are stored,
+  so a scorecard from three months ago opens instantly.
 
-Both are reference counted rather than deleted outright, because both are
-shared on purpose:
+---
 
-  * an upload belongs to the week, not to one run. The seven shared files feed
-    both reports and every rebuild reads them again, so an upload goes only
-    once no surviving run consumes it. Delete the GFS run and All Providers
-    keeps its inputs; delete the last run for a week and the files go too. An
-    upload no run ever read is left alone - it is not that run's to remove.
-  * a result parquet another run also produced. Results are content-addressed,
-    so two identical builds share one file; the blob is removed only once no
-    `RunTable` row points at the hash.
+## Tech stack and tools
 
-The same holds one level down, at the bytes. Two `Upload` rows with identical
-content share a single stored blob - Thursday's Case AR is often byte-for-byte
-Tuesday's - so the blob is unlinked only after the last row naming it is gone.
+### Backend: Python
 
-The response says what went: `uploads_removed` counts rows, and
-`upload_files_removed` counts blobs actually unlinked from disk.
+| Tool | Used for |
+|---|---|
+| **Python 3.11** | Language |
+| **FastAPI** | The HTTP API (`/api/...`) |
+| **Uvicorn** | Runs the FastAPI server |
+| **Polars** | All the table calculations. Fast, and handles 280,000-row files easily |
+| **fastexcel** (calamine) | Reads `.xlsx` / `.xlsb` quickly: about 2 s, where openpyxl took about 35 s |
+| **PyArrow / Parquet** | Stores each run's result tables, and caches parsed Excel files |
+| **SQLAlchemy 2** | Database access |
+| **SQLite** | Default database (one file). Postgres works too; see [Where data is stored](#where-data-is-stored) |
+| **PyYAML** | Reads the business rules in `rules.yml` |
+| **pytest** | Tests |
 
-A `pending` or `running` build cannot be deleted out from under the worker.
+There is no queue server. Builds run on one background thread inside the web
+process ([worker.py](backend/app/jobs/worker.py)). If a build dies, start it
+again; its input files are still stored.
 
-## Deleting a week
+### Frontend: JavaScript
 
-`DELETE /api/weeks/{week}` removes a week's builds AND every file uploaded for
-it, and it exists because deleting builds one by one cannot get you back to a
-clean slate.
+| Tool | Used for |
+|---|---|
+| **React 19** | The screens |
+| **React Router 7** | Pages: `/upload`, `/runs`, `/runs/:id`, `/dashboard/:id` |
+| **Vite 8** | Dev server and production build. Also forwards `/api` calls to the backend |
+| **oxlint** | Linting |
+| **node:test** | Tests for the table-shaping code (`*.test.mjs`) |
 
-Uploads outlive runs on purpose - they are the week's inputs, not one build's -
-so a week whose builds have all been deleted keeps its files and goes on
-offering a **Build** button with nothing behind it. Reference counting has
-nothing left to count against at that point; only asking for the week itself
-does anything.
+It uses no UI library and no chart library. The tables and styling are
+hand-written ([components.jsx](frontend/src/components.jsx),
+[theme.css](frontend/src/theme.css)).
 
-Runs go first, so each retires what it alone was holding; whatever remains is
-what no build ever read. Blobs are still reference counted across weeks: two
-weeks that uploaded byte-identical files share one stored copy, and it is
-unlinked only with the last week naming it.
+---
 
-The week must have no `pending` or `running` build. This cannot be undone - the
-files would have to be uploaded again.
+## Project structure
 
-Both actions are open to anyone signed in. An admin-only rule needs a role on
-the account first, which does not exist yet.
+```
+scorecard-platform/
+├── README.md                  ← this file
+├── HOW-IT-WORKS.md            ← plain-English guide for the people using it
+├── backend/                   ← Python API + calculations
+│   ├── requirements.txt
+│   ├── pytest.ini
+│   ├── app/
+│   │   ├── main.py            ← creates the FastAPI app
+│   │   ├── config.py          ← where data lives (data dir, database URL)
+│   │   ├── api/               ← HTTP layer
+│   │   ├── service/           ← what the API calls: ingest, run, review…
+│   │   ├── jobs/              ← background build worker
+│   │   ├── db/                ← database tables and session
+│   │   ├── storage/           ← file store (content-addressed)
+│   │   └── reports/           ← THE CALCULATIONS
+│   │       ├── gfs/
+│   │       └── all_providers/
+│   └── tests/
+└── frontend/                  ← React app
+    ├── package.json
+    ├── vite.config.js
+    └── src/
+        ├── pages/             ← one file per screen
+        └── *-model.js         ← turn API rows into sheet-shaped tables
+```
 
-## Run history is bounded by weeks, not rows
+### `backend/app/api/`: the HTTP layer
+| File | What's in it |
+|---|---|
+| [routes.py](backend/app/api/routes.py) | Weeks, uploads, runs, approve and unapprove, figures, tables, CSV export |
+| [auth_routes.py](backend/app/api/auth_routes.py) | Sign up, sign in, sign out, "who am I" |
+| [deps.py](backend/app/api/deps.py) | `current_user`, which every route except sign-in and health requires |
 
-`GET /api/runs?weeks=12`. A row limit cuts in the wrong place: rebuild one week
-four times and a limit of 20 rows silently drops three older weeks off a list
-that still calls itself a history.
+### `backend/app/service/`: the application logic
+| File | What's in it |
+|---|---|
+| [ingest.py](backend/app/service/ingest.py) | Accepts uploaded files, recognises which input each one is by its name, and stores it once, even if uploaded twice |
+| [runner.py](backend/app/service/runner.py) | Runs one build: find the files, read them, calculate, save the results, record the notes. Also approve, unapprove and delete |
+| [review.py](backend/app/service/review.py) | Builds the review screen and compares each check with last week's |
+| [figures.py](backend/app/service/figures.py) | Turns the sheet-shaped results (grids, KPI blocks) into rows the dashboard can read |
+| [auth.py](backend/app/service/auth.py) | Accounts and password hashing |
 
-## The Settlement tab follows the workbook
+### `backend/app/reports/`: the calculations
+This is the heart of the project. It is kept apart from the web code so the
+numbers can be tested against the old Excel pipeline.
 
-The sheet's shape is the reading order the client already has in their hands,
-so the screen keeps it rather than inventing its own:
+| File / folder | What's in it |
+|---|---|
+| [\_\_init\_\_.py](backend/app/reports/__init__.py) | The list of reports and the input files each one needs |
+| [locate.py](backend/app/reports/locate.py) | Matches uploaded files to inputs by name, e.g. a name containing `payment detail` is the Payment Detail Report |
+| [period.py](backend/app/reports/period.py) | The calendar: which month a week belongs to, its weeks, working days, holidays |
+| [pacing.py](backend/app/reports/pacing.py) | Run-rate projection ("where will the month land?") |
+| [review_notes.py](backend/app/reports/review_notes.py) | The checks shown on the review screen |
+| [notes.py](backend/app/reports/notes.py) | The `Note` type: code, severity, message, numbers |
+| [cache.py](backend/app/reports/cache.py) | Parquet cache so a big Excel file is only parsed once |
+| `gfs/` | The GFS report: `readers.py` (files → tables), `pipeline.py` (the steps in order), `core/` (each calculation), `rules.yml` (business rules) |
+| `all_providers/` | The All Providers report, same layout, plus `layout.py`, which reads last week's workbook to find the KPI rows |
 
-  * one column PAIR per month - Settlement Amount beside Settlement % - under a
-    heading that spans the two, which is what stops a row of alternating
-    headings turning into a wall;
-  * the CURRENT month opened out into its weeks rather than summed, because the
-    month is still running and the weeks are the news. Those columns are
-    tinted the whole way down;
-  * two totals, both amounts: the current month, and the year. Neither carries
-    a per cent, because a per cent across a span of weeks is not the sum of
-    theirs.
-  * both blocks - In House and Board - on screen at once, as the sheet prints
-    them. The block picker is gone.
+Inside each `core/` folder:
 
-The Total row's Settlement % is read from `settlement_totals`, never summed
-from the column above it: it is the whole block's settled-plus-paid over its
-billed, which is not the sum or the average of the group percentages.
+| File | Produces |
+|---|---|
+| `case_ar.py` | Raw Data and the Case AR summary |
+| `delta.py` | Delta Comparison (live settlements) and, for All Providers, the settlement grids |
+| `settlement.py` (GFS) | Settlement High-Level grids (In House / Board) and CP Settled Cases |
+| `collections.py` | Collection High-Level: payments by group, week and payment type |
+| `kpi.py` | KPI High-Level: SBR, DDE, DOR, NTP… per provider |
 
-## Pace
+### `backend/app/db/`, `storage/`, `jobs/`
+| File | What's in it |
+|---|---|
+| [db/models.py](backend/app/db/models.py) | Tables: `User`, `Session`, `Upload`, `Run`, `RunInput`, `RunNote`, `RunFigure`, `RunTable` |
+| [storage/files.py](backend/app/storage/files.py) | File store. Each file is saved under the hash of its bytes, so identical files are stored once |
+| [jobs/worker.py](backend/app/jobs/worker.py) | Background thread that runs queued builds one at a time |
 
-`Settlements (In House - Pace)` and `(Board - Pace)`, the run-rate the workbook
-prints under each block: what has banked up to each week, divided by the
-working days elapsed, times the working days in the month.
+### `frontend/src/`
+| File | What's in it |
+|---|---|
+| [App.jsx](frontend/src/App.jsx) | Sidebar and page routes |
+| [api.js](frontend/src/api.js) | Every call to the backend |
+| [auth.jsx](frontend/src/auth.jsx) | Sign-in state |
+| `pages/Weeks.jsx` | **Upload**: drop files, see what is held and missing, press Build |
+| `pages/Runs.jsx` | **Run history**: last 12 weeks of builds |
+| `pages/Review.jsx` | **Review**: new providers, no-data items, duplicate case IDs, Approve |
+| `pages/Dashboard.jsx` | **Scorecard**: tabs in workbook order |
+| `settlement.jsx`, `collections.jsx`, `delta.jsx`, `kpi.jsx` | One file per dashboard tab |
+| `*-model.js` | Pure functions that pivot API rows into the sheet's shape (tested in `*.test.mjs`) |
+| `components.jsx`, `ui.jsx`, `columns.js`, `format.js` | Shared table, card, tile and number formatting |
 
-    cumulative / min(5 * week_index, business_days) * business_days
+---
 
-It is only ever the current month - there is nothing to project about a month
-that has closed - and at month end the divisor reaches the multiplier, so the
-last week of a finished month paces to exactly what it did.
+## Getting started
 
-It is emitted for both sheets - `settlement_pace` per block, and
-`collections_pace` flat, because Collections has no In House / Board split.
-Collections paces a group's whole WEEK rather than each payment type: that
-is what the sheet does, and pacing one payment type is projecting noise.
+### What you need
+- Python 3.11+
+- Node.js 20+
 
-The formula lives in `app/reports/pacing.py`. It was in the All Providers
-collections module, which needed it first; the GFS settlement sheet asks the
-same question of its own numbers, so it moved rather than being written twice.
-`tests/test_pacing.py` checks it against four numbers read out of the delivered
-Week-35 workbook.
+### 1. Install (once)
 
-## The Collections tab
+From the project root, `C:\dev\scorecard-platform`:
 
-Same manner as Settlement, one dimension different. Where Settlement opens the
-current month into weeks and puts a Settlement % beside each, Collections opens
-each WEEK into its four payment types and totals them:
+```powershell
+python -m venv .venv
+.\.venv\Scripts\pip install -r backend\requirements.txt
 
-    Wk 32                                        Wk 33 ...
-    BILLING  REBILLING  APPEAL  SETTLEMENT  Total
+cd frontend
+npm install
+cd ..
+```
 
-Then the Pace block, then the payment-type footer the sheet prints under the
-grid.
+### 2. Run (two terminals)
 
-**What is deliberately missing: the closed months, January to July.** The
-workbook carries one column each for them; `build_collections` produces the
-current month only, so they are not there to show. The card says so rather than
-leaving a reader to wonder. Filling them in means teaching the pipeline to read
-the prior months - which is where the workbook itself gets them.
+**Terminal 1: backend.** It must be started from inside `backend\`:
+```powershell
+cd C:\dev\scorecard-platform\backend
+..\.venv\Scripts\python -m uvicorn app.main:app --reload
+```
+It listens on http://127.0.0.1:8000. Check http://127.0.0.1:8000/api/health.
 
-## Tabs are in sheet order
+**Terminal 2: frontend.** It must be started from inside `frontend\`:
+```powershell
+cd C:\dev\scorecard-platform\frontend
+npm run dev
+```
+Open the address it prints, usually http://localhost:5173. Vite forwards
+`/api/...` to the backend, so no other setup is needed.
 
-Settlement, Collections, Delta, KPI, Case AR, then Raw Data - the order the
-workbook prints them, which is the order the people reading it expect. Raw Data
-sits last because it is the evidence under the others rather than one of them.
+### Common mistakes
+| Error | Cause | Fix |
+|---|---|---|
+| `No module named 'app'` | uvicorn was started outside `backend\` | `cd backend` first |
+| `Could not read package.json` | `npm` was run outside `frontend\` | `cd frontend` first |
+| `..\.venv\Scripts\python is not recognized` | Run from the project root, where the path is `.\.venv` | `cd backend` first, or use `.\.venv\Scripts\python` |
 
-## The Delta tab, and the rows beside it
+### 3. Create an account
+On first open, choose **Sign up**. There are two rules, checked by the server
+as well as the form:
+- the email must end in `@appedology.com`
+- the APD ID is `APD-` plus four digits, e.g. `APD-1234` (typing `1234` is completed for you)
 
-Delta Comparison was made by hand: paste the delta rows into a sheet, drop a
-pivot next to them, set the filters at the top, read the grid. That is what the
-screen is - the filters, then the pivot they drive, then the rows themselves on
-the tab next door.
+---
 
-The pivot is built IN THE BROWSER from the rows, not asked of the server. Two
-things follow: a filter takes effect immediately, and the pivot can never
-disagree with the raw tab beside it, because they are the same rows.
+## Using the app: a worked week
 
-A column with only one value is not offered as a filter - `Type` is GFS for
-every row, and a filter that cannot change anything is furniture. Aging is
-offered in scale order (1-30, 31-60, 61-90, 90+); sorting those as text puts
-90+ in the middle.
+Example: building **Week 38 of 2026** (Mon 14 – Fri 18 Sep).
 
-The tiles on this tab follow the filters. Filter to 90+ and the headline figure
-is 90+'s, not the whole sheet's - tiles that ignore the control above them are
-worse than no tiles.
+**1. Upload.** Go to **Upload**, pick week `2026-W38`, and drop in the files:
 
-**Verified against the workbook:** the grand total (558,199.10) and every
-group's grand total reproduce exactly. The per-bucket aging split does NOT
-match the layout workbook, and should not: `Aging` is relative to a date, that
-file is a partial snapshot taken at a different one, and rows have aged between
-buckets since. The column itself is covered by the golden master.
+```
+Master Settlement & Collection Delta WC 09.21.2026.xlsb   → delta_wc          (shared)
+Master Settlement & Collection Delta MLCR 09.21.26.xlsb   → delta_mlcr        (shared)
+Payment Detail Report for 01st to 18th September.xlsx     → payment_detail    (shared)
+Supporting File.xlsx                                      → supporting        (shared)
+Hearing Calendar (Jan 2024 - 18th September 2026).xlsx    → hearing_calendar  (shared)
+sqllab_document_log_query_20260921T130343.csv             → document_log      (shared)
+KPI-Numbers.xlsx                                          → kpi_numbers       (shared, optional)
+Combined Owner Case AR.xlsb                               → owner_case_ar     (per report)
+Combined Custom Case AR.xlsb                              → custom_case_ar    (per report)
+All Provider - Weekly Score Card (Week-37) 2026.xlsx      → template          (All Providers only)
+```
 
-## KPI has no tiles
+Files are recognised by **words in their name**, so dates and suffixes can change
+freely. A file that matches nothing (a finished workbook, say) is refused with
+a reason, never stored by mistake.
 
-A tile is for a figure the whole page is about. This page is about eight
-categories at once, and a headline over them would have to pick one or add them
-together - the sum of an SBR count and a DDE count is not a number that means
-anything.
+The two Case AR files are uploaded **per report**, because GFS uses Tuesday's
+copy and All Providers uses Thursday's.
 
-Each category gets a table instead: who is in it, how many, and what share of
-the category that is. The share is drawn as well as written, so a category that
-is nearly all one group reads differently at a glance from one spread evenly -
-which is what these blocks are looked at for, and what a column of bare counts
-hides.
+**2. Build.** When a report has everything it needs, its **Build** button turns on.
+The build takes about a minute, and the page updates itself.
 
-## Weeks are written out
+**3. Review.** The review screen lists only what needs a person's eyes (see
+[The review screen](#the-review-screen)). Check it, then press **Approve**.
+**Unapprove** undoes this in one click.
 
-`Week-33`, not `Wk 33`, everywhere. One definition, in `format.js`; it was
-written twice and the two could drift.
+**4. Read.** **Open scorecard** shows the tabs in the workbook's order:
+Settlement → Collections → Delta → KPI → Case AR → Raw data. Every table can be
+filtered and downloaded as CSV.
+
+---
+
+## The input files
+
+| Key | File (name must contain) | Used for |
+|---|---|---|
+| `delta_wc` | `delta wc` | WC settlements → Delta, Settlement |
+| `delta_mlcr` | `delta mlcr` | Med-Legal and IMR settlements → Delta, Settlement |
+| `payment_detail` | `payment detail` | Collections |
+| `supporting` | `supporting file` | Provider List: provider → group |
+| `hearing_calendar` | `hearing calendar` | CP Settled Cases |
+| `document_log` | `document_log` (.csv) | KPI: SBR and DDE counts |
+| `kpi_numbers` | `kpi` + `number` | KPI: DOR, NTP, Liens… (optional) |
+| `owner_case_ar` | `combined owner case ar` | Raw Data, Case AR, and the list of GFS cases |
+| `custom_case_ar` | `combined custom` + `case ar` | Closing Order, Case Validity, File Status lookups |
+| `template` | `provider` + `score` (.xlsx) | All Providers only: last week's workbook, read for its KPI rows |
+
+---
+
+## What the calculations do
+
+The calculations are the same as in gfs-automation, step for step. Short
+examples of the rules that matter most:
+
+### Weeks belong to the month of their Wednesday
+```
+Mon 31 Aug – Fri 4 Sep   → September week 1 (shown as 1–4 Sep; 31 Aug counts in August's total)
+Mon 28 Sep – Fri 2 Oct   → September week 5 (28–30 Sep); 1–2 Oct join October week 1 (1–9 Oct)
+```
+So a 2026-W38 build reports **September 2026, weeks 1–3**. Nothing dated after
+Sun 20 Sep is counted, even if the delta files already contain it.
+
+### Pacing uses working days
+Pace = month-to-date ÷ working days so far × working days in the month.
+Holidays in `rules.yml` are not working days.
+```
+September 2026: 22 weekdays − Labour Day (7 Sep) = 21 working days
+Week 2 ends Fri 11 Sep: 4 + 4 = 8 working days elapsed
+A group with 400 in week 1 and 400 in week 2 → (400 + 400) / 8 × 21 = 2,100
+```
+
+### Settlement types
+Med-Legal counts **F&F settlements only**; its "Payments" and "Check" rows are
+left out. WC and IMR count every type.
+
+### Delta Comparison (live settlements)
+Combine the three delta sheets → drop providers with no group → keep GFS cases
+(GFS report) → drop closed files → for **Partial Paid**, use Remaining Payment
+as the settlement amount → attach Closing Order, Case Validity and Lien Filed
+→ bucket by age (1–30, 31–60, 61–90, 90+ days).
+
+### Collections
+Payments for the month being reported, by group × week × payment type
+(BILLING, REBILLING, APPEAL, SETTLEMENT). GFS leaves out PI; All Providers
+counts PI.
+
+### KPI and new providers
+Each KPI figure goes to a row named after the provider, or else to its group's
+row. A provider with a figure and **no row** gets a new row of its own and is
+counted in the total. The review lists it as a new provider.
+
+---
+
+## The review screen
+
+It shows three kinds of check, and nothing routine:
+
+```
+NEW PROVIDERS
+ACTION   New provider in KPI DOR: 'Dorian Chiropractic' has 1 and had no row -
+         added as its own row and counted in the DOR total        new this week
+WARNING  Provider(s) in the KPI-numbers file but not in the Supporting File -
+         their figures are not counted: Azizi One & Only Chiro
+
+NO DATA FOR THE WEEK
+ACTION   No data for KPI 10635 (DDEL) this week - no column for it in the
+         KPI-numbers file
+WARNING  No data for KPI Enforcement Of Agreement in September 2026 -
+         every provider is 0
+
+DUPLICATE CASE IDS
+WARNING  2 duplicate case id(s) in Delta Comparison: 81234, 90211
+```
+
+Each item is compared with the previous week's run: **new this week**,
+**changed** (with before → after), **same as last week**, or **resolved since
+last week**.
+
+Rows dropped by the routine filters (inactive providers, closed files, no
+Case AR match) are **not** shown. They happen every week and mean the filters
+are working.
+
+---
+
+## The API
+
+Every route is under `/api` and needs a signed-in session, except sign-up,
+sign-in and `/api/health`.
+
+| Method | Path | Does |
+|---|---|---|
+| `GET` | `/api/reports` | The two reports and the files each needs |
+| `GET` | `/api/weeks` · `/api/weeks/{week}` | Weeks, and what is held or missing for each |
+| `POST` | `/api/weeks/{week}/uploads` | Upload files (`files`, optional `for_report` for Case ARs) |
+| `DELETE` | `/api/weeks/{week}` | Remove a week's builds and files |
+| `POST` | `/api/runs?report=gfs&week=2026-W38` | Queue a build → `{"run_id": 12}` |
+| `GET` | `/api/runs?weeks=12` | Run history |
+| `GET` | `/api/runs/{id}` | The review for one run |
+| `POST` | `/api/runs/{id}/approve` · `/unapprove` | Approve, or undo it |
+| `DELETE` | `/api/runs/{id}` | Delete a run (its files go once no other run uses them) |
+| `GET` | `/api/runs/{id}/figures/{name}` | `settlement`, `settlement_pace`, `collections_pace`, `cp_settled`, `kpi`, `meta` |
+| `GET` | `/api/runs/{id}/tables/{name}` · `/csv` | `raw_data`, `case_ar`, `delta_comparison`, `collections` |
+
+Example with `curl`, using the token from sign-in:
+```bash
+curl -X POST "http://127.0.0.1:8000/api/runs?report=gfs&week=2026-W38" \
+     -H "Authorization: Bearer $TOKEN"
+# {"run_id": 12, "status": "pending", "queued_ahead": 0}
+
+curl "http://127.0.0.1:8000/api/runs/12" -H "Authorization: Bearer $TOKEN"
+# {"run": {...,"status": "review"}, "notes": [...], "needs_attention": true, ...}
+```
+
+---
+
+## Changing the rules
+
+Business rules live in YAML, not code:
+[backend/app/reports/gfs/rules.yml](backend/app/reports/gfs/rules.yml) and
+[backend/app/reports/all_providers/rules.yml](backend/app/reports/all_providers/rules.yml).
+
+Examples:
+
+```yaml
+# Add next year's holidays (pacing stops counting them as working days)
+holidays:
+  - 2027-01-01   # New Year
+
+# Count only F&F settlements from a sheet
+delta:
+  keep_settlement_types:
+    Med-Legal Delta: [F&F]
+
+# Leave a case type out of Collections (GFS: [PI]; All Providers: [])
+collections:
+  drop_case_types: [PI]
+```
+
+Changes apply to the next build. Existing runs keep the numbers they were built
+with.
+
+---
+
+## Tests
+
+```powershell
+cd backend
+..\.venv\Scripts\python -m pytest -q          # backend
+
+cd ..\frontend
+node --test src/*.test.mjs                    # frontend table models
+npm run lint
+```
+
+### The golden-master tests
+`backend/tests/golden/` runs this app on a real week of input files and checks
+that its four tables, and the All Providers settlement grids, **match the
+gfs-automation output exactly** (row for row, money to the cent). They need the
+gfs-automation folder, with its `inputs/` and `marts/`, on disk, and are
+skipped otherwise:
+
+```powershell
+$env:GFS_LEGACY_ROOT = "C:\Users\<you>\OneDrive - MSFT\Desktop\gfs-automation"
+$env:GFS_GOLDEN_WEEK = "2026-W38"
+$env:GFS_GOLDEN_AS_OF = "2026-09-22"
+..\.venv\Scripts\python -m pytest -q tests\golden
+```
+
+Run them after any change to `reports/`.
+
+---
+
+## Where data is stored
+
+Everything goes in `data/` at the project root (git-ignored, because it holds
+client case data):
+
+```
+data/
+├── scorecard.db      ← SQLite: accounts, uploads, runs, notes, figures
+├── objects/          ← uploaded files, named by the SHA-256 of their bytes
+├── results/          ← each run's result tables as parquet
+└── cache/            ← parsed Excel files, so rebuilds are fast
+```
+
+Two environment variables change this:
+
+| Variable | Default | Example |
+|---|---|---|
+| `SCORECARD_DATA` | `<project>/data` | `D:\scorecard-data` |
+| `SCORECARD_DB` | SQLite in the data folder | `postgresql+psycopg://user:pass@host/scorecard` (install `psycopg[binary]`) |
+
+**Never commit** `data/`, `.xlsx`, `.xlsb` or `.csv` files. `.gitignore`
+already blocks them.
