@@ -12,14 +12,17 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.db import session as db_session
+from tests.accounts import account
 
 
 @pytest.fixture
 def client(tmp_path):
     """A signed-in client.
 
-    Every data route requires an account now, so the fixture signs one up and
-    attaches the token - the same thing the browser does after sign-in.
+    Every data route requires an account, so the fixture makes one and
+    attaches its token - the same thing the browser does after sign-in. An
+    admin, because deleting runs and weeks, which much of this file is about,
+    is an admin's job; test_a_user_cannot_delete checks the other side.
     """
     settings.use(tmp_path / "data")
     db_session.reset()
@@ -27,10 +30,8 @@ def client(tmp_path):
     create_all()
     from app.main import app
     with TestClient(app) as c:
-        token = c.post("/api/auth/signup", json={
-            "email": "tester@appedology.com", "apd_id": "APD-0001",
-            "password": "a good long password"}).json()["token"]
-        c.headers["Authorization"] = f"Bearer {token}"
+        c.headers.update(account(c, "tester@appedology.com", "APD-0001",
+                                 role="admin"))
         yield c
 
 
@@ -387,7 +388,7 @@ def test_a_week_with_a_running_build_cannot_be_deleted(client):
 
 
 def test_deleting_a_week_that_is_not_there_is_a_404(client):
-    assert client.delete("/api/weeks/2026-W99").status_code == 404
+    assert client.delete("/api/weeks/2026-W52").status_code == 404
 
 
 def test_deleting_a_week_needs_an_account(client):
@@ -438,3 +439,21 @@ def test_run_history_carries_the_report_and_is_bounded_by_weeks(client):
     assert all(r["report"] for r in rows)
     assert client.get("/api/runs?weeks=1").status_code == 200
     assert client.get("/api/runs?weeks=0").status_code == 422
+
+
+def test_the_current_scorecard_is_the_latest_approved_one(client):
+    """What a reader sees: the newest APPROVED week, who approved it, and a
+    note when a newer week is built but still waiting."""
+    old = _finished_run(week="2026-W35", status="approved")
+    _finished_run(week="2026-W36", status="review")
+    from app.db.models import Run
+    from app.db.session import session
+    with session() as s:
+        s.get(Run, old).approved_by = "tester@appedology.com"
+
+    cards = {c["key"]: c for c in client.get("/api/scorecards/current").json()}
+    gfs = cards["gfs"]
+    assert gfs["run"]["id"] == old and gfs["run"]["week"] == "2026-W35"
+    assert gfs["run"]["approver_name"] == "tester"
+    assert gfs["waiting"]["week"] == "2026-W36"
+    assert cards["all_providers"]["run"] is None

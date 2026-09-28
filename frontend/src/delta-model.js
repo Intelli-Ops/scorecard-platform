@@ -15,8 +15,7 @@ export const TOTAL = "Grand Total";
    with only one value is not offered - a filter that cannot change anything is
    furniture. */
 export const FILTERS = [
-  { key: "Aging", label: "Aging" },
-  { key: "Location", label: "Location" },
+  { key: "Group", label: "Group" },
   { key: "Case_Validity", label: "Validity" },
   { key: "Lien Filed", label: "Lien filed" },
   { key: "Closing Order", label: "Closing order" },

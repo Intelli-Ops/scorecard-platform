@@ -12,9 +12,41 @@ the hash of their own bytes.
 from __future__ import annotations
 import datetime as dt
 
-from sqlalchemy import (String, Integer, Float, DateTime, ForeignKey, Text,
-                        UniqueConstraint, Index, JSON, Boolean)
+from sqlalchemy import (BigInteger, String, Integer, Float, DateTime, ForeignKey,
+                        Text, UniqueConstraint, Index, JSON, Boolean, text)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
+
+
+class UtcDateTime(TypeDecorator):
+    """A moment in time, stored as UTC and always handed back as UTC.
+
+    Neither SQLite nor MySQL keeps a time zone: both give back a bare
+    2026-09-28 09:14, and a bare time sent to the browser is read as the
+    BROWSER's local time - so a sign-in at 09:14 UTC would be shown as 09:14
+    local, hours out. Stored naive in UTC and returned aware, the zone
+    survives the round trip on every database alike.
+    """
+    impl = DateTime
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        # MySQL's DATETIME drops fractions of a second unless asked, and two
+        # events in the same second must still sort in the order they happened.
+        if dialect.name == "mysql":
+            from sqlalchemy.dialects.mysql import DATETIME
+            return dialect.type_descriptor(DATETIME(fsp=6))
+        return dialect.type_descriptor(DateTime())
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=dt.timezone.utc)
+        return value.astimezone(dt.timezone.utc).replace(tzinfo=None)
+
+    def process_result_value(self, value, dialect):
+        return None if value is None else value.replace(tzinfo=dt.timezone.utc)
 
 
 class Base(DeclarativeBase):
@@ -23,6 +55,18 @@ class Base(DeclarativeBase):
 
 def _now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
+
+
+# An auto-numbered 64-bit id. SQLite only auto-numbers a column declared
+# INTEGER, so it keeps that there; MySQL gets BIGINT, because the activity log
+# is kept forever and a 32-bit id runs out at 2.1 billion rows.
+BigId = BigInteger().with_variant(Integer, "sqlite")
+
+# viewer        reads the approved scorecards it has been given, nothing else
+# admin         the workspace - uploads, builds, approvals - and viewers' accounts
+# system_admin  everything an admin does, plus making and removing admins
+ROLES = ("viewer", "admin", "system_admin")
+ROLE_LABELS = {"viewer": "Viewer", "admin": "Admin", "system_admin": "System admin"}
 
 
 class User(Base):
@@ -45,15 +89,74 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     apd_id: Mapped[str] = mapped_column(String(8), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
-    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True),
+    created_at: Mapped[dt.datetime] = mapped_column(UtcDateTime(),
                                                     default=_now)
-    last_login_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    last_login_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime())
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Every column below has a server default, so adding it to a database that
+    # already holds accounts (see migrate.py) gives those accounts a sensible
+    # value rather than a NULL the code does not expect.
+
+    # What the person may do - see ROLES.
+    role: Mapped[str] = mapped_column(String(16), default="viewer",
+                                      server_default="viewer")
+    # Which scorecards a VIEWER may read, as report keys: "gfs,all_providers".
+    # Admins read everything, whatever this says.
+    report_access: Mapped[str] = mapped_column(String(200), default="",
+                                               server_default="")
+    # A new sign-up waits here, unable to sign in, until an admin approves it.
+    # Anyone can TYPE an @appedology.com address; only an admin can vouch that
+    # the person behind it is who it says.
+    pending: Mapped[bool] = mapped_column(Boolean, default=False,
+                                          server_default=text("0"))
+    # What to call them. Optional; the email's local part stands in without it.
+    display_name: Mapped[str | None] = mapped_column(String(120))
+
+    password_changed_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime())
+    # Set when an admin resets the password: the temporary one they were
+    # handed is good for one thing only, choosing their own.
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("0"))
+
+    # Wrong passwords in a row, and the lock they lead to. Cleared by a good
+    # sign-in or by an admin.
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0,
+                                               server_default=text("0"))
+    locked_until: Mapped[dt.datetime | None] = mapped_column(UtcDateTime())
 
     @property
     def name(self) -> str:
-        """The part before the @, for showing in the corner of the screen."""
-        return self.email.split("@")[0]
+        """What to call them: their chosen name, or the part before the @."""
+        return self.display_name or self.email.split("@")[0]
+
+    @property
+    def is_admin(self) -> bool:
+        """Admin or above: the workspace, and the Users and Activity screens."""
+        return self.role in ("admin", "system_admin")
+
+    @property
+    def is_system_admin(self) -> bool:
+        return self.role == "system_admin"
+
+    @property
+    def reports(self) -> list[str]:
+        """The report keys this account may read."""
+        if self.is_admin:
+            from ..reports import REPORTS
+            return list(REPORTS)
+        return [k for k in (self.report_access or "").split(",") if k]
+
+    @property
+    def status(self) -> str:
+        """One word for the Users screen."""
+        if self.pending:
+            return "pending"
+        if not self.is_active:
+            return "disabled"
+        if self.locked_until and self.locked_until > _now():
+            return "locked"
+        return "active"
 
 
 class Session(Base):
@@ -62,16 +165,26 @@ class Session(Base):
     Opaque random tokens in a table, rather than a self-contained token: signing
     out has to actually revoke access, and a token that carries its own validity
     cannot be taken back before it expires.
+
+    `token` holds the SHA-256 of the token, never the token itself. Someone who
+    reads this table - a backup, a leaked dump - gets hashes, which cannot be
+    presented to the API as a sign-in.
     """
     __tablename__ = "user_session"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("user_account.id"), index=True)
-    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True),
+    created_at: Mapped[dt.datetime] = mapped_column(UtcDateTime(),
                                                     default=_now)
-    expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[dt.datetime] = mapped_column(UtcDateTime())
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Where it was opened from, so the profile screen can list "where you are
+    # signed in" and a session nobody recognises can be spotted and ended.
+    ip: Mapped[str | None] = mapped_column(String(45))          # fits IPv6
+    user_agent: Mapped[str | None] = mapped_column(String(400))
+    last_seen_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime())
 
     user: Mapped[User] = relationship()
 
@@ -98,7 +211,7 @@ class Upload(Base):
     suffix: Mapped[str] = mapped_column(String(8))                # .xlsb, .csv
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     size_bytes: Mapped[int] = mapped_column(Integer)
-    uploaded_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True),
+    uploaded_at: Mapped[dt.datetime] = mapped_column(UtcDateTime(),
                                                      default=_now)
     uploaded_by: Mapped[str | None] = mapped_column(String(200))
 
@@ -121,13 +234,17 @@ class Run(Base):
     week: Mapped[str] = mapped_column(String(9), index=True)
     status: Mapped[str] = mapped_column(String(16), default="pending")
     as_of: Mapped[dt.date | None] = mapped_column()
-    started_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True),
+    started_at: Mapped[dt.datetime] = mapped_column(UtcDateTime(),
                                                     default=_now)
-    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime())
     seconds: Mapped[float | None] = mapped_column(Float)
     error: Mapped[str | None] = mapped_column(Text)
-    approved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime())
     approved_by: Mapped[str | None] = mapped_column(String(200))
+    # The month's working days the pace was worked out on, and where that
+    # number came from: typed in on the upload screen, or the calendar's.
+    working_days: Mapped[int | None] = mapped_column(Integer)
+    working_days_source: Mapped[str | None] = mapped_column(String(16))
 
     inputs: Mapped[list["RunInput"]] = relationship(
         back_populates="run", cascade="all, delete-orphan")
@@ -235,3 +352,66 @@ class RunTable(Base):
     run: Mapped[Run] = relationship(back_populates="tables")
 
     __table_args__ = (UniqueConstraint("run_id", "name"),)
+
+
+class ActivityLog(Base):
+    """Who did what, when, and from where. Kept forever; only ever added to.
+
+    The security record. Every sign-in (and every failed one), every upload,
+    build, approval, deletion and export, and every change an admin makes to an
+    account is one row here.
+
+    Append-only, enforced by the DATABASE rather than by this code: triggers
+    (see session.py) refuse any UPDATE or DELETE on this table, so neither a
+    bug nor someone holding the app's own credentials can quietly rewrite what
+    happened.
+
+    No foreign key to the account on purpose. A failed sign-in may name no
+    account at all, and the record of what someone did must never depend on
+    their account row still existing. The email is copied in as it was at the
+    time for the same reason.
+    """
+    __tablename__ = "activity_log"
+
+    id: Mapped[int] = mapped_column(BigId, primary_key=True, autoincrement=True)
+    at: Mapped[dt.datetime] = mapped_column(UtcDateTime(), default=_now)
+    user_id: Mapped[int | None] = mapped_column(Integer)
+    email: Mapped[str | None] = mapped_column(String(320))
+    action: Mapped[str] = mapped_column(String(48))          # auth.login, run.approve
+    outcome: Mapped[str] = mapped_column(String(16), default="success")
+    target: Mapped[str | None] = mapped_column(String(200))  # "run 12", "2026-W38"
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    ip: Mapped[str | None] = mapped_column(String(45))
+    user_agent: Mapped[str | None] = mapped_column(String(400))
+
+    # Shaped by the questions asked of it: everything in a period, one
+    # person's history, one kind of event, one address.
+    __table_args__ = (
+        Index("ix_activity_at", "at"),
+        Index("ix_activity_user_at", "user_id", "at"),
+        Index("ix_activity_email_at", "email", "at"),
+        Index("ix_activity_action_at", "action", "at"),
+        Index("ix_activity_ip_at", "ip", "at"),
+    )
+
+# success -> it happened
+# failure -> it was attempted and did not work (a wrong password)
+# denied  -> it was refused because the person is not allowed (not an admin)
+OUTCOMES = ("success", "failure", "denied")
+
+
+class MonthSetting(Base):
+    """Working days in a month, as entered on the upload screen.
+
+    The calendar count (weekdays less the holidays in rules.yml) is right most
+    months, but not when the office closes on a day nobody put in the rules,
+    or opens on one it did. Whoever uploads the week can say how many working
+    days the month really has; every build in that month paces on it. One row
+    per month, replaced when changed - each change is in the activity log.
+    """
+    __tablename__ = "month_setting"
+
+    month: Mapped[str] = mapped_column(String(7), primary_key=True)   # 2026-09
+    working_days: Mapped[int] = mapped_column(Integer)
+    set_by: Mapped[str | None] = mapped_column(String(320))
+    set_at: Mapped[dt.datetime] = mapped_column(UtcDateTime(), default=_now)

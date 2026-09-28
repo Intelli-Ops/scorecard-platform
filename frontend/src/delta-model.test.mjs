@@ -84,16 +84,17 @@ test("a column with one value is not offered as a filter", () => {
   // Type is GFS for every row here: a filter that cannot change anything.
   const keys = filterOptions(rows).map((f) => f.key);
   assert.ok(!keys.includes("Type"));
-  assert.ok(keys.includes("Aging"));
+  assert.ok(keys.includes("Group"));
+});
+
+test("aging and location are not filters; group is, first", () => {
+  const keys = filterOptions(rows).map((f) => f.key);
+  assert.ok(!keys.includes("Aging") && !keys.includes("Location"));
+  assert.equal(keys[0], "Group");
 });
 
 test("every filter offers (All) first", () => {
   for (const f of filterOptions(rows)) assert.equal(f.values[0], ALL);
-});
-
-test("aging values are offered in scale order", () => {
-  const aging = filterOptions(rows).find((f) => f.key === "Aging");
-  assert.deepEqual(aging.values, [ALL, "1-30", "31-60", "90+"]);
 });
 
 test("(All) does not constrain", () => {

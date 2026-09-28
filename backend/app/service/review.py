@@ -137,6 +137,8 @@ def review(session: Session, run: Run) -> dict:
             "seconds": run.seconds, "started_at": run.started_at,
             "finished_at": run.finished_at, "error": run.error,
             "approved_by": run.approved_by, "approved_at": run.approved_at,
+            "working_days": run.working_days,
+            "working_days_source": run.working_days_source,
         },
         "compared_with": None if prev is None else {"id": prev.id, "week": prev.week},
         "needs_attention": counts[ACTION] > 0

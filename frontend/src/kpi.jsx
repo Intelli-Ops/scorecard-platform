@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { count } from "./api";
-import { assemble, col } from "./columns";
+import { assemble, col, total } from "./columns";
 import { TableCard } from "./ui";
 
 /* KPI High-Level, one table per category.
@@ -22,6 +22,17 @@ import { TableCard } from "./ui";
    space than a bar. */
 
 const TOTAL = "Total";
+
+/* The order management reads the blocks in. A block is matched by name
+   ignoring case, and DDEL by the "(DDEL)" in "10635 (DDEL)"; anything not
+   listed goes last, alphabetically. */
+const ORDER = ["sbr", "pmr", "ddel", "ntp", "medical index", "dor",
+               "med legal", "enforcement of agreement", "dde"];
+function rank(name) {
+  const n = String(name).trim().toLowerCase();
+  const i = ORDER.indexOf(/\(ddel\)/.test(n) ? "ddel" : n);
+  return i < 0 ? ORDER.length : i;
+}
 
 /* A run's KPI figures may carry a month; the ones built before they did are
    simply the run's own month. Either way a block is grouped into columns. */
@@ -63,7 +74,7 @@ export default function Kpi({ kpi, monthLabel }) {
 
       return { name, months, rows: [...body, total],
                total: total._total, groups: body.length };
-    }).sort((a, b) => b.total - a.total);
+    }).sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
   }, [kpi, monthLabel]);
 
   if (!blocks.length) {
@@ -79,7 +90,7 @@ export default function Kpi({ kpi, monthLabel }) {
         }));
         if (b.months.length > 1) {
           parts.push({ spanLabel: "Grand Total",
-                       column: col.count("_total", "Grand Total", { strong: true }) });
+                       column: total(col.count("_total", "Grand Total")) });
         }
         const { columns } = assemble(
           col.label("group", "Group", { width: 260, className: "sticky" }), parts);

@@ -27,6 +27,10 @@
   --green-soft:  #E3F5EC;
   --green-mid:   #CFEDDF;   /* the current month inside a total row */
   --green-line:  #BFE6D4;
+  --total-row:   #E7EEF3;   /* a total row */
+  --total-col:   #F1F5F8;   /* a total column */
+  --total-cross: #D8E3EB;   /* where the two meet: the grand total */
+  --total-line:  #B9C9D4;
 
   /* Ink */
   --text:        #12211F;
@@ -59,6 +63,9 @@
   --shadow: 0 1px 2px rgba(14, 59, 53, .05), 0 6px 20px rgba(14, 59, 53, .05);
   --shadow-hi: 0 2px 4px rgba(14, 59, 53, .07), 0 10px 28px rgba(14, 59, 53, .09);
 
+  /* One curve for everything that moves: quick to start, soft to land. */
+  --ease: cubic-bezier(.2, .75, .25, 1);
+
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
           "Segoe UI", Inter, system-ui, sans-serif;
 }
@@ -86,61 +93,101 @@ h3 { font-size: 12px; font-weight: 600; color: var(--text-2); margin: 0 0 8px;
 
 .app { display: flex; min-height: 100vh; }
 
+/* The sidebar is pinned to the window, not to the page. It used to be as tall
+   as the page, so on a long scorecard Sign out was at the very bottom of it -
+   a full scroll away. Now it is always the height of the screen, and scrolls
+   on its own only if a short window cannot fit the menu. */
 .side {
-  width: 218px; flex: none; padding: 18px 14px 24px;
-  background: var(--teal); color: #fff;
+  position: sticky; top: 0; align-self: flex-start;
+  height: 100vh; overflow-y: auto; overflow-x: hidden;
+  width: 232px; flex: none; padding: 18px 14px 16px;
+  background:
+    radial-gradient(420px 260px at -20% -10%, rgba(33,180,126,.18), transparent 60%),
+    linear-gradient(180deg, #0F433B 0%, var(--teal) 45%, #0A2E29 100%);
+  color: #fff;
   display: flex; flex-direction: column;
-  transition: width .18s ease, padding .18s ease;
+  transition: width .22s var(--ease), padding .22s var(--ease);
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent;
 }
-/* Collapsed: icons only, and the page gets 154px back. The width animates
-   rather than the sidebar being removed, so the page does not reflow from
-   scratch and the reading position is kept. */
-.app.collapsed .side { width: 64px; padding-inline: 10px; }
+/* Collapsed: icons only, and the page gets the room back. The width
+   animates rather than the sidebar being removed, so the page does not reflow
+   from scratch and the reading position is kept. */
+.app.collapsed .side { width: 68px; padding-inline: 12px; }
 
-.side-top { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
-.side .brand { font-weight: 600; font-size: 15.5px; letter-spacing: -0.015em;
+.side-top { display: flex; align-items: center; gap: 11px; margin-bottom: 24px; }
+.side .brand { font-weight: 650; font-size: 16px; letter-spacing: -0.02em;
                white-space: nowrap; }
 .side .sub { color: rgba(255,255,255,.55); font-size: 12px; margin-top: 1px;
              white-space: nowrap; }
+.side-name { animation: fade-in .3s var(--ease) both; }
 
 .hamburger {
-  flex: none; width: 34px; height: 34px; padding: 0;
+  flex: none; width: 36px; height: 36px; padding: 0;
   display: grid; place-items: center;
   background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.13);
-  border-radius: var(--r-sm); color: rgba(255,255,255,.82); cursor: pointer;
+  border-radius: 10px; color: rgba(255,255,255,.85); cursor: pointer;
+  transition: background .18s ease, border-color .18s ease, transform .18s var(--ease);
 }
 .hamburger:hover:not(:disabled) {
   background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.24);
   color: #fff;
 }
+.hamburger:active { transform: scale(.94); }
 
 .side nav a {
+  position: relative;
   display: flex; align-items: center; gap: 11px;
-  padding: 9px 11px; border-radius: var(--r-sm);
+  padding: 9px 11px; border-radius: 10px;
   color: rgba(255,255,255,.72); margin-bottom: 3px; font-weight: 450;
   white-space: nowrap; overflow: hidden;
+  transition: background .18s ease, color .18s ease, box-shadow .25s ease;
 }
 .side nav a .glyph { flex: none; display: grid; place-items: center;
-                     width: 16px; height: 16px; opacity: .8; }
+                     width: 16px; height: 16px; opacity: .8;
+                     transition: transform .22s var(--ease), opacity .18s ease; }
+.side nav a .text { animation: fade-in .25s var(--ease) both; }
 .side nav a:hover { background: rgba(255,255,255,.08); color: #fff; }
-.side nav a.on { background: var(--green); color: #fff; font-weight: 550; }
+.side nav a:hover .glyph { transform: scale(1.12); opacity: 1; }
+.side nav a.on {
+  background: linear-gradient(135deg, #26C089 0%, var(--green) 55%, #1AA06F 100%);
+  color: #fff; font-weight: 560;
+  box-shadow: 0 8px 18px -8px rgba(33,180,126,.75), inset 0 1px 0 rgba(255,255,255,.18);
+}
 .side nav a.on .glyph { opacity: 1; }
 .app.collapsed .side nav a { justify-content: center; padding-inline: 0; }
 
+/* Who is signed in, and the way out - always at the foot of the screen. */
 .side .who {
-  margin-top: auto; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.13);
+  margin-top: auto; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.12);
+  display: flex; flex-direction: column; gap: 8px;
 }
-.side .who .email { font-size: 12.5px; color: #fff; word-break: break-all; }
-.side .who .apd { font-size: 11.5px; color: rgba(255,255,255,.5); margin-top: 2px; }
-.side .who button {
-  margin-top: 11px; width: 100%; background: transparent; color: rgba(255,255,255,.8);
-  border-color: rgba(255,255,255,.22); font-size: 12.5px; padding: 6px 10px;
+.who-card {
+  display: flex; align-items: center; gap: 10px; padding: 7px 8px;
+  border-radius: 12px; color: #fff; min-width: 0;
+  transition: background .18s ease;
 }
-.side .who button:hover { background: rgba(255,255,255,.09); color: #fff; }
-.side .who button.initials {
-  margin-top: 0; padding: 0; height: 34px; font-weight: 600; font-size: 12px;
-  letter-spacing: .04em;
+.who-card:hover, .who-card.on { background: rgba(255,255,255,.09); color: #fff; }
+.who-card .avatar {
+  flex: none; width: 34px; height: 34px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 12px; font-weight: 650;
+  letter-spacing: .04em; color: #0B312C;
+  background: linear-gradient(135deg, #7FE3BC, var(--green));
+  box-shadow: 0 0 0 2px rgba(255,255,255,.14);
 }
+.who-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.who-text .email { font-size: 13px; font-weight: 550; overflow: hidden;
+                   text-overflow: ellipsis; white-space: nowrap; }
+.who-text .apd { font-size: 11.5px; color: rgba(255,255,255,.55); }
+.side .signout {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 8px 10px; font-size: 12.5px;
+  background: transparent; color: rgba(255,255,255,.8);
+  border: 1px solid rgba(255,255,255,.18); border-radius: 10px;
+}
+.side .signout:hover:not(:disabled) {
+  background: rgba(193,84,74,.22); border-color: rgba(255,160,150,.45); color: #fff;
+}
+.app.collapsed .who-card { justify-content: center; padding-inline: 0; }
 
 /* The page takes the whole width the sidebar is not using. There was a
    1460px cap here, which on a wide monitor left a band of empty desk down the
@@ -239,27 +286,108 @@ h3 { font-size: 12px; font-weight: 600; color: var(--text-2); margin: 0 0 8px;
 
 /* ---------------------------------------------------------------- controls */
 
-button, .btn {
-  font: inherit; font-weight: 500; padding: 8px 15px;
-  border-radius: var(--r-sm); border: 1px solid var(--line-2);
-  background: var(--surface); color: var(--text); cursor: pointer;
-  transition: background .12s ease, border-color .12s ease;
+/* ---------------------------------------------------------------- buttons
+
+   Every button in the app is a .btn, made by <Button> in buttons.jsx; the
+   tone class says what it means and this is the only place that says what
+   each tone looks like. In the manner of macOS: soft at rest, a clear
+   answer under the pointer, a small give when pressed.
+
+   A bare <button> is only a reset: the controls that draw their own face -
+   the tab switcher, the access chips, the ×, the menu toggle - start from
+   nothing rather than from a button look they then have to undo. */
+
+button { font: inherit; color: inherit; cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  font: inherit; font-size: 13.5px; font-weight: 550; line-height: 1.25;
+  padding: 8px 15px; border-radius: 10px; border: 1px solid transparent;
+  white-space: nowrap; text-decoration: none; cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease,
+              box-shadow .2s ease, transform .12s var(--ease);
 }
-button:hover:not(:disabled), .btn:hover { background: var(--hover); border-color: var(--green-line); }
-button:disabled { opacity: .45; cursor: not-allowed; }
-button.primary { background: var(--green); border-color: var(--green); color: #fff; }
-button.primary:hover:not(:disabled) { background: var(--green-hi); border-color: var(--green-hi); }
-button.small { padding: 5px 11px; font-size: 12.5px; }
-button.link { border: 0; background: none; color: var(--green-hi); padding: 0; }
-button.link:hover { background: none; text-decoration: underline; }
-/* Quiet: available, but not what you came to the page to do. */
-button.quiet { background: transparent; border-color: var(--line-2);
-               color: var(--text-2); }
-button.quiet:hover:not(:disabled) { background: var(--surface-2);
-                                    color: var(--text); border-color: var(--line-2); }
-/* Danger is only ever the SECOND click - see ConfirmButton. */
-button.danger { background: var(--alert); border-color: var(--alert); color: #fff; }
-button.danger:hover:not(:disabled) { background: #A9463D; border-color: #A9463D; }
+.btn.sm { padding: 5.5px 11px; font-size: 12.5px; border-radius: 8px; gap: 6px; }
+.btn .icon { flex: none; opacity: .85;
+             transition: transform .2s var(--ease), opacity .15s ease; }
+.btn:hover:not(:disabled) .icon { opacity: 1; transform: scale(1.1); }
+.btn:active:not(:disabled) { transform: scale(.97); }
+.btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.btn.wide { width: 100%; padding: 10px; margin-top: 6px; }
+
+/* plain - an ordinary action: a white face with a hairline edge */
+.btn.tone-plain {
+  background: linear-gradient(180deg, #FFFFFF 0%, #F8FAF9 100%);
+  border-color: rgba(14, 59, 53, .13); color: var(--text);
+  box-shadow: 0 1px 2px rgba(14, 59, 53, .07);
+}
+.btn.tone-plain:hover:not(:disabled) {
+  background: linear-gradient(180deg, #FFFFFF 0%, #EDF4F1 100%);
+  border-color: rgba(14, 59, 53, .22); color: var(--text);
+  box-shadow: 0 2px 8px rgba(14, 59, 53, .10);
+}
+
+/* primary - the thing you came to the page to do */
+.btn.tone-primary {
+  background: linear-gradient(135deg, #27C28A, var(--green) 60%, #1CA571);
+  color: #fff;
+  box-shadow: 0 6px 16px -8px rgba(33, 180, 126, .8), inset 0 1px 0 rgba(255, 255, 255, .2);
+}
+.btn.tone-primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #22B37F, var(--green-hi)); color: #fff;
+  box-shadow: 0 8px 20px -8px rgba(33, 180, 126, .9), inset 0 1px 0 rgba(255, 255, 255, .2);
+}
+
+/* quiet - secondary: a grey tint that deepens */
+.btn.tone-quiet { background: rgba(14, 59, 53, .05); color: var(--text-2); }
+.btn.tone-quiet:hover:not(:disabled) { background: rgba(14, 59, 53, .10); color: var(--text); }
+
+/* The tinted tones: quiet at rest, filling with their colour under the
+   pointer - so the colour says what the button does just before it is
+   pressed. `solid` shows the fill at rest too. */
+.btn.tone-soft   { background: rgba(14, 59, 53, .05);   color: var(--text-2); }
+.btn.tone-go     { background: var(--green-soft);       color: var(--green-hi); }
+.btn.tone-warn   { background: rgba(192, 138, 46, .10); color: #93661B; }
+.btn.tone-danger { background: rgba(193, 84, 74, .08);  color: var(--alert); }
+
+.btn.tone-soft:hover:not(:disabled), .btn.tone-soft.solid {
+  background: var(--teal); color: #fff;
+}
+.btn.tone-go:hover:not(:disabled), .btn.tone-go.solid {
+  background: linear-gradient(180deg, #2AC48C, var(--green-hi)); color: #fff;
+}
+.btn.tone-warn:hover:not(:disabled), .btn.tone-warn.solid {
+  background: linear-gradient(180deg, #D9A043, var(--warn)); color: #fff;
+}
+.btn.tone-danger:hover:not(:disabled), .btn.tone-danger.solid {
+  background: linear-gradient(180deg, #D0625A, var(--alert)); color: #fff;
+}
+.btn.tone-soft:hover:not(:disabled), .btn.tone-go:hover:not(:disabled),
+.btn.tone-warn:hover:not(:disabled), .btn.tone-danger:hover:not(:disabled) {
+  box-shadow: 0 4px 12px -5px rgba(14, 59, 53, .35);
+}
+.btn.tone-go.solid     { box-shadow: 0 4px 12px -6px rgba(33, 180, 126, .8); }
+.btn.tone-danger.solid { box-shadow: 0 4px 12px -5px rgba(193, 84, 74, .7); }
+.btn.tone-go.solid:hover:not(:disabled) {
+  background: linear-gradient(180deg, #25B380, #178A60);
+}
+.btn.tone-danger.solid:hover:not(:disabled) {
+  background: linear-gradient(180deg, #C4574E, #A9463D);
+}
+
+/* link - text inside a sentence */
+.btn.tone-link { padding: 0; background: none; border: 0; color: var(--green-hi);
+                 box-shadow: none; }
+.btn.tone-link:hover:not(:disabled) { text-decoration: underline; color: var(--teal); }
+.btn.tone-link:active:not(:disabled) { transform: none; }
+
+/* A confirmation, armed: it pops into the button's place, and everything else
+   in its row steps aside, so the only thing left is the thing that does it. */
+.is-armed { animation: pop .28s var(--ease) both; }
+.confirm-pair { display: inline-flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.row:has(> .is-armed) > :not(.is-armed) { display: none; }
 
 .row.tight { gap: 6px; flex-wrap: nowrap; }
 
@@ -430,9 +558,22 @@ thead th.sticky { z-index: 3; background: var(--surface-2); }
 tbody tr:hover td.sticky { background: var(--hover); }
 tr.total td.sticky { background: var(--green-soft); }
 
-tr.total td { font-weight: 600; background: var(--green-soft); }
-tr.total td:first-child { box-shadow: inset 2px 0 0 var(--green); }
-tr.total:hover td { background: var(--green-soft); }
+/* Totals - rows and columns alike, in every tab: bold, in the deep teal ink,
+   on a cool slate tint that is neither white nor the current month's green,
+   so a total is never mistaken for one more figure. Where a total row
+   crosses a total column (the grand total itself) the tint deepens. */
+td.total-col, th.total-col {
+  font-weight: 700; color: var(--teal); background: var(--total-col);
+}
+tbody tr:hover td.total-col { background: var(--total-col); }
+tr.total td, tr.total td.sticky, tr.total td.current {
+  font-weight: 700; color: var(--teal); background: var(--total-row);
+  border-top: 1.5px solid var(--total-line);
+}
+tr.total td.total-col { background: var(--total-cross); }
+tr.total td:first-child { box-shadow: inset 3px 0 0 var(--teal); }
+tr.total:hover td { background: var(--total-row); }
+tr.total:hover td.total-col { background: var(--total-cross); }
 
 /* The break between groups - a week's runs, in the history.
 
@@ -544,11 +685,409 @@ td.nowrap { white-space: nowrap; }
                      color: var(--text); font-size: 13px; }
 .gate .field input { width: 100%; }
 .gate .field .hint { color: var(--text-3); font-size: 12px; margin-top: 5px; }
-.gate button.primary { width: 100%; padding: 10px; margin-top: 6px; font-weight: 550; }
 .gate .swap { text-align: center; margin-top: 18px; color: var(--text-2);
               font-size: 13px; }
 .gate .problem {
   background: #FBEFEE; border: 1px solid #F0D5D2; color: var(--alert);
   border-radius: var(--r-sm); padding: 10px 12px; font-size: 13px;
   margin-bottom: 16px;
+}
+
+/* ---------------------------------------------------------------- nav: admin */
+
+/* The admin items sit under their own heading, so it is clear they are a
+   separate set of powers rather than two more pages everyone has. */
+.side .nav-section {
+  margin: 16px 11px 6px; font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .08em;
+  color: rgba(255,255,255,.42);
+}
+.side .nav-rule { margin: 12px 8px; border-top: 1px solid rgba(255,255,255,.13); }
+
+/* ---------------------------------------------------------------- forms */
+
+/* Forms inside cards - the profile's name and password. The same field
+   anatomy as the sign-in panel, so a label, an input and a hint look the
+   same wherever they are. */
+.form .field { margin-bottom: 14px; }
+.form .field label { display: block; margin-bottom: 6px; font-weight: 500;
+                     color: var(--text); font-size: 13px; }
+.form .field input { width: 100%; max-width: 360px; }
+.form .field .row input { flex: 1; }
+.form .field .hint { color: var(--text-3); font-size: 12px; margin-top: 5px; }
+.form.inline { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.form .problem, .gate .problem {
+  background: #FBEFEE; border: 1px solid #F0D5D2; color: var(--alert);
+  border-radius: var(--r-sm); padding: 10px 12px; font-size: 13px;
+  margin-bottom: 16px;
+}
+.done {
+  background: var(--green-soft); border: 1px solid var(--green-line);
+  color: var(--green-hi); border-radius: var(--r-sm); padding: 10px 12px;
+  font-size: 13px; margin-bottom: 16px;
+}
+/* The password form's button spans the sign-in panel. */
+.gate .form .btn.tone-primary { width: 100%; padding: 10px; margin-top: 6px; }
+
+/* A list of facts: a label column and a value column. */
+.kv { display: grid; grid-template-columns: 130px 1fr; gap: 9px 16px; margin: 0; }
+.kv dt { color: var(--text-2); font-size: 13px; }
+.kv dd { margin: 0; font-weight: 500; word-break: break-word; }
+
+/* ---------------------------------------------------------------- admin */
+
+/* Name above email in one cell. */
+.who-cell { display: inline-flex; flex-direction: column; line-height: 1.35; }
+
+/* An account waiting for approval, tinted so it is not scrolled past. */
+tbody tr.highlight td { background: #FBF6EA; }
+tbody tr.highlight:hover td { background: #F8F0DD; }
+
+/* Failed and refused events keep a quiet mark down their left edge. */
+tbody tr.row-failure td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+tbody tr.row-denied td:first-child  { box-shadow: inset 3px 0 0 var(--alert); }
+
+/* A temporary password: large, monospaced, easy to read out and to copy. */
+code.secret {
+  font: 600 17px/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: .04em; padding: 10px 14px; border-radius: var(--r-sm);
+  background: var(--surface-2); border: 1px dashed var(--line-2);
+  user-select: all;
+}
+
+.strong { font-weight: 600; }
+
+/* Text boxes in the filter bar sit at the height of the pickers beside them. */
+.filters input[type="text"] { padding: 6px 12px; font-size: 13px;
+                              border-radius: 999px; width: 190px; }
+.filter.on input[type="text"] { border-color: var(--green); }
+
+/* ================================================================ motion
+
+   Movement that explains, never decorates. A page rises into place when you
+   arrive, so it is clear the view changed; cards follow a beat later, so the
+   eye lands on the heading first; the tab highlight slides, so you see where
+   you went. Everything is short (under half a second) and eases out, and all
+   of it is switched off for anyone who has asked their system for less
+   motion. */
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes pop {
+  0%   { opacity: 0; transform: scale(.6); }
+  70%  { transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes shimmer { to { background-position: -200% 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(192,138,46,.45); }
+  100% { box-shadow: 0 0 0 9px rgba(192,138,46,0); }
+}
+@keyframes drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50%      { transform: translate(30px, -20px) scale(1.06); }
+}
+
+.page { animation: rise .4s var(--ease) both; }
+.rise { animation: rise .45s var(--ease) both; }
+
+/* Cards and tiles arrive a moment after the heading, one after another. */
+.page .card, .page .filters {
+  animation: rise .45s var(--ease) both; animation-delay: 60ms;
+}
+.page .grid > .card:nth-child(2) { animation-delay: 110ms; }
+.page .stats .tile { animation: rise .45s var(--ease) both; }
+.page .stats .tile:nth-child(1) { animation-delay: 40ms; }
+.page .stats .tile:nth-child(2) { animation-delay: 80ms; }
+.page .stats .tile:nth-child(3) { animation-delay: 120ms; }
+.page .stats .tile:nth-child(4) { animation-delay: 160ms; }
+.page .stats .tile:nth-child(5) { animation-delay: 200ms; }
+.page .stats .tile:nth-child(n+6) { animation-delay: 240ms; }
+
+/* ---------------------------------------------------------------- polish */
+
+.main { padding: 32px 40px 72px; }
+
+h1 { font-size: 27px; letter-spacing: -0.025em; font-weight: 650; }
+
+/* A small line above a heading that says what kind of page this is. */
+.eyebrow {
+  font-size: 11.5px; font-weight: 650; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--green-hi); margin-bottom: 6px;
+}
+
+/* Cards: a deeper shadow on hover says "this is a surface", without moving. */
+.card { transition: box-shadow .25s ease, border-color .25s ease; }
+.card:hover { box-shadow: var(--shadow-hi); }
+
+/* Tiles: a soft wash of their own colour in the corner, so a row of figures
+   reads as a set of distinct things at a glance. */
+.tile::after {
+  content: ""; position: absolute; right: -40px; top: -40px;
+  width: 120px; height: 120px; border-radius: 50%;
+  background: var(--tile-wash, transparent); opacity: .09;
+  transition: transform .4s var(--ease), opacity .3s ease;
+  pointer-events: none;
+}
+.tile:hover::after { transform: scale(1.25); opacity: .14; }
+.tile.tone-green  { --tile-wash: var(--t-green); }
+.tile.tone-teal   { --tile-wash: var(--t-teal); }
+.tile.tone-blue   { --tile-wash: var(--t-blue); }
+.tile.tone-violet { --tile-wash: var(--t-violet); }
+.tile.tone-amber  { --tile-wash: var(--t-amber); }
+.tile.tone-rose   { --tile-wash: var(--t-rose); }
+
+/* Buttons press in, and the main one carries a little depth. */
+/* The segmented control's sliding highlight. The buttons sit above it and
+   only change their text colour. */
+.seg { position: relative; }
+.seg .seg-mark {
+  position: absolute; top: 2px; bottom: 2px; left: 0;
+  border-radius: 999px; background: var(--teal);
+  box-shadow: 0 4px 12px -4px rgba(14,59,53,.5);
+  transition: transform .32s var(--ease), width .32s var(--ease), opacity .2s;
+}
+.seg button { z-index: 1; transition: color .2s ease; }
+.seg button.on, .seg button.on:hover { background: transparent; color: #fff; }
+.seg button:hover:not(:disabled):not(.on) { background: transparent; color: var(--text); }
+
+/* Tables: rows answer the pointer smoothly. */
+tbody td { transition: background-color .15s ease; }
+
+/* Status pills carry a dot, so state reads before the word does. */
+.pill.good::before, .pill.warn::before, .pill.alert::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+}
+
+/* Waiting. */
+.loading { padding: 26px 24px; }
+.loading-line { display: flex; align-items: center; gap: 10px;
+                color: var(--text-2); font-size: 13px; margin-bottom: 16px; }
+.spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--green-line); border-top-color: var(--green);
+  animation: spin .8s linear infinite;
+}
+.skeleton {
+  height: 12px; border-radius: 6px; margin-bottom: 11px;
+  background: linear-gradient(90deg, var(--line) 25%, var(--surface-2) 50%, var(--line) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+/* Scrollbars that belong to the page rather than to the operating system. */
+* { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 10px;
+                            border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--text-3); }
+
+/* ---------------------------------------------------------------- this week */
+
+/* Who approved it: the first thing on the page, because the approval is what
+   makes the figures below safe to act on. */
+.approval {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 18px 22px; margin-bottom: 18px;
+  border: 1px solid var(--green-line); border-radius: var(--r-lg);
+  background:
+    radial-gradient(500px 160px at 0% 0%, rgba(33,180,126,.14), transparent 70%),
+    var(--surface);
+  box-shadow: var(--shadow);
+}
+.approval .seal {
+  flex: none; width: 46px; height: 46px; border-radius: 50%;
+  display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, #2BC98F, var(--green-hi));
+  box-shadow: 0 8px 18px -6px rgba(33,180,126,.7), 0 0 0 5px var(--green-soft);
+  animation: pop .55s var(--ease) .15s both;
+}
+.approval-main { flex: 1; min-width: 200px; }
+.approval-label {
+  font-size: 11px; font-weight: 650; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.approval-who { font-size: 21px; font-weight: 650; letter-spacing: -0.02em;
+                margin-top: 1px; }
+.approval-when { color: var(--text-2); font-size: 12.5px; margin-top: 2px; }
+.approval-facts { display: flex; }
+.approval-facts > div { padding: 2px 22px; border-left: 1px solid var(--line); }
+.approval-value { font-size: 16px; font-weight: 600; margin-top: 1px; }
+
+.waiting {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 11px 16px; margin: -6px 0 18px;
+  background: #FBF4E6; border: 1px solid #EEDFC0; border-radius: var(--r-md);
+  color: #7A5A1E; font-size: 13px;
+}
+.waiting a { font-weight: 600; margin-left: auto; }
+.pulse {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--warn);
+  animation: pulse 1.6s ease-out infinite;
+}
+
+.empty-state { text-align: center; padding: 48px 24px; }
+.empty-state h2 { font-size: 17px; margin-top: 14px; }
+.empty-state p { margin: 6px auto 0; max-width: 420px; }
+.empty-mark {
+  width: 58px; height: 58px; margin: 0 auto; border-radius: 16px;
+  display: grid; place-items: center; color: var(--green-hi);
+  background: var(--green-soft); border: 1px solid var(--green-line);
+}
+
+/* ---------------------------------------------------------------- sign in */
+
+/* Two slow-moving soft lights behind the panel: alive, but quiet enough to
+   read a password field in front of. */
+.gate { position: relative; overflow: hidden; }
+.gate::before, .gate::after {
+  content: ""; position: absolute; border-radius: 50%; filter: blur(60px);
+  pointer-events: none;
+}
+.gate::before {
+  width: 520px; height: 520px; left: -140px; top: -160px;
+  background: rgba(33,180,126,.22); animation: drift 16s ease-in-out infinite;
+}
+.gate::after {
+  width: 460px; height: 460px; right: -120px; bottom: -160px;
+  background: rgba(21,123,108,.2); animation: drift 19s ease-in-out infinite reverse;
+}
+.gate .panel { position: relative; z-index: 1; animation: rise .5s var(--ease) both; }
+.gate .mark {
+  background: linear-gradient(135deg, #1A5C51, var(--teal));
+  box-shadow: 0 8px 20px -8px rgba(14,59,53,.6);
+}
+
+/* ---------------------------------------------------------------- remove one filter
+
+   Every set filter carries its own small ×, sitting inside the control, so
+   one of several can be undone without clearing the rest. It pops in when
+   the filter is set, and turns red under the pointer to say what it does. */
+
+.clearable { position: relative; display: inline-flex; align-items: center; }
+
+.clear-x {
+  flex: none; width: 18px; height: 18px; padding: 0;
+  display: grid; place-items: center; border-radius: 50%;
+  border: 0; background: var(--green-soft); color: var(--green-hi);
+  cursor: pointer; animation: pop .3s var(--ease) both;
+  transition: background .15s ease, color .15s ease, transform .15s var(--ease);
+}
+.clear-x:hover:not(:disabled) { background: var(--alert); color: #fff;
+                                border-color: transparent; transform: scale(1.1); }
+.clear-x:active:not(:disabled) { transform: scale(.9); }
+
+/* Inside a dropdown: left of the chevron, with room made for it. */
+.clearable select + .clear-x { position: absolute; right: 29px; }
+select.picker.has-x { padding-right: 54px; }
+select.picker.on.has-x { padding-right: 53.5px; }
+
+/* Inside a text box: at its right-hand end. */
+.clearable input + .clear-x { position: absolute; right: 7px; }
+.filters input[type="text"].has-x { padding-right: 30px; }
+
+/* Beside a segmented control. */
+.filter > .clear-x { margin-left: -4px; }
+
+/* On the approval banner: a close button in its corner. */
+.approval { position: relative; padding-right: 52px; }
+.approval > .clear-x {
+  position: absolute; top: 12px; right: 12px; width: 24px; height: 24px;
+  background: transparent; color: var(--text-3);
+  animation: fade-in .3s ease .4s both;
+}
+.approval > .clear-x svg { width: 10px; height: 10px; }
+.approval > .clear-x:hover:not(:disabled) { background: var(--surface-2);
+                                            color: var(--text); transform: none; }
+
+/* Closing: it folds up and fades, and what is below slides into its place. */
+@keyframes fold {
+  from { opacity: 1; max-height: 180px; }
+  to   { opacity: 0; max-height: 0; transform: translateY(-8px) scale(.98);
+         margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; }
+}
+.approval.closing { overflow: hidden; animation: fold .32s var(--ease) forwards; }
+
+/* ---------------------------------------------------------------- roles & access */
+
+/* Roles, each its own quiet colour so a column of them sorts itself by eye. */
+.pill.role-system_admin { background: #EEE9F7; border-color: #D9CFEE; color: var(--t-violet); }
+.pill.role-admin        { background: var(--green-soft); border-color: var(--green-line);
+                          color: var(--green-hi); }
+.pill.role-viewer       { background: #EAF1F7; border-color: #D2E1EE; color: var(--t-blue); }
+select.picker.role { padding: 5px 30px 5px 12px; font-size: 12.5px; }
+
+/* Which scorecards a viewer may read: a chip per report, pressed or not. */
+.chips { display: inline-flex; gap: 6px; flex-wrap: nowrap; }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 11px; font-size: 12px; font-weight: 550; border-radius: 999px;
+  background: var(--surface); color: var(--text-3);
+  border: 1px dashed var(--line-2);
+}
+.chip:hover:not(:disabled) { border-color: var(--green-line); color: var(--text-2);
+                             background: var(--surface-2); }
+.chip.on {
+  background: var(--green-soft); color: var(--green-hi);
+  border: 1px solid var(--green-line);
+}
+.chip.on:hover:not(:disabled) { background: #D5F0E3; color: var(--green-hi); }
+.chip.on svg { animation: pop .3s var(--ease) both; }
+.chip:disabled { opacity: 1; cursor: default; }
+.chip:disabled:not(.on) { display: none; }
+
+/* ---------------------------------------------------------------- working days */
+
+/* The month's working days, under the drop zone: a quiet bar that turns
+   green once someone has entered a number, so it is plain the pace is not
+   the calendar's. */
+.workdays {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 16px; padding: 13px 16px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface-2);
+  transition: background .25s ease, border-color .25s ease;
+}
+.workdays.entered { background: var(--green-soft); border-color: var(--green-line); }
+.workdays-text { flex: 1; min-width: 240px; }
+.workdays-title { font-weight: 600; font-size: 13.5px; }
+.workdays input[type="number"] {
+  font: inherit; font-size: 16px; font-weight: 600; width: 84px;
+  padding: 7px 10px; border-radius: var(--r-sm); text-align: center;
+  border: 1px solid var(--line-2); background: var(--surface); color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.workdays input[type="number"].has-x { padding-right: 30px; width: 96px; }
+.workdays-problem { flex-basis: 100%; }
+/* Days passed: under the working days, on a hairline, a figure not a field. */
+.workdays-passed {
+  flex-basis: 100%; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 2px; padding-top: 12px; border-top: 1px solid var(--line);
+}
+.workdays-figure {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  min-width: 84px; justify-content: center;
+  animation: pop .28s var(--ease) both;
+}
+.workdays-figure strong {
+  font-size: 20px; font-weight: 650; color: var(--green-hi);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A column of buttons is not data: it must never be cut off at the cell's
+   edge the way a long text value is. */
+tbody td.actions { max-width: none; overflow: visible; white-space: normal; }
+tbody td.actions .row.tight { flex-wrap: wrap; row-gap: 6px; min-width: 270px; }
+
+/* ---------------------------------------------------------------- calm */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
 }

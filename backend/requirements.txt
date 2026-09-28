@@ -14,10 +14,17 @@ python-multipart>=0.0.17 # multipart uploads
 sqlalchemy>=2.0
 pydantic>=2.9
 
-# Postgres. Not needed locally - SQLite is the default and the models
-# avoid anything either database lacks.
-# psycopg[binary]>=3.2
-# alembic>=1.14          # migrations, once the schema is deployed anywhere
+# MySQL, on the server. Pure Python, so it installs the same on Windows and
+# Ubuntu with nothing to compile. `cryptography` is what lets it sign in to
+# MySQL 8, whose default authentication (caching_sha2_password) needs it.
+# Locally SQLite is the default and neither is used.
+pymysql>=1.1
+cryptography>=43
+# Time-zone names ("Asia/Karachi") for the out-of-hours alert. Linux ships
+# them; Windows does not.
+tzdata>=2024.1
+# alembic>=1.14          # migrations, once a change needs more than an added
+#                        # column - see app/db/migrate.py
 
 # --- Jobs -------------------------------------------------------------
 # None. Builds run on a single background thread inside the web process

@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { TOTAL, monthToDate, paceTotals, pivot, pivotPace, splitBuckets }
+import { TOTAL, monthToDate, paceTotals, pivot, pivotPace, sortBlocks, splitBuckets }
   from "./settlement-model.js";
 
 /* A Miles, In House, August 2026 - actuals and their paces, from the sheet. */
@@ -78,6 +78,11 @@ test("a missing per cent stays missing rather than becoming zero", () => {
   const aMiles = p.rows.find((r) => r.group === "A Miles");
   assert.equal(aMiles.M1_pct, 0.340538653);
   assert.equal(aMiles.W32_pct, undefined);   // the fixture gives weeks no per cent
+});
+
+test("In House comes before Board", () => {
+  assert.deepEqual(sortBlocks(["Board", "In House"]), ["In House", "Board"]);
+  assert.deepEqual(sortBlocks(["Other", "board", "IN HOUSE"]), ["IN HOUSE", "board", "Other"]);
 });
 
 /* ---------------------------------------------------------------- pace */

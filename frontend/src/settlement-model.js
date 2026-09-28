@@ -9,6 +9,17 @@ export const TOTAL = "Total";
 /* Buckets are the pipeline's own: "M5" is the May total, "W2" is week 2 of
    the current month. Months run first in calendar order, then this month's
    weeks - which is exactly the order the columns go in. */
+/* The blocks in the order the sheet prints them: In House, then Board, then
+   anything else alphabetically. */
+const BLOCK_ORDER = ["in house", "board"];
+export function sortBlocks(names) {
+  const rank = (n) => {
+    const i = BLOCK_ORDER.indexOf(String(n).trim().toLowerCase());
+    return i < 0 ? BLOCK_ORDER.length : i;
+  };
+  return [...names].sort((a, b) => rank(a) - rank(b) || String(a).localeCompare(String(b)));
+}
+
 export const isWeek = (b) => b.startsWith("W");
 export const bucketNum = (b) => Number(b.slice(1));
 

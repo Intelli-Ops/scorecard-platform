@@ -21,6 +21,8 @@ import queue
 import threading
 import traceback
 
+from sqlalchemy import select
+
 from ..config import settings
 from ..db.models import Run
 from ..db.session import session
@@ -40,13 +42,51 @@ def _work() -> None:
                 store = FileStore(settings.object_dir)
                 runner.execute(s, store, report_key, week, as_of=as_of,
                                run_id=run_id)
-        except Exception:
-            # execute() already recorded status=failed and the message. This
-            # is the last resort - a traceback that would otherwise be lost
-            # with the thread.
+        except Exception as exc:
+            # execute() marks the run failed, but in the SAME session - and the
+            # exception that follows rolls that session back, "failed" and
+            # all. The run was left saying `pending` forever, which also
+            # blocked deleting it or its week. So the failure is written again
+            # here, in a session of its own that nothing rolls back.
             traceback.print_exc()
+            _mark_failed(run_id, f"{type(exc).__name__}: {exc}")
         finally:
             _jobs.task_done()
+
+
+def _mark_failed(run_id: int, error: str) -> None:
+    try:
+        with session() as s:
+            run = s.get(Run, run_id)
+            if run is not None and run.status in ("pending", "running"):
+                run.status = "failed"
+                run.error = error
+                run.finished_at = dt.datetime.now(dt.timezone.utc)
+    except Exception:
+        traceback.print_exc()
+
+
+def recover() -> int:
+    """Close off builds a previous server process never finished.
+
+    The queue lives in memory, so a restart - a deploy, a reboot, a crash -
+    forgets whatever was waiting or under way, and those runs sat at
+    `pending` or `running` forever: the page spun, and neither the run nor its
+    week could be deleted. Called once at start-up, before the worker takes
+    anything new, they are marked failed with a reason a person can act on.
+
+    Assumes one server process, which is how this app runs (one background
+    thread, see the module docstring).
+    """
+    with session() as s:
+        stale = s.execute(select(Run).where(
+            Run.status.in_(("pending", "running")))).scalars().all()
+        for run in stale:
+            run.status = "failed"
+            run.error = ("Interrupted: the server restarted before this build "
+                         "finished. Build it again.")
+            run.finished_at = dt.datetime.now(dt.timezone.utc)
+        return len(stale)
 
 
 def start() -> None:

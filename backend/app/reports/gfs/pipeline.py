@@ -81,7 +81,8 @@ def run(src: GfsSources, rules: dict, as_of: dt.date | None = None,
     import time
     t0 = time.perf_counter()
     as_of = as_of or dt.date.today()
-    period = reporting_period(week_label(week, as_of), rules.get("holidays"))
+    period = reporting_period(week_label(week, as_of), rules.get("holidays"),
+                              rules.get("working_days"))
 
     raw, rep = build_raw_data(src.owner_ar, src.providers, src.custom_ar, rules)
     case_ar = build_case_ar(raw, rules)

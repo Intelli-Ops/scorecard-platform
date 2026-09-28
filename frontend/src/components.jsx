@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 export function Card({ title, sub, right, flush, children }) {
   if (!title && !right) return <section className="card">{children}</section>;
@@ -35,18 +35,44 @@ export function Tile({ label, value, foot }) {
    Choices are separated by a hairline rule rather than by boxes - the "|" is
    drawn, not typed, so it never lands in a copy-paste and never wraps onto a
    line of its own. */
-export function Segmented({ options, value, onChange, label }) {
+export function Segmented({ options, value, onChange, label, onClear }) {
+  /* The highlight is one element that slides to the chosen option, rather
+     than each button switching its own background on and off - the eye
+     follows it across, so the change of view is felt as well as seen. */
+  const box = useRef(null);
+  const [mark, setMark] = useState(null);
+  const index = options.findIndex((o) => o.value === value);
+
+  useLayoutEffect(() => {
+    const measure = () => {
+      const btn = box.current?.children[index + 1];     // [0] is the mark
+      setMark(btn ? { left: btn.offsetLeft, width: btn.offsetWidth } : null);
+    };
+    measure();
+    // Labels change width when fonts load or the window resizes.
+    const ro = new ResizeObserver(measure);
+    if (box.current) ro.observe(box.current);
+    return () => ro.disconnect();
+  }, [index, options.length]);
+
   return (
-    <div className="filter">
+    <div className={`filter${onClear ? " on" : ""}`}>
       {label && <span className="filter-label">{label}</span>}
-      <div className="seg">
+      <div className="seg" ref={box}>
+        <span className="seg-mark" aria-hidden="true"
+              style={mark ? { transform: `translateX(${mark.left}px)`,
+                               width: mark.width, opacity: 1 } : { opacity: 0 }} />
         {options.map((o) => (
           <button key={o.value} className={o.value === value ? "on" : ""}
+                  aria-pressed={o.value === value}
                   onClick={() => onChange(o.value)}>
             {o.label}
           </button>
         ))}
       </div>
+      {/* Passed only while the choice is narrowing something - "GFS" rather
+          than "Both" - so the × appears exactly when there is a filter. */}
+      {onClear && <ClearX what={label} onClick={onClear} />}
     </div>
   );
 }
@@ -58,19 +84,65 @@ export function Segmented({ options, value, onChange, label }) {
    identical whether or not they are set is how you end up reading a filtered
    table as if it were the whole thing - so a set filter colours itself, and
    its label goes dark. */
-export function Picker({ label, value, onChange, options, placeholder, active }) {
+export function Picker({ label, value, onChange, options, placeholder, active,
+                         onClear }) {
+  /* `onClear` gives a set filter its own ×, so one of several can be undone
+     without starting again from nothing. */
+  const clearable = active && onClear;
   return (
     <div className={`filter${active ? " on" : ""}`}>
       {label && <span className="filter-label">{label}</span>}
-      <select className={`picker${active ? " on" : ""}`} value={value}
-              onChange={(e) => onChange(e.target.value)}>
-        {placeholder && <option value="">{placeholder}</option>}
-        {options.map((o) =>
-          typeof o === "string"
-            ? <option key={o} value={o}>{o}</option>
-            : <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      <span className="clearable">
+        <select className={`picker${active ? " on" : ""}${clearable ? " has-x" : ""}`}
+                value={value} onChange={(e) => onChange(e.target.value)}>
+          {placeholder && <option value="">{placeholder}</option>}
+          {options.map((o) =>
+            typeof o === "string"
+              ? <option key={o} value={o}>{o}</option>
+              /* { group, options }: a heading over related choices. */
+              : o.group
+                ? <optgroup key={o.group} label={o.group}>
+                    {o.options.map((i) =>
+                      <option key={i.value} value={i.value}>{i.label}</option>)}
+                  </optgroup>
+                : <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        {clearable && <ClearX what={label} onClick={onClear} />}
+      </span>
     </div>
+  );
+}
+
+/* A free-text filter - an email, an address - in the same dress as a Picker,
+   with the same × once something is typed. */
+export function TextFilter({ label, value, onChange, placeholder, size }) {
+  const set = Boolean(value);
+  return (
+    <div className={`filter${set ? " on" : ""}`}>
+      {label && <span className="filter-label">{label}</span>}
+      <span className="clearable">
+        <input type="text" className={set ? "has-x" : ""} placeholder={placeholder}
+               size={size} value={value} onChange={(e) => onChange(e.target.value)}
+               onKeyDown={(e) => e.key === "Escape" && onChange("")} />
+        {set && <ClearX what={label} onClick={() => onChange("")} />}
+      </span>
+    </div>
+  );
+}
+
+/* The × itself: small, round, and only there while there is something to
+   remove. It pops in, so the eye notices the filter is now removable. */
+export function ClearX({ what, onClick, title }) {
+  const text = title
+    ?? `Remove ${what ? `the ${what.toLowerCase()} filter` : "this filter"}`;
+  return (
+    <button type="button" className="clear-x" onClick={onClick}
+            aria-label={text} title={text}>
+      <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true">
+        <path d="M1 1l6 6M7 1 1 7" stroke="currentColor" strokeWidth="1.6"
+              strokeLinecap="round" />
+      </svg>
+    </button>
   );
 }
 
@@ -150,41 +222,6 @@ export function DataTable({ columns, rows, empty = "Nothing to show",
   );
 }
 
-/* Deleting asks twice, in place.
-
-   A browser confirm() box is easy to click through without reading. Making the
-   second click a differently-worded button in the row itself means you have to
-   look at the row you are about to destroy. */
-export function ConfirmButton({ label = "Delete", confirm = "Really delete?",
-                                busyLabel = "Deleting…", onConfirm,
-                                disabled, title }) {
-  const [armed, setArmed] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!armed) return;
-    // Disarms itself, so a half-pressed delete never sits waiting on the page.
-    const t = setTimeout(() => setArmed(false), 5000);
-    return () => clearTimeout(t);
-  }, [armed]);
-
-  if (busy) return <button className="small" disabled>{busyLabel}</button>;
-  if (!armed)
-    return (
-      <button className="small quiet" disabled={disabled} title={title}
-              onClick={() => setArmed(true)}>{label}</button>
-    );
-  return (
-    <span className="row tight">
-      <button className="small danger" onClick={async () => {
-        setBusy(true);
-        try { await onConfirm(); } finally { setBusy(false); setArmed(false); }
-      }}>{confirm}</button>
-      <button className="small quiet" onClick={() => setArmed(false)}>Keep</button>
-    </span>
-  );
-}
-
 const WORD = { action: "Action", warning: "Warning", info: "Note" };
 
 export function Notes({ notes, empty = "Nothing unusual." }) {
@@ -218,7 +255,26 @@ export function Status({ value }) {
   return <span className={`pill ${tone}`}>{value}</span>;
 }
 
-export const Loading = ({ what = "Loading" }) => <div className="empty">{what}…</div>;
+/* How an event in the activity log went. A word, with the colour beside it. */
+export function Outcome({ value }) {
+  const [tone, word] = {
+    success: ["", "Success"],
+    failure: ["warn", "Failed"],
+    denied: ["alert", "Refused"],
+  }[value] ?? ["", value];
+  return <span className={`pill ${tone}`}>{word}</span>;
+}
+
+/* Waiting: a spinner and what it is waiting for, over shimmering bars shaped
+   like the rows about to arrive, so the page does not jump when they do. */
+export const Loading = ({ what = "Loading" }) => (
+  <div className="loading" role="status" aria-live="polite">
+    <div className="loading-line"><span className="spinner" />{what}…</div>
+    <div className="skeleton" style={{ width: "72%" }} />
+    <div className="skeleton" style={{ width: "88%" }} />
+    <div className="skeleton" style={{ width: "54%" }} />
+  </div>
+);
 
 export const ErrorBox = ({ error }) =>
   error ? <div className="card err">{String(error.message ?? error)}</div> : null;

@@ -31,6 +31,7 @@ For a longer, non-technical walkthrough, see [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 10. [Changing the rules](#changing-the-rules)
 11. [Tests](#tests)
 12. [Where data is stored](#where-data-is-stored)
+13. [Accounts, admins and the activity log](#accounts-admins-and-the-activity-log)
 
 ---
 
@@ -69,7 +70,8 @@ For a longer, non-technical walkthrough, see [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 | **fastexcel** (calamine) | Reads `.xlsx` / `.xlsb` quickly: about 2 s, where openpyxl took about 35 s |
 | **PyArrow / Parquet** | Stores each run's result tables, and caches parsed Excel files |
 | **SQLAlchemy 2** | Database access |
-| **SQLite** | Default database (one file). Postgres works too; see [Where data is stored](#where-data-is-stored) |
+| **SQLite** | Default database on a laptop (one file, nothing to install) |
+| **MySQL 8** + **PyMySQL** | The database on the server; see [Where data is stored](#where-data-is-stored) |
 | **PyYAML** | Reads the business rules in `rules.yml` |
 | **pytest** | Tests |
 
@@ -126,8 +128,9 @@ scorecard-platform/
 | File | What's in it |
 |---|---|
 | [routes.py](backend/app/api/routes.py) | Weeks, uploads, runs, approve and unapprove, figures, tables, CSV export |
-| [auth_routes.py](backend/app/api/auth_routes.py) | Sign up, sign in, sign out, "who am I" |
-| [deps.py](backend/app/api/deps.py) | `current_user`, which every route except sign-in and health requires |
+| [auth_routes.py](backend/app/api/auth_routes.py) | Sign up, sign in, sign out, and your own profile (`/api/me`): name, password, sessions, recent activity |
+| [admin_routes.py](backend/app/api/admin_routes.py) | Admin only: accounts, the activity log, alerts |
+| [deps.py](backend/app/api/deps.py) | `signed_in`, `current_user` and `require_admin`: who may call what |
 
 ### `backend/app/service/`: the application logic
 | File | What's in it |
@@ -136,7 +139,9 @@ scorecard-platform/
 | [runner.py](backend/app/service/runner.py) | Runs one build: find the files, read them, calculate, save the results, record the notes. Also approve, unapprove and delete |
 | [review.py](backend/app/service/review.py) | Builds the review screen and compares each check with last week's |
 | [figures.py](backend/app/service/figures.py) | Turns the sheet-shaped results (grids, KPI blocks) into rows the dashboard can read |
-| [auth.py](backend/app/service/auth.py) | Accounts and password hashing |
+| [auth.py](backend/app/service/auth.py) | Accounts, password hashing, lockout, sessions, and the admin actions |
+| [audit.py](backend/app/service/audit.py) | Writes and searches the activity log |
+| [detect.py](backend/app/service/detect.py) | Reads the log for things to look at: password guessing, new addresses, bulk exports… |
 
 ### `backend/app/reports/`: the calculations
 This is the heart of the project. It is kept apart from the web code so the
@@ -167,7 +172,9 @@ Inside each `core/` folder:
 ### `backend/app/db/`, `storage/`, `jobs/`
 | File | What's in it |
 |---|---|
-| [db/models.py](backend/app/db/models.py) | Tables: `User`, `Session`, `Upload`, `Run`, `RunInput`, `RunNote`, `RunFigure`, `RunTable` |
+| [db/models.py](backend/app/db/models.py) | Tables: `User`, `Session`, `ActivityLog`, `Upload`, `Run`, `RunInput`, `RunNote`, `RunFigure`, `RunTable` |
+| [db/migrate.py](backend/app/db/migrate.py) | Adds new columns to an existing database, and the triggers that make the activity log append-only |
+| [manage.py](backend/app/manage.py) | Command line for whoever runs the server: first admin, database checks, copying data across |
 | [storage/files.py](backend/app/storage/files.py) | File store. Each file is saved under the hash of its bytes, so identical files are stored once |
 | [jobs/worker.py](backend/app/jobs/worker.py) | Background thread that runs queued builds one at a time |
 
@@ -235,6 +242,16 @@ On first open, choose **Sign up**. There are two rules, checked by the server
 as well as the form:
 - the email must end in `@appedology.com`
 - the APD ID is `APD-` plus four digits, e.g. `APD-1234` (typing `1234` is completed for you)
+
+A new account **waits for an admin to approve it** before it can sign in.
+On a fresh database there is no admin yet, so make the first one from the
+command line (from `backend/`):
+
+```powershell
+..\.venv\Scripts\python -m app.manage create-admin you@appedology.com APD-1234
+# or, for an account that already exists:
+..\.venv\Scripts\python -m app.manage promote you@appedology.com
+```
 
 ---
 
@@ -376,17 +393,32 @@ sign-in and `/api/health`.
 
 | Method | Path | Does |
 |---|---|---|
+| `POST` | `/api/auth/signup` · `/login` · `/logout` | Accounts. Sign-up returns `{"pending": true}` - no token until approved |
+| `GET` `PATCH` | `/api/me` | Your profile; `PATCH {"display_name": ...}` |
+| `POST` | `/api/me/password` | `{"current", "new"}` - also signs out your other sessions |
+| `GET` `DELETE` | `/api/me/sessions` · `/{id}` | Where you are signed in; end one |
+| `GET` | `/api/me/activity` | Your last 25 events |
 | `GET` | `/api/reports` | The two reports and the files each needs |
 | `GET` | `/api/weeks` · `/api/weeks/{week}` | Weeks, and what is held or missing for each |
 | `POST` | `/api/weeks/{week}/uploads` | Upload files (`files`, optional `for_report` for Case ARs) |
-| `DELETE` | `/api/weeks/{week}` | Remove a week's builds and files |
 | `POST` | `/api/runs?report=gfs&week=2026-W38` | Queue a build → `{"run_id": 12}` |
 | `GET` | `/api/runs?weeks=12` | Run history |
 | `GET` | `/api/runs/{id}` | The review for one run |
 | `POST` | `/api/runs/{id}/approve` · `/unapprove` | Approve, or undo it |
-| `DELETE` | `/api/runs/{id}` | Delete a run (its files go once no other run uses them) |
 | `GET` | `/api/runs/{id}/figures/{name}` | `settlement`, `settlement_pace`, `collections_pace`, `cp_settled`, `kpi`, `meta` |
 | `GET` | `/api/runs/{id}/tables/{name}` · `/csv` | `raw_data`, `case_ar`, `delta_comparison`, `collections` |
+
+Admin only (everyone else gets `403`, and the attempt is logged):
+
+| Method | Path | Does |
+|---|---|---|
+| `DELETE` | `/api/weeks/{week}` · `/api/runs/{id}` | Deleting is an admin's job |
+| `GET` | `/api/admin/users` | Every account, waiting ones first |
+| `POST` | `/api/admin/users/{id}/approve` · `/role` · `/active` · `/unlock` · `/reset-password` · `/sign-out` | Account actions |
+| `GET` | `/api/admin/activity` · `/csv` | The log: filter by `action`, `email`, `outcome`, `ip`, `days`; page with `before_id` |
+| `GET` | `/api/admin/alerts?days=7` | What the log says needs a look, and the headline counts |
+
+Week labels must look like `2026-W38`; anything else is refused with `400`.
 
 Example with `curl`, using the token from sign-in:
 ```bash
@@ -470,12 +502,115 @@ data/
 └── cache/            ← parsed Excel files, so rebuilds are fast
 ```
 
-Two environment variables change this:
+Environment variables change this:
 
 | Variable | Default | Example |
 |---|---|---|
 | `SCORECARD_DATA` | `<project>/data` | `D:\scorecard-data` |
-| `SCORECARD_DB` | SQLite in the data folder | `postgresql+psycopg://user:pass@host/scorecard` (install `psycopg[binary]`) |
+| `SCORECARD_DB` | SQLite in the data folder | `mysql://scorecard:secret@localhost/scorecard` |
+| `SCORECARD_TIMEZONE` | the server's clock | `Asia/Karachi` - for the out-of-hours alert |
+| `SCORECARD_WORK_HOURS` | `7-21` | sign-ins outside these hours are flagged |
+| `SCORECARD_API_DOCS` | `1` | `0` on a server, to hide `/docs` |
+
+A plain `mysql://` address is enough: the app adds the PyMySQL driver and the
+`utf8mb4` character set itself. The app creates its own tables and adds new
+columns to existing ones when it starts (`python -m app.manage upgrade` does
+the same by hand).
+
+**Moving from SQLite to MySQL.** Point `SCORECARD_DB` at an empty MySQL
+database, then copy everything across:
+
+```powershell
+$env:SCORECARD_DB = "mysql://scorecard:secret@dbhost/scorecard"
+..\.venv\Scripts\python -m app.manage check
+..\.venv\Scripts\python -m app.manage copy-db "sqlite:///C:/dev/scorecard-platform/data/scorecard.db"
+```
+
+Then copy the `objects/` and `results/` folders too: the database only points
+at the files, and they live on disk.
 
 **Never commit** `data/`, `.xlsx`, `.xlsb` or `.csv` files. `.gitignore`
 already blocks them.
+
+---
+
+## Accounts, admins and the activity log
+
+### Roles
+| Role | Can |
+|---|---|
+| **Viewer** | Read the **approved** scorecards an admin has given it: GFS, All Providers, or both. It sees only the **This week** tab. Everything else is refused by the API |
+| **Admin** | Everything in the workspace: upload, build, approve, delete. Approve new accounts, and manage viewers (their scorecards, passwords, disabling, deleting). Sees **Users** and **Activity** |
+| **System admin** | Everything an admin can do, plus make, change and delete admins |
+
+Who can manage whom:
+- A **viewer** is managed by any admin.
+- An **admin** is managed only by a system admin.
+- A **system admin's** account is changed by nobody but that person. A system
+  admin can remove their own account only while another system admin remains,
+  so there is always one.
+- Nobody changes their own role or disables themselves from the Users screen.
+
+New sign-ups are viewers with no scorecards, waiting for approval. Tick their
+scorecards on the Users screen, then press **Approve**.
+
+The first system admin comes from the command line:
+`python -m app.manage create-admin EMAIL APD-1234`, or `promote EMAIL` for an
+existing account. `set-role EMAIL viewer|admin|system_admin` sets any role.
+Accounts from before roles existed become viewers of both reports.
+
+### Account protections
+| Protection | What it does |
+|---|---|
+| Approval | A new sign-up cannot sign in until an admin approves it. Anyone can *type* an `@appedology.com` address, so an admin vouches for each one |
+| Lockout | 5 wrong passwords in a row locks the account for 15 minutes. An admin can unlock it sooner |
+| Password reset | An admin issues a one-time temporary password (there is no email server for reset links). The person must choose their own at the next sign-in |
+| Sessions | Every signed-in device is listed on **Your profile** and can be signed out. Changing your password signs out every other device; disabling an account signs out all of them |
+| Tokens | The database stores a SHA-256 of each session token, never the token itself, so a copy of the database cannot be used to sign in |
+| Admins | Nobody can demote or disable their own account, so the app always keeps at least one admin |
+
+### Working days and pacing
+Pace figures project the month: month-to-date ÷ working days elapsed × the
+month's working days. The month's working days come from the calendar
+(weekdays less the `holidays` in `rules.yml`), unless someone enters a
+different number on **Upload a week**. That number is kept for the whole
+month (table `month_setting`), so every build in that month uses it. Each
+run records the number it used (`run.working_days`) and whether it was
+entered or from the calendar. Builds already made keep theirs; build again to
+use a new number.
+
+### The activity log
+The `activity_log` table records every sign-in (including failed ones),
+sign-out, password change, upload, build, scorecard view, approval, deletion,
+CSV export and admin action. Each row stores the time (UTC), the person, the IP
+address, the browser, and whether it succeeded, failed or was refused.
+
+**It is kept forever and cannot be changed.** Database triggers refuse any
+`UPDATE` or `DELETE` on the table, whoever sends it. On MySQL, creating
+triggers needs more privileges than the app's own database user should have,
+so the database admin runs this once:
+
+```bash
+python -m app.manage protect-log --as "mysql://root:ROOTPASS@localhost/scorecard"
+```
+
+If the triggers are missing, the app still starts but logs a warning every
+time it does. For the same reason the app's MySQL user should not have `DROP`
+permission, because `TRUNCATE` would get around the triggers.
+
+### Alerts
+The **Activity** screen works these out from the log for the chosen period:
+
+| Alert | Raised when |
+|---|---|
+| Password guessing | 5+ wrong passwords for one account |
+| List attack | One IP address fails against 3+ different accounts |
+| Account locked | The lockout above triggered |
+| New address | A good sign-in from an IP that account has not used in 90 days |
+| Out of hours | A sign-in outside `SCORECARD_WORK_HOURS` |
+| Bulk export | 10+ whole-table CSV exports by one person within an hour |
+| Refused | Someone who is not an admin tried an admin action |
+| Deletions | Runs or weeks were deleted |
+
+The thresholds are constants at the top of
+[detect.py](backend/app/service/detect.py).

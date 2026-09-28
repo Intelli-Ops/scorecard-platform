@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { count } from "./api";
-import { col } from "./columns";
+import { col, total } from "./columns";
 import { Picker } from "./components";
 import { TableCard } from "./ui";
 import { ALL, applyFilters, filterOptions, pivotDelta, TOTAL } from "./delta-model";
+import { Button } from "./buttons";
 
 /* Delta Comparison, the way it was actually made.
 
@@ -40,7 +41,7 @@ export default function Delta({ rows }) {
     col.label("group", "Group", { width: 190, className: "sticky" }),
     ...grid.buckets.map((b) => col.money(b, b)),
     col.strong("_total", "Grand Total"),
-    col.count("_cases", "Cases"),
+    total(col.count("_cases", "Cases")),
   ], [grid.buckets]);
 
   return (
@@ -49,7 +50,8 @@ export default function Delta({ rows }) {
         {filters.map((f) => (
           <Picker key={f.key} label={f.label} value={chosen[f.key] ?? ALL}
                   onChange={(v) => set(f.key, v)} options={f.values}
-                  active={isSet(chosen[f.key])} />
+                  active={isSet(chosen[f.key])}
+                  onClear={() => set(f.key, ALL)} />
         ))}
         <span className="spacer" />
         <span className="count">
@@ -57,17 +59,19 @@ export default function Delta({ rows }) {
             ? <><strong>{count(filtered.length)}</strong> of {count(all)} rows</>
             : <>all <strong>{count(all)}</strong> rows</>}
         </span>
-        {active.length > 0 && (
-          <button className="small" onClick={() => setChosen({})}>
-            Clear {active.length === 1 ? "filter" : `${active.length} filters`}
-          </button>
+        {/* Each filter has its own ×; this is only the shortcut for undoing
+            several at once. */}
+        {active.length > 1 && (
+          <Button tone="quiet" size="sm" onClick={() => setChosen({})}>
+            Clear all {active.length}
+          </Button>
         )}
       </div>
 
       <TableCard
         title="Sum of Settlement Amount"
         sub={active.length
-          ? `${active.map(([k, v]) => `${k} is ${v}`).join(" · ")} — ${count(filtered.length)} of ${count(all)} rows`
+          ? `${active.map(([k, v]) => `${k} is ${v}`).join(" · ")} · ${count(filtered.length)} of ${count(all)} rows`
           : `All ${count(all)} delta rows. Set a filter above to narrow the pivot.`}
         empty={active.length
           ? "No rows match these filters."

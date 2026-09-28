@@ -28,21 +28,29 @@ test("the row's subject carries the weight", () => {
 test("nothing renders as an em dash, never a bare zero", () => {
   // A group that settled nothing and a group with no row at all must read
   // differently on a scorecard.
-  assert.equal(col.money("m", "A").render({}), "—");
-  assert.equal(col.money("m", "A").render({ m: 0 }), "—");
-  assert.equal(col.count("c", "A").render({}), "—");
-  assert.equal(col.pct("p", "A").render({}), "—");
+  assert.equal(col.money("m", "A").render({}), "-");
+  assert.equal(col.money("m", "A").render({ m: 0 }), "-");
+  assert.equal(col.count("c", "A").render({}), "-");
+  assert.equal(col.pct("p", "A").render({}), "-");
 });
 
 test("a real zero per cent is a number, not a dash", () => {
   // 0% is a fact - a group billed and settled none of it. Only a MISSING
   // per cent is unknown, so pct dashes on null alone.
-  assert.equal(col.pct("p", "A").render({ p: 0 }), "0.0%");
+  assert.equal(col.pct("p", "A").render({ p: 0 }), "0.00%");
 });
 
-test("money is whole dollars, money2 keeps the cents", () => {
-  assert.match(col.money("m", "A").render({ m: 1234.56 }), /^\$1,235$/);
+test("money is exact to the cent, never rounded to the dollar", () => {
+  assert.match(col.money("m", "A").render({ m: 1234.56 }), /^\$1,234\.56$/);
+  assert.match(col.money("m", "A").render({ m: 1234.5 }), /^\$1,234\.50$/);
   assert.match(col.money2("m", "A").render({ m: 1234.56 }), /^\$1,234\.56$/);
+  assert.match(col.pct("p", "A").render({ p: 0.340538653 }), /^34\.05%$/);
+});
+
+test("total columns are bold and carry the total tint", () => {
+  const c = col.strong("_total", "Grand Total", { className: "current" });
+  assert.equal(c.strong, true);
+  assert.equal(c.className, "total-col current");
 });
 
 test("extras override the defaults rather than being ignored", () => {

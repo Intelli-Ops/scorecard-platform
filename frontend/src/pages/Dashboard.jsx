@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { api, count, money, monthName } from "../api";
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import { api, count, monthName } from "../api";
 import { Card, DataTable, ErrorBox, Loading, Segmented } from "../components";
 import { col } from "../columns";
-import { Stat, Stats } from "../ui";
 import Settlement, { SettlementTiles } from "../settlement";
 import Collections, { CollectionsTiles } from "../collections";
 import Delta from "../delta";
 import Kpi from "../kpi";
+import CaseAr from "../caseAr";
+import { Button, LinkButton } from "../buttons";
+import { DownloadIcon } from "../icons";
 
 /* The dashboard: figures and tables, nothing else.
 
@@ -128,20 +130,21 @@ function TablePage({ runId, name, note }) {
             <div className="row">
               {page.rows > limit && (
                 <>
-                  <button className="small" disabled={current === 0}
+                  <Button size="sm" disabled={current === 0}
                           onClick={() => setOffset(Math.max(0, offset - limit))}>
                     Previous
-                  </button>
+                  </Button>
                   <span className="small muted">{current + 1} of {count(pages)}</span>
-                  <button className="small" disabled={current >= pages - 1}
+                  <Button size="sm" disabled={current >= pages - 1}
                           onClick={() => setOffset(offset + limit)}>
                     Next
-                  </button>
+                  </Button>
                 </>
               )}
-              <button className="small" onClick={exportCsv} disabled={exporting}>
-                {exporting ? "Preparing…" : "Export CSV"}
-              </button>
+              <Button size="sm" icon={<DownloadIcon />} onClick={exportCsv}
+                      busy={exporting} busyLabel="Preparing…">
+                Export CSV
+              </Button>
             </div>
           }>
       <DataTable columns={columns} rows={page.data} />
@@ -149,8 +152,31 @@ function TablePage({ runId, name, note }) {
   );
 }
 
+/* The run page: the scorecard of one particular build, reached from the run
+   history or the review, with a way back to that review. */
 export default function Dashboard() {
   const { id } = useParams();
+  return (
+    <ScorecardView id={id} header={(run) => (
+      <div className="head spread">
+        <div>
+          <h1>{run.run.report}</h1>
+          <div className="sub">
+            {run.run.week} · run #{run.run.id} · {run.run.status}
+            {run.run.approved_by && ` · approved by ${run.run.approved_by}`}
+            {run.run.working_days && ` · paced on ${run.run.working_days} working days`}
+          </div>
+        </div>
+        <LinkButton to={`/runs/${id}`}>Review</LinkButton>
+      </div>
+    )} />
+  );
+}
+
+/* The scorecard itself - tiles, tabs and tables - for any run. The page
+   around it decides the heading: the run page names the build, the "This
+   week" page names who approved it. */
+export function ScorecardView({ id, header }) {
   const { run, settlement, totals, pace, cp, kpi, meta, collections,
           collectionsPace, delta, loading, error } = useDashboard(id);
   const [tab, setTab] = useState("settlement");
@@ -162,19 +188,8 @@ export default function Dashboard() {
     ? `${monthName(currentMonth)}${meta[0].year ? ` ${meta[0].year}` : ""}`
     : null;
 
-  const kpiBlocks = useMemo(() => {
-    const by = {};
-    for (const k of kpi ?? []) (by[k.block] ??= []).push(k);
-    for (const v of Object.values(by)) v.sort((a, b) => b.value - a.value);
-    return by;
-  }, [kpi]);
-
   if (loading) return <Loading what="Loading the scorecard" />;
   if (error) return <ErrorBox error={error} />;
-
-  const rawRows = run.tables.find((t) => t.name === "raw_data")?.rows;
-  const settledYtd = cp.reduce((s, m) => s + m.settled, 0);
-  const casesYtd = cp.reduce((s, m) => s + m.cases, 0);
 
   /* Sheet order, which is the order the workbook prints them and the order the
      people reading it expect. Raw Data sits last because it is the evidence
@@ -193,16 +208,7 @@ export default function Dashboard() {
 
   return (
     <>
-      <div className="head spread">
-        <div>
-          <h1>{run.run.report}</h1>
-          <div className="sub">
-            {run.run.week} · run #{run.run.id} · {run.run.status}
-            {run.run.approved_by && ` · approved by ${run.run.approved_by}`}
-          </div>
-        </div>
-        <Link className="btn" to={`/runs/${id}`}>Review</Link>
-      </div>
+      {header(run)}
 
       {/* The tiles follow the tab. On Settlement they are this month's, which
           is what the scorecard is reporting on; elsewhere they describe the
@@ -214,23 +220,12 @@ export default function Dashboard() {
       ) : tab === "collections" ? (
         <CollectionsTiles rows={collections} pace={collectionsPace}
                           monthLabel={monthLabel} />
-      ) : ["delta", "delta_comparison", "kpi"].includes(tab) ? (
-        /* None of these carries tiles. Delta's figure changes with every
-           filter and the grid already shows it; its raw rows are evidence, not
-           a headline; KPI is eight categories at once, with no single figure
-           to head them. See the notes in each. */
-        null
       ) : (
-        <Stats cols={4}>
-          <Stat label="CP settled cases" value={count(casesYtd)}
-                foot={`${money(settledYtd)} settled, year to date`} />
-          <Stat label="Provider groups"
-                value={count(new Set((kpi ?? []).map((k) => k.group)).size)}
-                foot={`across ${Object.keys(kpiBlocks).length} KPI blocks`} />
-          <Stat label="Raw data rows" value={count(rawRows)}
-                foot="queried on demand" />
-          <Stat label="Week" value={run.run.week} foot={run.run.status} />
-        </Stats>
+        /* No other tab carries tiles. Delta's figure changes with every
+           filter and the grid already shows it; raw rows are evidence, not a
+           headline; KPI is eight categories at once; Case AR and Raw Data are
+           tables to read, and tiles over them only pushed them down. */
+        null
       )}
 
       <div className="spread" style={{ marginBottom: 18 }}>
@@ -251,7 +246,9 @@ export default function Dashboard() {
                      monthLabel={monthLabel} />
       )}
 
-      {["case_ar", "delta_comparison", "raw_data"].includes(tab) && (
+      {tab === "case_ar" && <CaseAr runId={id} />}
+
+      {["delta_comparison", "raw_data"].includes(tab) && (
         <TablePage
           runId={id} name={tab}
           note={tab === "raw_data"

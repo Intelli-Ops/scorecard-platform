@@ -11,6 +11,7 @@ on anyone's memory.
 """
 from __future__ import annotations
 import datetime as dt
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -20,9 +21,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..db.models import Run, RunFigure, RunInput, RunNote, RunTable, Upload
+from ..db.models import (MonthSetting, Run, RunFigure, RunInput, RunNote,
+                         RunTable, Upload)
 from ..reports import ReportType, get as get_report
 from ..reports.cache import ParquetCache
+from ..reports.period import reporting_period
 from ..storage.files import FileStore
 from .figures import all_figures
 from .ingest import source_set
@@ -80,6 +83,7 @@ def execute(session: Session, store: FileStore, report_key: str, week: str,
             raise FileNotFoundError("; ".join(ss.problems()))
 
         rules = yaml.safe_load(report.rules_path.read_text())
+        _apply_working_days(session, run, rules, week)
         cache = ParquetCache(settings.data_dir / "cache" / week / report_key)
         src = read_sources(ss, rules, cache)
         result = run_pipeline(src, rules, as_of=as_of, week=week)
@@ -129,6 +133,25 @@ def execute(session: Session, store: FileStore, report_key: str, week: str,
         run.finished_at = dt.datetime.now(dt.timezone.utc)
         session.flush()
         raise
+
+
+def month_of(week: str, rules: dict | None = None):
+    """The reporting period a week belongs to - by the rule that a week is in
+    the month of its Wednesday - with the month's working days as entered."""
+    return reporting_period(week, (rules or {}).get("holidays"),
+                            (rules or {}).get("working_days"))
+
+
+def _apply_working_days(session: Session, run: Run, rules: dict, week: str) -> None:
+    """Hand the build the working days entered for its month, if any, and
+    note on the run which number it paced on."""
+    key = month_of(week, rules).key
+    row = session.get(MonthSetting, key)
+    if row is not None:
+        rules["working_days"] = {key: row.working_days}
+    period = month_of(week, rules)
+    run.working_days = period.business_days
+    run.working_days_source = "entered" if row is not None else "calendar"
 
 
 def table(session: Session, run: Run, name: str,
@@ -298,4 +321,11 @@ def delete_week(session: Session, week: str, results: FileStore | None = None,
     rows_gone, blobs_gone = _retire_uploads(session, left, objects)
     summary["uploads_removed"] += rows_gone
     summary["upload_files_removed"] += blobs_gone
+
+    # The parquet copies the readers cached from this week's spreadsheets. They
+    # are the client's case data in another format, and deleting the week used
+    # to leave them behind on disk.
+    cache = settings.data_dir / "cache" / week
+    if cache.is_dir():
+        shutil.rmtree(cache, ignore_errors=True)
     return summary

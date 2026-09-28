@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.db import session as db_session
+from tests.accounts import account, make_account, sign_in
 
 GOOD = {"email": "ali.asghar@appedology.com", "apd_id": "APD-1234",
         "password": "correct horse battery"}
@@ -32,8 +33,20 @@ def signup(client, **over):
     return client.post("/api/auth/signup", json={**GOOD, **over})
 
 
+def approve_all():
+    """What an admin does on the Users screen, done directly."""
+    from sqlalchemy import update
+    from app.db.models import User
+    from app.db.session import session
+    with session() as s:
+        s.execute(update(User).values(pending=False, is_active=True))
+
+
 def auth(client, **over):
-    return {"Authorization": f"Bearer {signup(client, **over).json()['token']}"}
+    body = {**GOOD, **over}
+    assert signup(client, **over).status_code == 200
+    approve_all()
+    return sign_in(client, body["email"], body["password"])
 
 
 # ------------------------------------------------------------------ the rules
@@ -99,12 +112,26 @@ def test_email_is_stored_lower_case(client):
 
 # ------------------------------------------------------------------ accounts
 
-def test_signing_up_signs_you_in(client):
+def test_signing_up_waits_for_an_admin(client):
+    """Anyone can TYPE an @appedology.com address. Until an admin approves the
+    account, it cannot sign in - and no token comes back from signing up."""
     body = signup(client).json()
-    assert body["token"]
-    me = client.get("/api/auth/me",
-                    headers={"Authorization": f"Bearer {body['token']}"})
-    assert me.json()["apd_id"] == "APD-1234"
+    assert body["pending"] is True and "token" not in body
+    r = client.post("/api/auth/login",
+                    json={"email": GOOD["email"], "password": GOOD["password"]})
+    assert r.status_code == 401 and "approve" in r.json()["detail"]
+
+    approve_all()
+    headers = sign_in(client, GOOD["email"], GOOD["password"])
+    assert client.get("/api/auth/me", headers=headers).json()["apd_id"] == "APD-1234"
+
+
+def test_waiting_for_approval_is_only_said_to_the_right_password(client):
+    """Saying "pending" to a wrong password would confirm the address exists."""
+    signup(client)
+    r = client.post("/api/auth/login",
+                    json={"email": GOOD["email"], "password": "not the password"})
+    assert r.json()["detail"] == "That email and password do not match."
 
 
 def test_an_email_cannot_be_used_twice(client):
@@ -121,6 +148,7 @@ def test_an_apd_id_cannot_be_used_twice(client):
 
 def test_login_and_logout(client):
     signup(client)
+    approve_all()
     r = client.post("/api/auth/login",
                     json={"email": GOOD["email"], "password": GOOD["password"]})
     assert r.status_code == 200
@@ -194,4 +222,7 @@ def test_a_made_up_token_is_refused(client):
 
 
 def test_signed_in_you_can_reach_the_app(client):
-    assert client.get("/api/weeks", headers=auth(client)).status_code == 200
+    """A new account is a viewer: it reaches the scorecards, not the workspace."""
+    headers = auth(client)
+    assert client.get("/api/scorecards/current", headers=headers).status_code == 200
+    assert client.get("/api/weeks", headers=headers).status_code == 403

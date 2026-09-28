@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { bucketLabel, money } from "./api";
 import { TOTAL, amountPctPair, assemble, col } from "./columns";
 import { Stat, Stats, TableCard } from "./ui";
-import { monthToDate, paceTotals, pivot, pivotPace } from "./settlement-model";
+import { monthToDate, paceTotals, pivot, pivotPace, sortBlocks } from "./settlement-model";
 
 /* The Settlement High-Level sheet, as the workbook prints it.
 
@@ -62,7 +62,7 @@ function Block({ title, sub, rows, totals, block, monthLabel, pace }) {
 
       {paced.weeks.length > 0 && (
         <TableCard
-          title={`${title} — Pace`}
+          title={`${title}: Pace`}
           sub={`Where ${monthLabel ?? "this month"} lands if the rest of it goes at the rate seen so far: what has banked up to each week, spread across the month's working days. The last week of a finished month paces to what it actually did.`}
           columns={paceColumns} rows={paced.rows} />
       )}
@@ -72,7 +72,7 @@ function Block({ title, sub, rows, totals, block, monthLabel, pace }) {
 
 export default function Settlement({ settlement, totals, pace, cp, monthLabel }) {
   const blocks = useMemo(
-    () => [...new Set(settlement.map((r) => r.block))].sort(), [settlement]);
+    () => sortBlocks(new Set(settlement.map((r) => r.block))), [settlement]);
 
   const cpRows = useMemo(() => {
     if (!cp?.length) return [];
@@ -97,7 +97,7 @@ export default function Settlement({ settlement, totals, pace, cp, monthLabel })
 
       <TableCard
         title="CP Settled Cases"
-        sub="Cases settled, what settled on them, and what is still outstanding — by month."
+        sub="Cases settled, what settled on them, and what is still outstanding, by month."
         empty="No CP settled cases for this run."
         columns={[
           col.label("label", "Month", { width: 140, className: "sticky" }),
@@ -121,7 +121,7 @@ export function SettlementTiles({ settlement, pace, cp, monthLabel, currentMonth
   const paceTo = useMemo(() => paceTotals(pace), [pace]);
 
   const month = (cp ?? []).find((r) => r.month === currentMonth);
-  const blocks = Object.keys(thisMonth).sort();
+  const blocks = sortBlocks(Object.keys(thisMonth));
   const label = monthLabel ?? "this month";
 
   return (
@@ -132,13 +132,13 @@ export function SettlementTiles({ settlement, pace, cp, monthLabel, currentMonth
               foot={paceTo[b] ? `pacing to ${money(paceTo[b])}` : "settled this month"} />
       ))}
       <Stat label={`CP cases · ${label}`}
-            value={month ? String(month.cases) : "—"}
+            value={month ? String(month.cases) : "-"}
             foot="settled this month" />
       <Stat label={`CP settled · ${label}`}
-            value={month ? money(month.settled) : "—"}
+            value={month ? money(month.settled) : "-"}
             foot="settlement amount" />
       <Stat label={`CP outstanding · ${label}`}
-            value={month ? money(month.outstanding) : "—"}
+            value={month ? money(month.outstanding) : "-"}
             foot="still owed on those cases" />
     </Stats>
   );

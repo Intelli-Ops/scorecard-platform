@@ -19,15 +19,52 @@ async function json(path, opts = {}) {
   }
   if (!r.ok) {
     let detail;
-    try { detail = (await r.json()).detail; } catch { detail = await r.text(); }
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    try { detail = (await r.json()).detail; } catch { detail = r.statusText; }
+    /* An admin reset this account's password while it was open. The app shows
+       the choose-a-new-password screen once it knows, so tell it. */
+    if (detail?.code === "password_change_required") {
+      window.dispatchEvent(new Event("scorecard:password-change"));
+    }
+    const err = new Error(typeof detail === "string" ? detail
+                          : detail?.message ?? JSON.stringify(detail));
+    err.status = r.status;
+    err.detail = detail;
+    throw err;
   }
   return r.json();
 }
 
-const post = (path, body) =>
-  json(path, { method: "POST", headers: { "Content-Type": "application/json" },
-               body: JSON.stringify(body) });
+const send = (method) => (path, body) =>
+  json(path, { method, headers: { "Content-Type": "application/json" },
+               body: JSON.stringify(body ?? {}) });
+const post = send("POST");
+const patch = send("PATCH");
+
+const query = (params) => {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "") q.set(k, v);
+  }
+  const text = q.toString();
+  return text ? `?${text}` : "";
+};
+
+/* Save a response as a file. Fetched rather than linked, because the request
+   needs the sign-in header and a plain <a href> cannot carry one. */
+async function download(path, fallbackName) {
+  const r = await fetch(BASE + path, { headers: authHeaders() });
+  if (!r.ok) throw new Error(`Could not download ${fallbackName} (${r.status})`);
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = (r.headers.get("Content-Disposition") ?? "")
+    .match(/filename="?([^"]+)"?/)?.[1] ?? fallbackName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 export const api = {
   // --- accounts ---
@@ -37,17 +74,53 @@ export const api = {
   logout: () => json("/api/auth/logout", { method: "POST" }),
   me: () => json("/api/auth/me"),
 
+  // --- your own profile ---
+  updateProfile: (display_name) => patch("/api/me", { display_name }),
+  changePassword: (current, next) =>
+    post("/api/me/password", { current, new: next }),
+  mySessions: () => json("/api/me/sessions"),
+  endSession: (id) => json(`/api/me/sessions/${id}`, { method: "DELETE" }),
+  endOtherSessions: () => post("/api/me/sessions/end-others"),
+  myActivity: () => json("/api/me/activity"),
+
+  // --- admin ---
+  users: () => json("/api/admin/users"),
+  // `reports` optional: grant a new viewer its scorecards as it is approved.
+  approveUser: (id, reports) =>
+    post(`/api/admin/users/${id}/approve`, reports ? { reports } : {}),
+  setRole: (id, role) => post(`/api/admin/users/${id}/role`, { role }),
+  setAccess: (id, reports) => post(`/api/admin/users/${id}/access`, { reports }),
+  deleteUser: (id) => json(`/api/admin/users/${id}`, { method: "DELETE" }),
+  setActive: (id, active) => post(`/api/admin/users/${id}/active`, { active }),
+  unlockUser: (id) => post(`/api/admin/users/${id}/unlock`),
+  resetPassword: (id) => post(`/api/admin/users/${id}/reset-password`),
+  signOutUser: (id) => post(`/api/admin/users/${id}/sign-out`),
+  actions: () => json("/api/admin/actions"),
+  activity: (filters = {}) => json(`/api/admin/activity${query(filters)}`),
+  alerts: (days = 7) => json(`/api/admin/alerts?days=${days}`),
+  downloadActivity: (filters = {}) =>
+    download(`/api/admin/activity/csv${query(filters)}`, "activity.csv"),
+
   reports: () => json("/api/reports"),
+  // The latest APPROVED scorecard per report, and who approved it.
+  currentScorecards: () => json("/api/scorecards/current"),
   weeks: () => json("/api/weeks"),
   week: (w) => json(`/api/weeks/${w}`),
+  // The month a week belongs to, and the working days its pace uses.
+  weekMonth: (w) => json(`/api/weeks/${w}/month`),
+  // null goes back to the calendar's count.
+  setWorkingDays: (w, days) =>
+    json(`/api/weeks/${w}/month`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ working_days: days }) }),
 
   // The browser sends the files; the server hashes what it receives and
   // refuses anything that is not one of the nine inputs.
-  upload(week, files, { forReport, uploadedBy, onProgress } = {}) {
+  // Who uploaded is taken from the signed-in account on the server.
+  upload(week, files, { forReport, onProgress } = {}) {
     const body = new FormData();
     for (const f of files) body.append("files", f, f.name);
     if (forReport) body.append("for_report", forReport);
-    if (uploadedBy) body.append("uploaded_by", uploadedBy);
 
     // XHR rather than fetch: it reports upload progress, and a 385 MB week
     // with no progress bar looks indistinguishable from a hung page.
@@ -61,9 +134,9 @@ export const api = {
       x.onload = () => {
         try {
           const body = JSON.parse(x.responseText);
-          x.status >= 200 && x.status < 300
-            ? resolve(body)
-            : reject(new Error(body.detail ?? x.statusText));
+          if (x.status >= 200 && x.status < 300) resolve(body);
+          else reject(new Error(body.detail?.message ?? body.detail
+                                ?? x.statusText));
         } catch { reject(new Error(`upload failed (${x.status})`)); }
       };
       x.onerror = () => reject(new Error("upload failed - is the server running?"));
@@ -88,29 +161,14 @@ export const api = {
   // week. This is what removes the files themselves.
   deleteWeek: (w) => json(`/api/weeks/${w}`, { method: "DELETE" }),
   figures: (id, name) => json(`/api/runs/${id}/figures/${name}`),
+  // The Case AR pivot, rebuilt on the server for { group, file_status, validity }.
+  caseAr: (id, filters = {}) => json(`/api/runs/${id}/case-ar${query(filters)}`),
   table: (id, name, { limit = 100, offset = 0 } = {}) =>
     json(`/api/runs/${id}/tables/${name}?limit=${limit}&offset=${offset}`),
 
-  /* Download a whole table as CSV.
-
-     Fetched rather than linked, because the request needs the sign-in header
-     and a plain <a href> cannot carry one. The file is handed to the browser
-     from memory once it has arrived. */
-  async downloadCsv(id, name) {
-    const r = await fetch(`${BASE}/api/runs/${id}/tables/${name}/csv`,
-                          { headers: authHeaders() });
-    if (!r.ok) throw new Error(`Could not export ${name} (${r.status})`);
-    const blob = await r.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = (r.headers.get("Content-Disposition") ?? "")
-      .match(/filename="?([^"]+)"?/)?.[1] ?? `${name}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  },
+  // A whole table as CSV - every row, not the page on screen.
+  downloadCsv: (id, name) =>
+    download(`/api/runs/${id}/tables/${name}/csv`, `${name}.csv`),
 };
 
 /* Formatting lives in format.js - pure, and importable without a bundler.

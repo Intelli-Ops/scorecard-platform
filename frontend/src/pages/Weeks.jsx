@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, bytes, when } from "../api";
-import { Card, ConfirmButton, DataTable, ErrorBox, Loading, Picker }
+import { useAuth } from "../auth";
+import WorkingDays from "../WorkingDays";
+import { Card, DataTable, ErrorBox, Loading, Picker }
   from "../components";
+import { Button, DeleteButton } from "../buttons";
 
 /* Uploading a week.
 
@@ -20,8 +23,13 @@ function isoWeek(d = new Date()) {
   return `${t.getUTCFullYear()}-W${String(n).padStart(2, "0")}`;
 }
 
+/* The server refuses anything else; checking here too means a half-typed
+   "2026-W3" waits quietly instead of flashing an error on every keystroke. */
+const WEEK_RE = /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/;
+
 export default function Weeks() {
   const nav = useNavigate();
+  const { user } = useAuth();
   const [week, setWeek] = useState(isoWeek());
   const [weeks, setWeeks] = useState([]);
   const [status, setStatus] = useState(null);
@@ -30,11 +38,16 @@ export default function Weeks() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [over, setOver] = useState(false);
+  const [building, setBuilding] = useState(null);
   const fileInput = useRef();
+  const validWeek = WEEK_RE.test(week);
 
   useEffect(() => {
     let alive = true;
     setStatus(null);
+    setError(null);
+    setResult(null);
+    if (!WEEK_RE.test(week)) return () => { alive = false; };
     (async () => {
       try {
         const [w, s] = await Promise.all([api.weeks(), api.week(week)]);
@@ -46,7 +59,7 @@ export default function Weeks() {
   }, [week]);
 
   async function send(files) {
-    if (!files?.length) return;
+    if (!files?.length || !validWeek) return;
     setError(null); setResult(null); setProgress(0);
     try {
       const r = await api.upload(week, files, {
@@ -59,11 +72,17 @@ export default function Weeks() {
     finally { setProgress(null); }
   }
 
+  /* One press, one build: the button is held until the server answers. If
+     the week is already building, go to that build rather than show an error. */
   async function build(reportKey) {
+    setBuilding(reportKey);
     try {
       const { run_id } = await api.startRun(reportKey, week);
       nav(`/runs/${run_id}`);
-    } catch (e) { setError(e); }
+    } catch (e) {
+      if (e.detail?.run_id) nav(`/runs/${e.detail.run_id}`);
+      else setError(e);
+    } finally { setBuilding(null); }
   }
 
   // Every row held for the week, which is what deleting it would remove - not
@@ -108,16 +127,16 @@ export default function Weeks() {
           </div>
           <span className="row tight">
             <Picker label="These Case ARs are for" value={forReport}
-                    onChange={setForReport}
+                    onChange={setForReport} active={!!forReport}
+                    onClear={() => setForReport("")}
                     options={[
                       { value: "", label: "Shared files only" },
                       { value: "gfs", label: "GFS · Tuesday" },
                       { value: "all_providers", label: "All Providers · Thursday" },
                     ]} />
-            {uploaded > 0 && (
-              <ConfirmButton
+            {uploaded > 0 && user.is_admin && (
+              <DeleteButton
                 label={`Delete ${week}`}
-                confirm={`Delete ${uploaded} file${uploaded === 1 ? "" : "s"}?`}
                 onConfirm={removeWeek}
                 title={`Remove every file uploaded for ${week}, and its builds. `
                        + `This cannot be undone.`} />
@@ -130,10 +149,14 @@ export default function Weeks() {
           onDragOver={(e) => { e.preventDefault(); setOver(true); }}
           onDragLeave={() => setOver(false)}
           onDrop={(e) => { e.preventDefault(); setOver(false); send([...e.dataTransfer.files]); }}
-          onClick={() => fileInput.current.click()}
+          onClick={() => validWeek && fileInput.current.click()}
         >
           <input ref={fileInput} type="file" multiple hidden
-                 onChange={(e) => send([...e.target.files])} />
+                 onChange={(e) => {
+                   send([...e.target.files]);
+                   // Cleared, so choosing the same file again still counts.
+                   e.target.value = "";
+                 }} />
           {progress == null ? (
             <>
               <div className="big">Drop this week's files here</div>
@@ -158,6 +181,10 @@ export default function Weeks() {
             Case AR files are refused until you say which report they belong to.
           </div>
         )}
+
+        {/* The month's working days, set along with the week's files: the
+            pace figures of every build this month are projected on it. */}
+        {validWeek && <WorkingDays week={week} />}
       </Card>
 
       {result && (
@@ -191,7 +218,11 @@ export default function Weeks() {
             <Card key={key} flush title={r.label} sub={`Mailed ${r.send_day}`}
                   right={
                     r.ready
-                      ? <button className="primary" onClick={() => build(key)}>Build</button>
+                      ? <Button tone="primary" onClick={() => build(key)}
+                                disabled={building != null && building !== key}
+                                busy={building === key} busyLabel="Starting…">
+                          Build
+                        </Button>
                       /* Not a button when there is nothing to press: a greyed-out
                          primary still reads as the thing to click. */
                       : <span className="pill">{r.missing.length} still needed</span>
@@ -218,7 +249,9 @@ export default function Weeks() {
             </Card>
           ))}
         </div>
-      ) : <Loading what="Checking the week" />}
+      ) : validWeek ? <Loading what="Checking the week" /> : (
+        <div className="empty">Type a week as 2026-W38.</div>
+      )}
     </>
   );
 }

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api, count, when } from "../api";
 import { Card, ErrorBox, Loading, Notes, Status, Tile } from "../components";
+import { Button, LinkButton } from "../buttons";
+import { CheckIcon } from "../icons";
 
 /* The review: what a person has to check before the report goes out.
 
@@ -115,20 +117,21 @@ export default function Review() {
         <div className="row">
           <Status value={run.status} />
           {run.status === "review" ? (
-            <button className="primary" onClick={approve} disabled={busy}>
-              {busy ? "Approving…" : "Approve"}
-            </button>
+            <Button tone="primary" icon={<CheckIcon />} onClick={approve}
+                    busy={busy} busyLabel="Approving…">
+              Approve
+            </Button>
           ) : run.status === "approved" ? (
             <>
               <span className="small muted">
                 approved by {run.approved_by} · {when(run.approved_at)}
               </span>
-              <button className="quiet" onClick={unapprove} disabled={busy}>
-                {busy ? "Working…" : "Unapprove"}
-              </button>
+              <Button tone="soft" onClick={unapprove} busy={busy} busyLabel="Working…">
+                Unapprove
+              </Button>
             </>
           ) : null}
-          <Link className="btn" to={`/dashboard/${run.id}`}>Open scorecard</Link>
+          <LinkButton to={`/dashboard/${run.id}`}>Open scorecard</LinkButton>
         </div>
       </div>
 

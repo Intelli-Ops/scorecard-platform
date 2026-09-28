@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../auth";
+import { Button } from "../buttons";
 
 /* Sign in and sign up, on one screen.
 
@@ -19,6 +20,7 @@ export default function SignIn() {
   const [apd, setApd] = useState("");
   const [password, setPassword] = useState("");
   const [problem, setProblem] = useState(null);
+  const [done, setDone] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const joining = mode === "up";
@@ -26,9 +28,19 @@ export default function SignIn() {
   async function submit(e) {
     e.preventDefault();
     setProblem(null);
+    setDone(null);
     setBusy(true);
     try {
-      joining ? await signUp(email, apd, password) : await signIn(email, password);
+      if (joining) {
+        /* The account exists but cannot be used until an admin approves it,
+           so the form goes back to Sign in with that said above it. */
+        const r = await signUp(email, apd, password);
+        setDone(r.message);
+        setMode("in");
+        setPassword("");
+      } else {
+        await signIn(email, password);
+      }
     } catch (err) {
       setProblem(err.message);
     } finally {
@@ -39,6 +51,7 @@ export default function SignIn() {
   function swap() {
     setMode(joining ? "in" : "up");
     setProblem(null);
+    setDone(null);
   }
 
   return (
@@ -48,11 +61,12 @@ export default function SignIn() {
         <h1>{joining ? "Create your account" : "Sign in"}</h1>
         <p className="lede">
           {joining
-            ? "Appedology accounts only. You will be signed in straight away."
+            ? "Appedology accounts only. An admin approves each new account."
             : "The weekly GFS and All Providers scorecards."}
         </p>
 
         {problem && <div className="problem">{problem}</div>}
+        {done && <div className="done">{done}</div>}
 
         <form onSubmit={submit}>
           <div className="field">
@@ -68,7 +82,7 @@ export default function SignIn() {
               <label htmlFor="apd">APD ID</label>
               <input id="apd" type="text" required placeholder="APD-1234"
                      value={apd} onChange={(e) => setApd(e.target.value)} />
-              <div className="hint">Your internal ID — APD followed by four digits</div>
+              <div className="hint">Your internal ID: APD followed by four digits</div>
             </div>
           )}
 
@@ -80,16 +94,17 @@ export default function SignIn() {
             {joining && <div className="hint">At least 8 characters</div>}
           </div>
 
-          <button className="primary" type="submit" disabled={busy}>
-            {busy ? "Please wait…" : joining ? "Create account" : "Sign in"}
-          </button>
+          <Button tone="primary" type="submit" className="wide" busy={busy}
+                  busyLabel="Please wait…">
+            {joining ? "Create account" : "Sign in"}
+          </Button>
         </form>
 
         <div className="swap">
           {joining ? "Already have an account? " : "First time here? "}
-          <button type="button" className="link" onClick={swap}>
+          <Button tone="link" onClick={swap}>
             {joining ? "Sign in" : "Create one"}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

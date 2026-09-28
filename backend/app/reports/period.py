@@ -54,6 +54,9 @@ class Period:
     weeks_so_far: int
     last_day: dt.date                    # the Sunday closing the reporting week
     holidays: frozenset
+    # The month's working days as entered by a person on the upload screen,
+    # when the calendar's count is wrong. None: use the calendar.
+    entered_days: int | None = None
 
     @property
     def weeks(self) -> list[tuple[dt.date, dt.date]]:
@@ -72,10 +75,21 @@ class Period:
         return [s - dt.timedelta(days=s.weekday()) for s, _ in self.month_weeks]
 
     @property
-    def business_days(self) -> int:
+    def calendar_days(self) -> int:
+        """Weekdays in the month, less the holidays in the rules."""
         last = calendar.monthrange(self.year, self.month)[1]
         return working_days(dt.date(self.year, self.month, 1),
                             dt.date(self.year, self.month, last), self.holidays)
+
+    @property
+    def business_days(self) -> int:
+        """The month's working days the pace is built on: what was entered for
+        the month if anything was, the calendar's count if not."""
+        return self.entered_days or self.calendar_days
+
+    @property
+    def key(self) -> str:
+        return f"{self.year:04d}-{self.month:02d}"
 
     def elapsed(self, week_index: int) -> int:
         """Working days from the 1st to the end of week `week_index` (1-based)."""
@@ -92,7 +106,10 @@ class Period:
                 f"*{self.business_days}")
 
 
-def reporting_period(week: str, holidays: list | None) -> Period:
+def reporting_period(week: str, holidays: list | None,
+                     entered: dict | None = None) -> Period:
+    """The period `week` reports on. `entered` maps "2026-09" to the working
+    days a person entered for that month, when they did."""
     y, w = map(int, week.split("-W"))
     monday = dt.date.fromisocalendar(y, w, 1)
     wednesday = monday + dt.timedelta(days=2)
@@ -100,7 +117,9 @@ def reporting_period(week: str, holidays: list | None) -> Period:
     spans = month_weeks(year, month)
     so_far = sum(1 for s, _ in spans if s - dt.timedelta(days=s.weekday()) <= monday)
     off = frozenset(h for h in (holidays or []) if isinstance(h, dt.date))
-    return Period(year, month, spans, so_far, monday + dt.timedelta(days=6), off)
+    days = (entered or {}).get(f"{year:04d}-{month:02d}")
+    return Period(year, month, spans, so_far, monday + dt.timedelta(days=6), off,
+                  int(days) if days else None)
 
 
 def week_index_expr(col: str, period: Period) -> pl.Expr:

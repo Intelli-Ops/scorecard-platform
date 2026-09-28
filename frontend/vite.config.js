@@ -28,8 +28,13 @@ export default defineConfig({
        name. `changeOrigin` presents the backend with a Host it expects. */
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        // Override to run a second copy beside the usual one.
+        target: process.env.SCORECARD_API_TARGET ?? 'http://127.0.0.1:8000',
         changeOrigin: true,
+        /* Pass on who is really asking (X-Forwarded-For). Without it every
+           row in the activity log reads 127.0.0.1 - this proxy's own address.
+           The backend trusts the header from 127.0.0.1 only. */
+        xfwd: true,
       },
     },
   },

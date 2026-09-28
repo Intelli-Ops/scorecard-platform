@@ -40,10 +40,10 @@ export const toneAt = (i) => TONES[i % TONES.length];
 
 const base = (key, label, extra = {}) => ({ key, label, align: "center", ...extra });
 
-/* An em dash for nothing, never a bare 0 or an empty cell: a group that
+/* A dash for nothing, never a bare 0 or an empty cell: a group that
    settled nothing and a group with no row at all read differently on a
    scorecard, and the reader is entitled to tell them apart. */
-const dash = (v, format) => (v == null ? "—" : format(v));
+const dash = (v, format) => (v == null ? "-" : format(v));
 
 export const col = {
   /* The row's subject - a provider, a month, a file status. Left aligned:
@@ -68,10 +68,17 @@ export const col = {
   count: (key, label, extra = {}) =>
     base(key, label, { render: (r) => dash(r[key], count), ...extra }),
 
-  /* A figure that carries the eye - a total, a year to date. */
+  /* A total column - a week total, a month total, a grand total. Bold and
+     tinted (.total-col in theme.css), the same in every tab. */
   strong: (key, label, extra = {}) =>
-    base(key, label, { strong: true, render: (r) => dash(r[key] || null, money), ...extra }),
+    total(base(key, label, { render: (r) => dash(r[key] || null, money), ...extra })),
 };
+
+/* Mark any column as a total column, whatever it holds. */
+export function total(column) {
+  return { ...column, strong: true,
+           className: ["total-col", column.className].filter(Boolean).join(" ") };
+}
 
 /* A month and its Settlement % as one unit, with the heading that spans them.
    Returned together so a span can never drift out of step with the columns it

@@ -64,14 +64,14 @@ export default function Collections({ rows, pace, monthLabel }) {
     <>
       <TableCard
         title="Collections"
-        sub={`Each week of ${monthLabel ?? "the current month"} opened into its payment types. The closed months January–July are not shown: the pipeline builds this grid for the current month only.`}
+        sub={`Each week of ${monthLabel ?? "the current month"} opened into its payment types. The closed months January to July are not shown: the pipeline builds this grid for the current month only.`}
         empty="No collections for this run."
         columns={columns} spans={spans} rows={grid.rows} />
 
       {paced.weeks.length > 0 && (
         <TableCard
-          title="Collections — Pace"
-          sub={`Where ${monthLabel ?? "this month"} lands if the rest of it goes at the rate seen so far. A group's whole week is paced, not each payment type — the sheet does the same, and pacing one payment type would be projecting noise.`}
+          title="Collections: Pace"
+          sub={`Where ${monthLabel ?? "this month"} lands if the rest of it goes at the rate seen so far. A group's whole week is paced, not each payment type. The sheet does the same, and pacing one payment type would be projecting noise.`}
           columns={paceColumns} rows={paced.rows} />
       )}
 
@@ -92,7 +92,7 @@ export function CollectionsTiles({ rows, pace, monthLabel }) {
   const label = monthLabel ?? "this month";
 
   const types = byType.filter((r) => r.pt !== TOTAL);
-  const share = (n) => (total ? `${((n / total) * 100).toFixed(1)}% of the month`
+  const share = (n) => (total ? `${((n / total) * 100).toFixed(2)}% of the month`
                               : "no collections yet");
 
   return (

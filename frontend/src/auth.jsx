@@ -27,16 +27,30 @@ export function AuthProvider({ children }) {
     })();
   }, []);
 
+  /* An admin reset the password while this tab was open: the API starts
+     refusing with "choose a new password", and the app switches to that
+     screen rather than showing errors on every page. */
+  useEffect(() => {
+    const flag = () => setUser((u) => (u ? { ...u, must_change_password: true } : u));
+    window.addEventListener("scorecard:password-change", flag);
+    return () => window.removeEventListener("scorecard:password-change", flag);
+  }, []);
+
   const finish = ({ token, user }) => { setToken(token); setUser(user); return user; };
 
   const value = {
     user,
     checking,
     signIn: async (email, password) => finish(await api.login(email, password)),
-    signUp: async (email, apdId, password) => finish(await api.signup(email, apdId, password)),
+    /* A new account waits for an admin, so signing up does NOT sign you in -
+       it returns what to tell the person instead. */
+    signUp: (email, apdId, password) => api.signup(email, apdId, password),
     signOut: async () => {
       try { await api.logout(); } finally { setToken(null); setUser(null); }
     },
+    /* After a profile change, so the corner of the screen and the password
+       gate reflect it without a reload. */
+    setUser,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

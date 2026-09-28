@@ -57,7 +57,12 @@ three things:
 | APD ID | your internal ID — **APD-1234**, four digits |
 | Password | at least 8 characters |
 
-Then you are signed in straight away.
+Then an admin has to approve the account. You will see *"Account created. An
+admin has to approve it"*. Once they have, sign in with the same email and
+password. The admin does this on the **Users** screen.
+
+**Forgot your password?** Ask an admin. They give you a temporary one, and
+the app asks you to choose your own as soon as you sign in with it.
 
 Two things it will not accept:
 
@@ -352,13 +357,11 @@ Being straight about it:
 
 - **It runs on your laptop.** For the client to use it, it needs to live on a
   server.
-- **Anyone with an @appedology.com address can create an account.** There is no
-  approval step and no admin who can remove someone. That is fine inside the
-  company; it is not enough before an outside client is given a link.
-- **Anyone signed in can delete a build, or take an approval back.** Both are
-  recorded against the account that did it, but nothing stops anyone doing
-  either. Accounts have no roles yet, which is what an "only an admin can
-  delete" rule would need first.
+- **Anyone signed in can take an approval back.** It is recorded in the
+  activity log against the person who did it, but it is not limited to
+  admins. Deleting *is* limited to admins.
+- **Password resets go through an admin.** There is no email server, so the
+  app cannot send a reset link.
 - **The sign-in token is kept in the browser's storage.** Fine on one company
   network. Once this is on a real server it should move to a cookie that
   JavaScript cannot read at all.
