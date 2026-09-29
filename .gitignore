@@ -37,3 +37,6 @@ data/
 # frontend build output + local env
 frontend/dist/
 frontend/.env.local
+
+# Zips made by deploy/make_package.py
+release/

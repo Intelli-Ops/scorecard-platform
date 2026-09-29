@@ -35,6 +35,9 @@ For how the code is built, component by component, see
 12. [Where data is stored](#where-data-is-stored)
 13. [Accounts, admins and the activity log](#accounts-admins-and-the-activity-log)
 
+**Putting it on a server:** see [DEPLOY.md](DEPLOY.md), which covers Ubuntu, MySQL,
+nginx and HTTPS. `deploy\make_package.py` makes the zip.
+
 ---
 
 ## How it works in one minute

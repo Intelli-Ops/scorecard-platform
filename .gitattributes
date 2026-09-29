@@ -1,0 +1,5 @@
+# Files that run on the Ubuntu server keep Unix line endings even when checked
+# out on Windows: bash reads a Windows line ending as part of the command
+# ("bash\r: not found"), and systemd as part of a value.
+*.sh            text eol=lf
+deploy/**       text eol=lf

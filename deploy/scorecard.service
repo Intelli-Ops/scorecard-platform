@@ -1,0 +1,47 @@
+# The Scorecard backend, kept running by systemd.
+# Installed to /etc/systemd/system/scorecard.service by install.sh.
+#
+#   sudo systemctl status scorecard      is it running?
+#   sudo systemctl restart scorecard     after changing /etc/scorecard/scorecard.env
+#   sudo journalctl -u scorecard -f      its log, live
+
+[Unit]
+Description=Scorecard platform (FastAPI backend)
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+User=scorecard
+Group=scorecard
+WorkingDirectory=/opt/scorecard/backend
+EnvironmentFile=/etc/scorecard/scorecard.env
+
+# One worker process, on purpose: builds run on a background thread inside
+# the process, and the sign-in rate limits are held in its memory. Two
+# workers would each run their own builds and keep their own counts.
+# Listens on 127.0.0.1 only - nginx is the way in. --proxy-headers takes the
+# visitor's address from nginx (127.0.0.1) and from nobody else, so the
+# activity log shows real addresses.
+ExecStart=/opt/scorecard/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 --workers 1 \
+    --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-server-header
+
+Restart=on-failure
+RestartSec=5
+# A build in progress is abandoned on stop; the app marks it failed on the
+# next start, and it can be started again.
+TimeoutStopSec=30
+
+# The service can write to its data folder and nowhere else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/scorecard
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
