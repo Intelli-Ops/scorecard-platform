@@ -58,10 +58,6 @@ class DeltaReport:
     def add(self, label: str, n: int) -> None:
         self.stages.append((label, n))
 
-    def show(self) -> str:
-        w = max(len(s) for s, _ in self.stages) + 2
-        return "\n".join(f"  {s:<{w}} {n:>9,}" for s, n in self.stages)
-
 
 def combine_delta(sheets: dict[str, pl.DataFrame], rules: dict
                   ) -> tuple[pl.DataFrame, DeltaReport]:

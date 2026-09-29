@@ -16,7 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.admin_routes import router as admin_router
 from .api.auth_routes import me_router, router as auth_router
-from .api.routes import router
+from .api.run_routes import router as run_router
+from .api.week_routes import router as week_router
 from .config import settings
 from .db.session import create_all, session
 from .jobs import worker
@@ -78,7 +79,8 @@ async def security_headers(request: Request, call_next):
 
 app.include_router(auth_router)   # open - how you get a token
 app.include_router(me_router)     # your own account
-app.include_router(router)        # everything else needs one
+app.include_router(week_router)   # everything else needs one
+app.include_router(run_router)
 app.include_router(admin_router)  # and these need an admin
 
 

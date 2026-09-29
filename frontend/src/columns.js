@@ -9,7 +9,7 @@
    decides WHAT its columns are; it no longer decides how a dollar figure is
    drawn, where it sits in its cell, or what a Total row looks like. */
 
-import { count, money, money2, pct } from "./format.js";
+import { count, money, pct } from "./format.js";
 
 export const TOTAL = "Total";
 
@@ -56,11 +56,6 @@ export const col = {
 
   money: (key, label, extra = {}) =>
     base(key, label, { render: (r) => dash(r[key] || null, money), ...extra }),
-
-  /* Cents, for the tables where a figure is checked against a workbook rather
-     than read at a glance. */
-  money2: (key, label, extra = {}) =>
-    base(key, label, { render: (r) => dash(r[key] || null, money2), ...extra }),
 
   pct: (key, label, extra = {}) =>
     base(key, label, { render: (r) => dash(r[key], pct), ...extra }),

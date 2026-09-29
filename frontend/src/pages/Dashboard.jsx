@@ -103,7 +103,7 @@ function TablePage({ runId, name, note }) {
     if (kind === "text" || isId(c)) {
       return col.text(c, c, { render: (r) => (r[c] == null ? "" : String(r[c])) });
     }
-    return kind === "float" ? col.money2(c, c) : col.count(c, c);
+    return kind === "float" ? col.money(c, c) : col.count(c, c);
   });
 
   const pages = Math.max(1, Math.ceil(page.rows / limit));

@@ -43,7 +43,7 @@ test("a real zero per cent is a number, not a dash", () => {
 test("money is exact to the cent, never rounded to the dollar", () => {
   assert.match(col.money("m", "A").render({ m: 1234.56 }), /^\$1,234\.56$/);
   assert.match(col.money("m", "A").render({ m: 1234.5 }), /^\$1,234\.50$/);
-  assert.match(col.money2("m", "A").render({ m: 1234.56 }), /^\$1,234\.56$/);
+  assert.match(col.money("m", "A").render({ m: 1234.56 }), /^\$1,234\.56$/);
   assert.match(col.pct("p", "A").render({ p: 0.340538653 }), /^34\.05%$/);
 });
 

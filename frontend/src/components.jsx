@@ -62,9 +62,6 @@ export function Stat({ label, value, foot, tone, onClick, active, title }) {
   );
 }
 
-/* The same tile under its older name. */
-export const Tile = Stat;
-
 /* The one filter control, used everywhere a filter is needed.
 
    One thing on screen at a time: the report has six sheets, and showing all

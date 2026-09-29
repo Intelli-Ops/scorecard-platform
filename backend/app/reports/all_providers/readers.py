@@ -41,10 +41,6 @@ class ApSources:
     reads: list[FileRead] = field(default_factory=list)
     notes: list[Note] = field(default_factory=list)
 
-    @property
-    def total_rows(self) -> int:
-        return sum(r.rows for r in self.reads)
-
 
 def read_all_providers(sources: SourceSet, rules: dict,
                        cache: Cache | None = None) -> ApSources:
@@ -115,7 +111,7 @@ def read_all_providers(sources: SourceSet, rules: dict,
                               sc_cfg.get("sheet", 0), header_row=None).to_polars())
 
     # Last week's workbook. Read as a zip of XML - nothing opens Excel.
-    from .layout import read_sheets
+    from .workbook import read_sheets
     tpl_path = sources.path("template")
     kpi_sheet_name = rules["template"]["kpi_sheet"]
     template = read_sheets(tpl_path, {kpi_sheet_name})[kpi_sheet_name]

@@ -14,8 +14,6 @@ export const money = (n) =>
     { style: "currency", currency: "USD",
       minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export const money2 = money;
-
 export const pct = (n) =>
   n == null ? "" : `${(n * 100).toFixed(2)}%`;
 
@@ -45,14 +43,6 @@ export const bucketLabel = (b) =>
   b?.startsWith("M") ? MONTHS[+b.slice(1)] ?? b : weekLabel(b?.slice(1));
 
 export const monthName = (m) => MONTHS[m] ?? String(m);
-
-/* Ordering for the x axis: months first in calendar order, then the current
-   month's weeks. Sorting the raw labels as text would put W2 before M12. */
-export const bucketSort = (a, b) => {
-  const rank = (s) => (s.startsWith("M") ? [0, +s.slice(1)] : [1, +s.slice(1)]);
-  const [ka, va] = rank(a), [kb, vb] = rank(b);
-  return ka - kb || va - vb;
-};
 
 /* A browser's self-description, reduced to what a person recognises -
    "Chrome on Windows" rather than a 130-character user-agent string. Order

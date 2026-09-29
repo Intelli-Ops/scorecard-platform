@@ -220,10 +220,6 @@ class Upload(Base):
               "uploaded_at"),
     )
 
-    @property
-    def is_shared(self) -> bool:
-        return self.report_key is None
-
 
 class Run(Base):
     """One attempt at building one report for one week."""

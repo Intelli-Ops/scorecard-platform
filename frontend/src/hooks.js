@@ -40,3 +40,26 @@ export function useLoad(load, deps, { keep = false } = {}) {
   const reload = useCallback(() => fetchNow(false), [fetchNow]);
   return { data, error, setData, setError, reload };
 }
+
+/* Closing something - a confirmation, a pending choice - when the person
+   clicks anywhere else or presses Escape. The way a macOS popover goes away:
+   no timer that takes it back while they are still reading it. */
+export function useDismiss(active, onDismiss) {
+  const ref = useRef(null);
+  const latest = useRef(onDismiss);
+  useEffect(() => { latest.current = onDismiss; });
+  useEffect(() => {
+    if (!active) return;
+    const away = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) latest.current();
+    };
+    const esc = (e) => e.key === "Escape" && latest.current();
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [active]);
+  return ref;
+}

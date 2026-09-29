@@ -60,29 +60,6 @@ def _matches(spec: SourceFile, path: Path) -> bool:
             and not any(x.lower() in name for x in spec.excludes))
 
 
-def locate(report: ReportType, paths: list[Path]) -> SourceSet:
-    """Work out which uploaded file is which. Never reads file contents."""
-    found: dict[str, Path] = {}
-    missing: list[SourceFile] = []
-    ambiguous: dict[str, tuple[Path, ...]] = {}
-
-    for spec in report.sources:
-        hits = sorted((p for p in paths if _matches(spec, p)), key=lambda p: p.name)
-        if not hits:
-            missing.append(spec)
-        else:
-            # First match wins, as the .bat pipeline did. A second match is
-            # reported rather than silently ignored: two Payment Detail files in
-            # one week means someone uploaded the wrong month, and picking one
-            # quietly is how a whole report goes out wrong.
-            found[spec.key] = hits[0]
-            if len(hits) > 1:
-                ambiguous[spec.key] = tuple(hits)
-
-    return SourceSet(report=report, found=found,
-                     missing=tuple(missing), ambiguous=ambiguous)
-
-
 def locate_dir(report: ReportType, directory: Path) -> SourceSet:
     """Locate against a folder on disk - used by the golden-master test, which
     runs against the same inputs/<week>/ folders the .bat pipeline uses."""

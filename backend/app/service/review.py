@@ -10,7 +10,6 @@ recalculated, so opening the review of a run from three months ago costs a
 couple of queries and does not need the source files to still exist.
 """
 from __future__ import annotations
-import datetime as dt
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload

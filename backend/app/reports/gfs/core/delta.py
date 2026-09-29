@@ -39,10 +39,6 @@ class DeltaReport:
     def add(self, label: str, n: int) -> None:
         self.stages.append((label, n))
 
-    def show(self) -> str:
-        w = max(len(s) for s, _ in self.stages) + 2
-        return "\n".join(f"  {s:<{w}} {n:>9,}" for s, n in self.stages)
-
 
 def combine_delta(sheets: dict[str, pl.DataFrame], rules: dict) -> tuple[pl.DataFrame, DeltaReport]:
     """PHASE 4 — three sheets onto one 15-column shape."""
@@ -142,7 +138,7 @@ def build_delta(comb: pl.DataFrame,
     prefix = ca.get("closing_order_strip_prefix")
     co = pl.col("Closing Order")
     if prefix:
-        co = co.str.replace(f"(?i)^{prefix}\s*", "")
+        co = co.str.replace(rf"(?i)^{prefix}\s*", "")
     d = d.with_columns(co.str.strip_chars().alias("Closing Order"))
     d = d.with_columns(
         pl.when(pl.col("Closing Order").is_in(ca["closing_order_keep"]))

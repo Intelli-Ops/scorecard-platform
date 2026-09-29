@@ -344,7 +344,7 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
     # West's DOR filings went missing in September 2026.
     groups: list[str | None] = []
     keys: list[str] = []
-    for head, r in body:
+    for _head, r in body:
         key = norm(r[0])
         g = lookup.get(key)
         if g is None and key in aliases:

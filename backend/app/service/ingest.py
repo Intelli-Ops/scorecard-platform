@@ -34,17 +34,6 @@ class IngestResult:
     accepted: list[Accepted] = field(default_factory=list)
     rejected: list[tuple[str, str]] = field(default_factory=list)   # (file, why)
 
-    @property
-    def shared(self) -> list[Accepted]:
-        return [a for a in self.accepted if a.report_key is None]
-
-    def summary(self) -> list[str]:
-        out = [f"{a.label}: {a.filename}"
-               + (" (already held - stored once)" if a.deduplicated else "")
-               for a in self.accepted]
-        out += [f"NOT USED - {name}: {why}" for name, why in self.rejected]
-        return out
-
 
 def _all_sources() -> tuple[SourceFile, ...]:
     """Every input any report declares, deduplicated.

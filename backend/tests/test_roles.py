@@ -40,7 +40,7 @@ def admin(client):
 
 
 def _run(week="2026-W38", report="gfs", status="approved"):
-    from app.db.models import Run, RunFigure, RunTable
+    from app.db.models import Run, RunFigure
     from app.db.session import session
     with session() as s:
         run = Run(report_key=report, week=week, status=status, seconds=1.0,

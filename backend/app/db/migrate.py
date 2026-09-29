@@ -110,11 +110,6 @@ _MYSQL = {
 _RETIRED = "activity_log_no_delete"
 
 
-def mysql_trigger_sql() -> list[str]:
-    """The MySQL triggers, for the setup script to run as the database admin."""
-    return [f"DROP TRIGGER IF EXISTS {_RETIRED}", *_MYSQL.values()]
-
-
 def protect_activity_log(engine: Engine) -> bool:
     """Make the database itself refuse any UPDATE on activity_log, and let
     DELETE through (the app allows it to system admins only, and logs it).

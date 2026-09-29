@@ -16,7 +16,7 @@
 
 import { Children, cloneElement, isValidElement } from "react";
 
-import { Card, DataTable, Stat, Tile } from "./components";
+import { Card, DataTable, Stat } from "./components";
 import { TOTAL, toneAt } from "./columns";
 
 /* --------------------------------------------------------------- tiles */
@@ -56,4 +56,4 @@ export function TableCard({ title, sub, right, columns, rows, spans,
   );
 }
 
-export { Stat, Tile };
+export { Stat };

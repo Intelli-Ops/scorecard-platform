@@ -30,11 +30,6 @@ class BuildReport:
     def add(self, label: str, n: int) -> None:
         self.stages.append((label, n))
 
-    def show(self) -> str:
-        w = max(len(s) for s, _ in self.stages) + 2
-        out = [f"  {s:<{w}} {n:>9,}" for s, n in self.stages]
-        return "\n".join(out)
-
 
 def gfs_case_ids(owner_ar: pl.DataFrame, rules: dict) -> pl.DataFrame:
     """PHASE 1 output: the GFS case list the manual process pastes into the Supporting
@@ -109,7 +104,7 @@ def build_raw_data(owner_ar: pl.DataFrame,
     prefix = r.get("closing_order_strip_prefix")
     co = pl.col("Closing Order")
     if prefix:
-        co = co.str.replace(f"(?i)^{re.escape(prefix)}\s*", "")
+        co = co.str.replace(rf"(?i)^{re.escape(prefix)}\s*", "")
     df = df.with_columns(co.str.strip_chars().alias("Closing Order"))
     keep, default = r["closing_order_keep"], r["closing_order_default"]
     # NB: `~col.is_in(...)` evaluates to null for null values and so silently drops

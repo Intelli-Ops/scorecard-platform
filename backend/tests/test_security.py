@@ -326,7 +326,8 @@ def test_a_new_address_is_flagged_but_a_first_sign_in_is_not(client, admin):
 
 # ------------------------------------------------------------ audit fixes
 
-@pytest.mark.parametrize("week", ["2026-W5", "2026-W54", "2026W35", "2026-W35x"])
+@pytest.mark.parametrize("week", ["2026-W5", "2026-W54", "2026W35", "2026-W35x",
+                                  "2027-W53"])
 def test_week_labels_are_checked(client, admin, week):
     assert client.get(f"/api/weeks/{week}", headers=admin).status_code == 400
     assert client.post(f"/api/runs?report=gfs&week={week}",
@@ -343,7 +344,7 @@ def test_a_week_cannot_climb_out_of_the_data_folder(client, admin):
 def test_a_week_cannot_be_built_twice_at_once(client, admin):
     running = _run(status="running")
     from app.service import ingest
-    import app.api.routes as routes
+    import app.api.run_routes as routes
     orig = ingest.week_status
     routes.week_status = lambda s, w: {"reports": {"gfs": {"ready": True}}}
     try:

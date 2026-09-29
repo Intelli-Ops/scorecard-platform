@@ -16,6 +16,8 @@ The session's id is left on request.state, so the profile screen can say
 which of your sessions is the one you are using.
 """
 from __future__ import annotations
+import datetime as dt
+import re
 
 from fastapi import Depends, Header, HTTPException, Request
 
@@ -71,3 +73,28 @@ def require_admin(request: Request, user: User = Depends(current_user)) -> User:
                      target=f"{request.method} {request.url.path}")
         raise HTTPException(403, "Only an admin can do that.")
     return user
+
+
+# ------------------------------------------------------------------ inputs
+
+WEEK_RE = re.compile(r"^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$")
+
+
+def valid_week(week: str) -> str:
+    """An ISO week label that exists - 2026-W38 - or 400.
+
+    Checked before anything else touches it. The label becomes part of a
+    folder path (the parse cache lives under data/cache/<week>/), so an
+    unchecked "../.." would write outside the data directory; it is compared
+    as text to order weeks, so "2026-W5" would sort after "2026-W38"; and the
+    column holds nine characters, which MySQL enforces and SQLite does not.
+    """
+    if not WEEK_RE.match(week or ""):
+        raise HTTPException(400, f"{week!r} is not a week - use the form 2026-W38.")
+    # The pattern allows W53 in every year; only some years have one (2026
+    # does, 2027 does not), and the calendar raised on the others.
+    try:
+        dt.date.fromisocalendar(int(week[:4]), int(week[6:]), 1)
+    except ValueError:
+        raise HTTPException(400, f"{week[:4]} has no week {week[6:]}.") from None
+    return week

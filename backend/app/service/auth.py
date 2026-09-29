@@ -13,7 +13,6 @@ so that guessing at scale costs real time. Standard library only; no dependency
 to keep patched.
 """
 from __future__ import annotations
-from dataclasses import dataclass
 import base64
 import datetime as dt
 import hashlib
@@ -64,13 +63,6 @@ class LoginRefused(AuthError):
 
 def _now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
-
-
-@dataclass(frozen=True)
-class Credentials:
-    email: str
-    apd_id: str
-    password: str
 
 
 # ------------------------------------------------------------------ validation
@@ -313,11 +305,6 @@ def session_for_token(db: DbSession, token: str | None) -> Session | None:
     if user is None or not user.is_active or user.pending:
         return None
     return row
-
-
-def user_for_token(db: DbSession, token: str | None) -> User | None:
-    row = session_for_token(db, token)
-    return row.user if row else None
 
 
 def touch(db: DbSession, row: Session, ip: str | None) -> None:

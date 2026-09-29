@@ -14,6 +14,8 @@ press **Build**, check the review screen, approve the run, then read the
 scorecard.
 
 For a longer, non-technical walkthrough, see [HOW-IT-WORKS.md](HOW-IT-WORKS.md).
+For how the code is built, component by component, see
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -101,6 +103,7 @@ hand-written ([components.jsx](frontend/src/components.jsx),
 scorecard-platform/
 ├── README.md                  ← this file
 ├── HOW-IT-WORKS.md            ← plain-English guide for the people using it
+├── ARCHITECTURE.md           ← how the code is built, component by component
 ├── backend/                   ← Python API + calculations
 │   ├── requirements.txt
 │   ├── pytest.ini
@@ -127,10 +130,11 @@ scorecard-platform/
 ### `backend/app/api/`: the HTTP layer
 | File | What's in it |
 |---|---|
-| [routes.py](backend/app/api/routes.py) | Weeks, uploads, runs, approve and unapprove, figures, tables, CSV export |
+| [week_routes.py](backend/app/api/week_routes.py) | Reports, weeks, uploads, deleting a week, the month's working days |
+| [run_routes.py](backend/app/api/run_routes.py) | Starting a build, the current scorecard, runs, approve and unapprove, figures, tables, Case AR, CSV export |
 | [auth_routes.py](backend/app/api/auth_routes.py) | Sign up, sign in, sign out, and your own profile (`/api/me`): name, password, sessions, recent activity |
 | [admin_routes.py](backend/app/api/admin_routes.py) | Admin only: accounts, the activity log, alerts |
-| [deps.py](backend/app/api/deps.py) | `signed_in`, `current_user` and `require_admin`: who may call what |
+| [deps.py](backend/app/api/deps.py) | `signed_in`, `current_user` and `require_admin`: who may call what; `valid_week` for week labels |
 
 ### `backend/app/service/`: the application logic
 | File | What's in it |
@@ -157,7 +161,7 @@ numbers can be tested against the old Excel pipeline.
 | [notes.py](backend/app/reports/notes.py) | The `Note` type: code, severity, message, numbers |
 | [cache.py](backend/app/reports/cache.py) | Parquet cache so a big Excel file is only parsed once |
 | `gfs/` | The GFS report: `readers.py` (files → tables), `pipeline.py` (the steps in order), `core/` (each calculation), `rules.yml` (business rules) |
-| `all_providers/` | The All Providers report, same layout, plus `layout.py`, which reads last week's workbook to find the KPI rows |
+| `all_providers/` | The All Providers report, same layout, plus `workbook.py`, which reads last week's workbook to find the KPI rows |
 
 Inside each `core/` folder:
 
@@ -191,6 +195,9 @@ Inside each `core/` folder:
 | `settlement.jsx`, `collections.jsx`, `delta.jsx`, `kpi.jsx` | One file per dashboard tab |
 | `*-model.js` | Pure functions that pivot API rows into the sheet's shape (tested in `*.test.mjs`) |
 | `components.jsx`, `ui.jsx`, `columns.js`, `format.js` | Shared table, card, tile and number formatting |
+| `hooks.js` | `useLoad` (fetch, cancel stale answers, reload) and `useDismiss` |
+| `buttons.jsx`, `icons.jsx` | Every button and icon |
+| `reports.js`, `activity-period.js` | Report names; the day/week/month ranges for deleting activity |
 
 ---
 

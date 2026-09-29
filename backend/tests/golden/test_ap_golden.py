@@ -17,10 +17,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 import yaml
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.db.models import Base
 from app.reports import get
 from app.reports.cache import ParquetCache
 from app.reports.locate import locate_dirs

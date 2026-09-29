@@ -47,10 +47,6 @@ class GfsSources:
     notes: list[Note] = field(default_factory=list)
 
     @property
-    def total_rows(self) -> int:
-        return sum(r.rows for r in self.reads)
-
-    @property
     def seconds(self) -> float:
         return sum(r.seconds for r in self.reads)
 

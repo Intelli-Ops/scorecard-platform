@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useDismiss } from "./hooks";
 import { TrashIcon } from "./icons";
 
 /* Every button in the app is one of these.
@@ -45,29 +46,6 @@ export function LinkButton({ to, tone, size, solid, icon, children, className })
       {icon}{children}
     </Link>
   );
-}
-
-/* Closing something - a confirmation, a pending choice - when the person
-   clicks anywhere else or presses Escape. The way a macOS popover goes away:
-   no timer that takes it back while they are still reading it. */
-export function useDismiss(active, onDismiss) {
-  const ref = useRef(null);
-  const latest = useRef(onDismiss);
-  useEffect(() => { latest.current = onDismiss; });
-  useEffect(() => {
-    if (!active) return;
-    const away = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) latest.current();
-    };
-    const esc = (e) => e.key === "Escape" && latest.current();
-    document.addEventListener("mousedown", away);
-    document.addEventListener("keydown", esc);
-    return () => {
-      document.removeEventListener("mousedown", away);
-      document.removeEventListener("keydown", esc);
-    };
-  }, [active]);
-  return ref;
 }
 
 /* The question itself: a red "Confirm …" and a Cancel beside it. Everything

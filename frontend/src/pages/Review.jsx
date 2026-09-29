@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, count, when } from "../api";
-import { Card, ErrorBox, Loading, Notes, Status, Tile } from "../components";
+import { Card, ErrorBox, Loading, Notes, Stat, Status } from "../components";
 import { Button, LinkButton } from "../buttons";
 import { CheckIcon } from "../icons";
 
@@ -28,7 +28,7 @@ export default function Review() {
         if (["pending", "running"].includes(d.run.status)) {
           timer = setTimeout(tick, 1500);
         }
-      } catch (e) { alive && setError(e); }
+      } catch (e) { if (alive) setError(e); }
     };
     tick();
     return () => { alive = false; clearTimeout(timer); };
@@ -135,13 +135,13 @@ export default function Review() {
       <ErrorBox error={actionError} />
 
       <div className="grid cols-4" style={{ marginBottom: 26 }}>
-        <Tile label="Needs attention" value={data.needs_attention ? "Yes" : "No"}
+        <Stat label="Needs attention" value={data.needs_attention ? "Yes" : "No"}
               foot={data.needs_attention ? "check the items below" : "nothing new or blocking"} />
-        <Tile label="New providers" value={count(open(providers))}
+        <Stat label="New providers" value={count(open(providers))}
               foot={open(providers) ? "check where their figures landed" : "none this week"} />
-        <Tile label="No data" value={count(open(noData))}
+        <Stat label="No data" value={count(open(noData))}
               foot={open(noData) ? "figures with nothing behind them" : "every figure had data"} />
-        <Tile label="Duplicate case IDs" value={count(duplicates.reduce(
+        <Stat label="Duplicate case IDs" value={count(duplicates.reduce(
                 (s, n) => s + (n.change === "resolved since last week" ? 0 : n.detail?.count ?? 0), 0))}
               foot="in Delta Comparison" />
       </div>

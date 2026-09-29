@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.db import session as db_session
-from tests.accounts import account, make_account, sign_in
+from tests.accounts import sign_in
 
 GOOD = {"email": "ali.asghar@appedology.com", "apd_id": "APD-1234",
         "password": "correct horse battery"}

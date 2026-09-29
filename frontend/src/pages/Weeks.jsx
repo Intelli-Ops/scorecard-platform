@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, bytes, when } from "../api";
 import { useAuth } from "../auth";
@@ -7,6 +7,7 @@ import { Card, DataTable, ErrorBox, Loading, Picker }
   from "../components";
 import { Button, DeleteButton } from "../buttons";
 import { REPORT_OPTIONS } from "../reports";
+import { useLoad } from "../hooks";
 
 /* Uploading a week.
 
@@ -32,32 +33,30 @@ export default function Weeks() {
   const nav = useNavigate();
   const { user } = useAuth();
   const [week, setWeek] = useState(isoWeek());
-  const [weeks, setWeeks] = useState([]);
-  const [status, setStatus] = useState(null);
   const [forReport, setForReport] = useState("");
   const [progress, setProgress] = useState(null);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
   const [over, setOver] = useState(false);
   const [building, setBuilding] = useState(null);
   const fileInput = useRef();
   const validWeek = WEEK_RE.test(week);
 
-  useEffect(() => {
-    let alive = true;
-    setStatus(null);
-    setError(null);
-    setResult(null);
-    if (!WEEK_RE.test(week)) return () => { alive = false; };
-    (async () => {
-      try {
-        const [w, s] = await Promise.all([api.weeks(), api.week(week)]);
-        if (!alive) return;
-        setWeeks(w); setStatus(s);
-      } catch (e) { alive && setError(e); }
-    })();
-    return () => { alive = false; };
-  }, [week]);
+  /* The weeks with uploads, for the "earlier weeks" list - fetched once and
+     again after an upload or a deletion changes it - and the chosen week's
+     files, fetched whenever the week changes. */
+  const weeksLoad = useLoad(api.weeks, []);
+  const statusLoad = useLoad(
+    () => (validWeek ? api.week(week) : Promise.resolve(null)), [week]);
+  const weeks = weeksLoad.data ?? [];
+  const status = statusLoad.data;
+
+  /* What the last upload received, and the last thing that went wrong. Each
+     is kept with the week it happened in, so choosing another week clears
+     them without a reset of its own. */
+  const [result, setResult] = useState(null);
+  const [failure, setFailure] = useState(null);
+  const setError = (e) => setFailure(e ? { week, error: e } : null);
+  const error = (failure?.week === week ? failure.error : null)
+    ?? statusLoad.error ?? weeksLoad.error;
 
   async function send(files) {
     if (!files?.length || !validWeek) return;
@@ -67,8 +66,9 @@ export default function Weeks() {
         forReport: forReport || undefined,
         onProgress: setProgress,
       });
-      setResult(r); setStatus(r.status);
-      setWeeks(await api.weeks());
+      setResult(r);
+      statusLoad.setData(r.status);
+      await weeksLoad.reload();
     } catch (e) { setError(e); }
     finally { setProgress(null); }
   }
@@ -95,8 +95,8 @@ export default function Weeks() {
       setError(null);
       await api.deleteWeek(week);
       setResult(null);
-      setWeeks(await api.weeks());
-      setStatus(await api.week(week));      // now an empty week, not a stale one
+      // Now an empty week, not a stale one.
+      await Promise.all([weeksLoad.reload(), statusLoad.reload()]);
     } catch (e) { setError(e); }
   }
 
@@ -187,10 +187,10 @@ export default function Weeks() {
 
         {/* The month's working days, set along with the week's files: the
             pace figures of every build this month are projected on it. */}
-        {validWeek && <WorkingDays week={week} />}
+        {validWeek && <WorkingDays key={week} week={week} />}
       </Card>
 
-      {result && (
+      {result?.week === week && (
         <Card flush title="What was received"
               sub={`${result.accepted.length} accepted, ${result.rejected.length} ignored`}>
           <DataTable

@@ -39,10 +39,6 @@ class CollectionReport:
     def add(self, label: str, n: int) -> None:
         self.stages.append((label, n))
 
-    def show(self) -> str:
-        w = max(len(s) for s, _ in self.stages) + 2
-        return "\n".join(f"  {s:<{w}} {n:>9,}" for s, n in self.stages)
-
 
 def build_collections(payments: pl.DataFrame,
                       provider_list: pl.DataFrame,

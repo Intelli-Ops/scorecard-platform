@@ -99,12 +99,6 @@ class Period:
     def pace_divisor(self, week_index: int) -> int:
         return max(1, min(self.elapsed(week_index), self.business_days))
 
-    def pace_formula(self, cells: list[str], week_index: int) -> str:
-        """e.g. =SUM(J9,K9)/8*21 - month-to-date over the working days elapsed, times
-        the month's working days. At month end the two are equal: pace = actual."""
-        return (f"=SUM({','.join(cells)})/{self.pace_divisor(week_index)}"
-                f"*{self.business_days}")
-
 
 def reporting_period(week: str, holidays: list | None,
                      entered: dict | None = None) -> Period:
