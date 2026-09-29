@@ -298,8 +298,10 @@ filtered and downloaded as CSV.
 
 | Key | File (name must contain) | Used for |
 |---|---|---|
-| `delta_wc` | `delta wc` | WC settlements → Delta, Settlement |
-| `delta_mlcr` | `delta mlcr` | Med-Legal and IMR settlements → Delta, Settlement |
+| `delta_wc` | `delta wc`, but not `comment` | WC settlements → Delta, Settlement |
+| `delta_mlcr` | `delta mlcr`, but not `comment` | Med-Legal and IMR settlements → Delta, Settlement |
+| `delta_wc_comments` | `delta wc` + `comment` | GFS only, Tuesday (optional): Ongoing DOR Status and Details for the WC Delta rows |
+| `delta_mlcr_comments` | `delta mlcr` + `comment` | GFS only, Tuesday (optional): Ongoing DOR Status and Details for the Med-Legal rows |
 | `payment_detail` | `payment detail` | Collections |
 | `supporting` | `supporting file` | Provider List: provider → group |
 | `hearing_calendar` | `hearing calendar` | CP Settled Cases |
@@ -308,6 +310,25 @@ filtered and downloaded as CSV.
 | `owner_case_ar` | `combined owner case ar` | Raw Data, Case AR, and the list of GFS cases |
 | `custom_case_ar` | `combined custom` + `case ar` | Closing Order, Case Validity, File Status lookups |
 | `template` | `provider` + `score` (.xlsx) | All Providers only: last week's workbook, read for its KPI rows |
+
+### Tuesday's "- comments" Delta copies
+On Tuesday the litigation team sends copies of the two Delta workbooks named
+like the originals with **"- comments"** on the end, for example
+`Delta WC 09.28.2026 - comments.xlsb`. Their last two columns, **Ongoing DOR
+Status** and **Ongoing DOR Details**, are added to GFS's Delta raw data
+(`delta_comparison`), looked up by **Case Id**:
+
+- WC Delta rows look only in the WC comments copy's **WC Delta** sheet, and
+  Med-Legal rows only in the MLCR copy's **Med-Legal Delta** sheet.
+- IMR rows are never looked up, because that sheet of the comments copy has no
+  such columns.
+- A case id listed twice takes its first row, as the VLOOKUP did.
+
+Without the files, both columns are there but blank. They are never carried
+over from last week, and the review says which comments copy is missing. A file
+whose name holds "comment" is never read as Delta data: those copies sort
+before the originals, and the whole report would otherwise be built from them.
+Settings: `delta.comments` in `backend/app/reports/gfs/rules.yml`.
 
 ---
 

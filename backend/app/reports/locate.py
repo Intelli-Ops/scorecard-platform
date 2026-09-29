@@ -56,7 +56,8 @@ class SourceSet:
 def _matches(spec: SourceFile, path: Path) -> bool:
     name = path.name.lower()
     return (path.suffix.lower() in spec.exts
-            and all(f.lower() in name for f in spec.fragments))
+            and all(f.lower() in name for f in spec.fragments)
+            and not any(x.lower() in name for x in spec.excludes))
 
 
 def locate(report: ReportType, paths: list[Path]) -> SourceSet:

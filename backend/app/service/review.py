@@ -52,6 +52,7 @@ SECTIONS = {
     "kpi_columns_not_found": "no_data", "kpi_numbers_not_supplied": "no_data",
     "collections_empty": "no_data",
     "delta_duplicate_case_ids": "duplicates",
+    "delta_comments_missing": "no_data",
 }
 
 

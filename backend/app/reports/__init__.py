@@ -40,20 +40,28 @@ class SourceFile:
 
     Matching is carried over from the .bat pipelines: case-insensitive, and
     every fragment must appear somewhere in the name. So a trailing date is
-    fine and nobody has to rename files by hand.
+    fine and nobody has to rename files by hand. `excludes` are fragments the
+    name must NOT hold - how "Delta WC 09.28.2026.xlsb" is told apart from
+    "Delta WC 09.28.2026 - comments.xlsb".
     """
     key: str
     fragments: tuple[str, ...]
     exts: tuple[str, ...] = (".xlsx", ".xlsb")
     label: str = ""
     required: bool = True
+    excludes: tuple[str, ...] = ()
 
+
+# The litigation team's copies of the two Delta workbooks are named like the
+# originals with "- comments" on the end. They are NOT the Delta data - see
+# COMMENT_SOURCES - so the plain Delta match refuses any name holding this.
+COMMENTS = "comment"
 
 # Uploaded once per week. Both reports read these same files.
 SHARED_SOURCES: tuple[SourceFile, ...] = (
-    SourceFile("delta_wc", ("delta wc",),
+    SourceFile("delta_wc", ("delta wc",), excludes=(COMMENTS,),
                label="Master Settlement & Collection Delta WC"),
-    SourceFile("delta_mlcr", ("delta mlcr",),
+    SourceFile("delta_mlcr", ("delta mlcr",), excludes=(COMMENTS,),
                label="Master Settlement & Collection Delta MLCR"),
     SourceFile("payment_detail", ("payment detail",),
                label="Payment Detail Report"),
@@ -80,6 +88,19 @@ SHARED_SOURCES: tuple[SourceFile, ...] = (
 TEMPLATE_SOURCE = SourceFile(
     "template", ("provider", "score"), exts=(".xlsx",),
     label="Last week's All Providers workbook (for the KPI layout)")
+
+
+# GFS only, and only on Tuesday: the "- comments" copies of the two Delta
+# workbooks, whose last two columns - Ongoing DOR Status and Ongoing DOR
+# Details - are looked up onto the Delta Comparison rows by Case ID (see
+# delta.comments in gfs/rules.yml). Optional: without them the two columns
+# are left blank and the review says so.
+COMMENT_SOURCES: tuple[SourceFile, ...] = (
+    SourceFile("delta_wc_comments", ("delta wc", COMMENTS), required=False,
+               label="Delta WC - comments (Ongoing DOR)"),
+    SourceFile("delta_mlcr_comments", ("delta mlcr", COMMENTS), required=False,
+               label="Delta MLCR - comments (Ongoing DOR)"),
+)
 
 
 # Uploaded once PER REPORT, because each report uses its own day's copy.
@@ -120,6 +141,7 @@ REPORTS: dict[str, ReportType] = {
         rules_path=HERE / "gfs" / "rules.yml",
         sheets=("Settlement High-Level", "Collection High-Level",
                 "Delta Comparison", "KPI High-Level", "Case AR", "Raw Data"),
+        extra_sources=COMMENT_SOURCES,
     ),
     "all_providers": ReportType(
         key="all_providers",

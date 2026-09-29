@@ -132,3 +132,31 @@ def test_stored_bytes_can_be_proved_unchanged(store, tmp_path):
     """The hash is the upload check: same address means the same bytes."""
     stored = store.put(make(tmp_path, "Supporting File.xlsx", b"payload"))
     assert store.verify(stored.sha256, ".xlsx")
+
+
+def test_the_tuesday_comments_copies_are_not_taken_for_the_delta_data(tmp_path):
+    """"Delta WC 09.28.2026 - comments.xlsb" holds every fragment of the Delta
+    WC match. Taken for it, every settlement figure would be built from the
+    litigation team's copy."""
+    cases = {
+        "Master Settlement & Collection Delta WC 09.28.2026.xlsb": "delta_wc",
+        "Master Settlement & Collection Delta WC 09.28.2026 - comments.xlsb":
+            "delta_wc_comments",
+        "Master Settlement & Collection Delta MLCR 09.28.2026.xlsb": "delta_mlcr",
+        "Master Settlement & Collection Delta MLCR 09.28.2026 - Comments.xlsb":
+            "delta_mlcr_comments",
+    }
+    for name, expected in cases.items():
+        assert classify(make(tmp_path, name)).key == expected, name
+
+
+def test_the_comments_copies_feed_gfs_only_and_are_optional(db, store, tmp_path):
+    names = ["Delta WC 09.28.2026.xlsb", "Delta WC 09.28.2026 - comments.xlsb"]
+    ingest(db, store, WEEK, [make(tmp_path, n, n.encode()) for n in names])
+    gfs = latest_uploads(db, get("gfs"), WEEK)
+    ap = latest_uploads(db, get("all_providers"), WEEK)
+    assert gfs["delta_wc"].filename == names[0]
+    assert gfs["delta_wc_comments"].filename == names[1]
+    assert ap["delta_wc"].filename == names[0] and "delta_wc_comments" not in ap
+    st = week_status(db, WEEK)["reports"]["gfs"]
+    assert not any("comments" in m for m in st["missing"])

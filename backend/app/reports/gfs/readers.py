@@ -40,6 +40,9 @@ class GfsSources:
     hearing_noi: pl.DataFrame         # CP Settled Cases
     sql_doc: pl.DataFrame             # KPI: SBR and DDE
     scorecard: pl.DataFrame | None    # KPI numbers - may legitimately be absent
+    # Tuesday's "- comments" Delta copies: Delta source sheet -> the Case Id and
+    # Ongoing DOR columns of its own sheet. Empty when they were not uploaded.
+    delta_comments: dict[str, pl.DataFrame] = field(default_factory=dict)
     reads: list[FileRead] = field(default_factory=list)
     notes: list[Note] = field(default_factory=list)
 
@@ -105,6 +108,23 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
                 s, header_row=0, use_columns=c).to_polars(),
             source_key=f"delta_{spec['workbook']}")
 
+    # --- Tuesday: the "- comments" copies, for Ongoing DOR ---------------
+    # Optional. Only the key and the two comment columns are read, from each
+    # Delta sheet's OWN sheet of its comments workbook (rules.yml
+    # delta.comments). Missing is not a failure: the columns stay blank and
+    # the review says so.
+    ccfg = rules["delta"].get("comments") or {}
+    delta_comments: dict[str, pl.DataFrame] = {}
+    for src_sheet, (book, in_sheet) in (ccfg.get("sheets") or {}).items():
+        path = sources.optional(f"delta_{book}_comments")
+        if path is None:
+            continue
+        delta_comments[src_sheet] = timed(
+            f"delta_{book}_comments", f"{in_sheet} (comments)", path,
+            lambda p=path, s=in_sheet: fastexcel.read_excel(str(p)).load_sheet(
+                s, header_row=0,
+                use_columns=[ccfg["key"], *ccfg["columns"]]).to_polars())
+
     # --- payments, hearing calendar, SQL doc -----------------------------
     pay_path = sources.path("payment_detail")
     payments = timed("payment_detail", "Payment Detail Report", pay_path,
@@ -144,4 +164,5 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
     return GfsSources(owner_ar=owner_ar, custom_ar=custom_ar, gfs_cases=gfs_cases,
                       providers=providers, delta_sheets=delta_sheets,
                       payments=payments, hearing_noi=hearing_noi, sql_doc=sql_doc,
-                      scorecard=scorecard, reads=reads, notes=notes)
+                      scorecard=scorecard, delta_comments=delta_comments,
+                      reads=reads, notes=notes)

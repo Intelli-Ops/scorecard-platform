@@ -31,6 +31,10 @@ class DeltaReport:
     partial_paid_rewritten: int = 0
     per_sheet: dict[str, int] = field(default_factory=dict)
     duplicate_case_ids: int = 0
+    # Tuesday's "- comments" lookups: rows in each comments sheet, and
+    # (matched, of) Delta Comparison rows per source sheet.
+    comment_rows: dict[str, int] = field(default_factory=dict)
+    comments_found: dict[str, tuple[int, int]] = field(default_factory=dict)
 
     def add(self, label: str, n: int) -> None:
         self.stages.append((label, n))
@@ -154,3 +158,49 @@ def build_delta(comb: pl.DataFrame,
 
     rep.duplicate_case_ids = d.height - d["Case_ID"].n_unique()
     return d, rep
+
+
+def attach_comments(d: pl.DataFrame, comments: dict[str, pl.DataFrame],
+                    rules: dict, rep: DeltaReport) -> pl.DataFrame:
+    """Tuesday: the litigation team's Ongoing DOR Status / Details, by Case ID.
+
+    `comments` maps a Delta source sheet ("WC Delta") to that sheet of the
+    "- comments" workbook. Each Delta Comparison row is looked up only in the
+    sheet of its OWN source - WC rows in WC, Med-Legal rows in Med-Legal - so
+    a case listed on both never picks up the other sheet's comment. IMR rows
+    stay blank: that sheet of the comments copy has no such columns. A case id
+    listed twice takes its first row, which is what the VLOOKUP did.
+
+    With no comments files the columns are still added, empty: the sheet
+    always has them, and last week's values are never carried forward.
+    """
+    c = rules["delta"].get("comments") or {}
+    cols = list(c.get("columns") or [])
+    if not cols:
+        return d
+    out = d.with_columns([pl.lit(None, dtype=pl.Utf8).alias(x) for x in cols])
+    if not comments:
+        return out
+    key = c.get("key", "Case Id")
+    parts = []
+    for sheet, df in comments.items():
+        missing = [x for x in (key, *cols) if x not in df.columns]
+        if missing:
+            raise KeyError(f"[{sheet} comments] missing expected column(s): {missing}")
+        part = (df.select([_i64(key).alias("Case_ID"),
+                           *[pl.col(x).cast(pl.Utf8) for x in cols]])
+                  .drop_nulls("Case_ID")
+                  .unique(subset=["Case_ID"], keep="first", maintain_order=True)
+                  .with_columns(pl.lit(sheet).alias("_source_sheet"),
+                                pl.lit(True).alias("_commented")))
+        rep.comment_rows[sheet] = part.height
+        parts.append(part)
+    out = (out.drop(cols)
+              .join(pl.concat(parts, how="vertical_relaxed"),
+                    on=["Case_ID", "_source_sheet"], how="left", maintain_order="left"))
+    # Matched means the case id was FOUND - a found case whose comment cells
+    # are empty still matched.
+    for sheet in d["_source_sheet"].unique(maintain_order=True).to_list():
+        rows = out.filter(pl.col("_source_sheet") == sheet)
+        rep.comments_found[sheet] = (int(rows["_commented"].sum() or 0), rows.height)
+    return out.drop("_commented")

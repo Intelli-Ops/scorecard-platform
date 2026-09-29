@@ -139,6 +139,24 @@ delta:   # Phases 4 and 6 -> the Delta Comparison sheet
         File_Status: New File Status
         Settlement_Type: Settlement Type
 
+  # TUESDAY - the "- comments" copies of the two Delta workbooks carry the litigation
+  # team's Ongoing DOR Status and Ongoing DOR Details in their last two columns. They
+  # are looked up onto the Delta Comparison rows BY CASE ID, each sheet only from its
+  # own sheet of the comments copy: WC Delta rows from the WC workbook's WC Delta,
+  # Med-Legal rows from the MLCR workbook's Med-Legal Delta. IMR IS NOT LOOKED UP -
+  # the comments copy's IMR Delta sheet does not carry the two columns. A case id
+  # listed twice takes its first row, as the VLOOKUP did.
+  #
+  # Uploaded as "Delta WC ... - comments" and "Delta MLCR ... - comments" (see
+  # COMMENT_SOURCES in reports/__init__.py). Without them the two columns are left
+  # BLANK and the review says so; they are never carried over from last week.
+  comments:
+    key: Case Id
+    columns: [Ongoing DOR Status, Ongoing DOR Details]
+    sheets:                      # delta source sheet -> [workbook, sheet in it]
+      WC Delta:        [wc, WC Delta]
+      Med-Legal Delta: [mlcr, Med-Legal Delta]
+
   # PHASE 4 - which Settlement Type values count, per source sheet. A sheet not listed
   # counts every type. Applied right after the three sheets are combined, so it holds
   # for EVERYTHING built from the Delta data: the Delta Comparison sheet and the

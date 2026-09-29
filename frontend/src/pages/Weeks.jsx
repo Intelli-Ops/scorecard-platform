@@ -106,7 +106,9 @@ export default function Weeks() {
         <h1>Upload a week</h1>
         <div className="sub">
           Seven files are shared between the reports. The two Case ARs belong to
-          one report each.
+          one report each. On Tuesday, add the two Delta &ldquo;- comments&rdquo;
+          copies too: they fill Ongoing DOR Status and Details in GFS&apos;s Delta
+          raw data.
         </div>
       </div>
 

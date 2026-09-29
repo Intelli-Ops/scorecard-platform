@@ -21,10 +21,10 @@ import polars as pl
 
 from .core.case_ar import build_raw_data, build_case_ar
 from .core.collections import build_collections
-from .core.delta import combine_delta, build_delta
+from .core.delta import attach_comments, combine_delta, build_delta
 from .core.kpi import build_kpi_sql, build_kpi_scorecard
 from .core.settlement import settlement_grids, cp_settled
-from ..notes import Note, sort_notes
+from ..notes import Note, info, sort_notes, warning
 from ..pacing import pace_grid
 from ..period import reporting_period, week_index_expr
 from ..review_notes import add_new_providers, review_notes, week_label
@@ -73,6 +73,31 @@ class RunResult:
                 "collections": self.collections}
 
 
+def comment_notes(drep, rules: dict) -> list[Note]:
+    """What the review says about Tuesday's Ongoing DOR lookups: how many of
+    each sheet's rows found their case in the comments copy, or that a
+    comments file was not uploaded and its rows are blank."""
+    out: list[Note] = []
+    sheets = (rules["delta"].get("comments") or {}).get("sheets") or {}
+    for sheet in sheets:
+        if sheet not in drep.comment_rows:
+            out.append(warning(
+                "delta_comments_missing",
+                f"No '- comments' copy for {sheet} was uploaded - its Ongoing DOR "
+                f"Status and Details are blank (the files arrive on Tuesday)",
+                block=sheet))
+            continue
+        got, total = drep.comments_found.get(sheet, (0, 0))
+        make = info if got == total else warning
+        out.append(make(
+            "delta_comments_matched",
+            f"Ongoing DOR for {sheet}: {got:,} of {total:,} Delta Comparison "
+            f"row(s) found their case id in the comments copy",
+            block=sheet, matched=got, rows=total,
+            unmatched=total - got))
+    return out
+
+
 def run(src: GfsSources, rules: dict, as_of: dt.date | None = None,
         week: str | None = None) -> RunResult:
     """`week` is the label being reported, e.g. 2026-W37. It decides the month
@@ -90,6 +115,8 @@ def run(src: GfsSources, rules: dict, as_of: dt.date | None = None,
     comb, drep = combine_delta(src.delta_sheets, rules)
     delta, drep = build_delta(comb, src.gfs_cases, src.providers, src.custom_ar,
                               rules, as_of=as_of, rep=drep)
+    # Tuesday's Ongoing DOR Status / Details, by Case ID - blank without them.
+    delta = attach_comments(delta, src.delta_comments, rules, drep)
 
     # The sheet's week blocks belong to one month; a payment report pulled
     # across a month end must not spill into them.
@@ -123,6 +150,7 @@ def run(src: GfsSources, rules: dict, as_of: dt.date | None = None,
     notes: list[Note] = [n for n in src.notes if n.code == "kpi_numbers_not_supplied"]
     notes += review_notes(drep, krep, added, delta, grids, coll, kpi, period,
                           GROUPS, has_scorecard=src.scorecard is not None)
+    notes += comment_notes(drep, rules)
 
     return RunResult(
         raw_data=raw, case_ar=case_ar, delta_comparison=delta, collections=coll,
