@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, device, stamp, when } from "../api";
 import { useAuth } from "../auth";
-import { Card, DataTable, ErrorBox, Loading, Outcome } from "../components";
+import { Card, DataTable, ErrorBox, Loading, Outcome, PasswordInput } from "../components";
 import { Button } from "../buttons";
 import { LeaveIcon } from "../icons";
 
@@ -45,20 +45,20 @@ export function PasswordForm({ onDone, temporary = false }) {
         <label htmlFor="pw-current">
           {temporary ? "Temporary password" : "Current password"}
         </label>
-        <input id="pw-current" type="password" required
+        <PasswordInput id="pw-current" required
                autoComplete="current-password" value={current}
                onChange={(e) => setCurrent(e.target.value)} />
       </div>
       <div className="field">
         <label htmlFor="pw-new">New password</label>
-        <input id="pw-new" type="password" required minLength={8}
+        <PasswordInput id="pw-new" required minLength={8}
                autoComplete="new-password" value={next}
                onChange={(e) => setNext(e.target.value)} />
         <div className="hint">At least 8 characters</div>
       </div>
       <div className="field">
         <label htmlFor="pw-again">New password again</label>
-        <input id="pw-again" type="password" required
+        <PasswordInput id="pw-again" required
                autoComplete="new-password" value={again}
                onChange={(e) => setAgain(e.target.value)} />
       </div>

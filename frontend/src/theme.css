@@ -400,6 +400,27 @@ select, input[type="text"], input[type="email"], input[type="password"] {
   font: inherit; padding: 8px 11px; border-radius: var(--r-sm);
   border: 1px solid var(--line-2); background: var(--surface); color: var(--text);
 }
+
+/* A password box with its eye sitting inside the right edge. */
+.password { position: relative; display: block; }
+.password input { width: 100%; padding-right: 40px; box-sizing: border-box; }
+.password .eye {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  display: grid; place-items: center; width: 32px; height: 30px;
+  border: 0; border-radius: 7px; background: none; color: var(--text-3);
+  transition: color .15s ease, background .15s ease;
+}
+.password .eye:hover { color: var(--teal); background: rgba(14, 59, 53, .06); }
+.password .eye:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+.password .eye .icon { width: 16px; height: 16px; }
+
+/* The Caps Lock note, under the box it concerns. */
+.caps {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 6px;
+  padding: 3px 9px; border-radius: 7px; font-size: 12px; font-weight: 600;
+  background: rgba(192, 138, 46, .12); color: #8A5F16;
+  animation: pop .22s var(--ease) both;
+}
 input:focus, select:focus {
   outline: 3px solid var(--green-soft); border-color: var(--green); }
 label { color: var(--text-2); font-size: 13px; }

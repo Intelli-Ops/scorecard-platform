@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "../auth";
 import { Button } from "../buttons";
+import { PasswordInput } from "../components";
 
 /* Sign in and sign up, on one screen.
 
@@ -88,7 +89,7 @@ export default function SignIn() {
 
           <div className="field">
             <label htmlFor="password">Password</label>
-            <input id="password" type="password" required
+            <PasswordInput id="password" required
                    autoComplete={joining ? "new-password" : "current-password"}
                    value={password} onChange={(e) => setPassword(e.target.value)} />
             {joining && <div className="hint">At least 8 characters</div>}

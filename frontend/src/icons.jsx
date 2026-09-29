@@ -65,6 +65,31 @@ export const UnlockIcon = () => (
   </Icon>
 );
 
+/* An open eye - show the password. */
+export const EyeIcon = () => (
+  <Icon>
+    <path d="M1.5 7S3.6 3 7 3s5.5 4 5.5 4-2.1 4-5.5 4S1.5 7 1.5 7Z" {...S} />
+    <circle cx="7" cy="7" r="1.8" {...S} />
+  </Icon>
+);
+
+/* The eye struck through - hide it again. */
+export const EyeOffIcon = () => (
+  <Icon>
+    <path d="M1.5 7S3.6 3 7 3s5.5 4 5.5 4-2.1 4-5.5 4S1.5 7 1.5 7Z" {...S} />
+    <circle cx="7" cy="7" r="1.8" {...S} />
+    <path d="M2.5 11.5l9-9" {...S} />
+  </Icon>
+);
+
+/* An arrow up over a bar - Caps Lock. */
+export const CapsIcon = () => (
+  <Icon>
+    <path d="M7 2.5 11 7H8.8v2.2H5.2V7H3Z" {...S} />
+    <path d="M5.2 11.5h3.6" {...S} />
+  </Icon>
+);
+
 /* An arrow into a tray - saving a file. */
 export const DownloadIcon = () => (
   <Icon>

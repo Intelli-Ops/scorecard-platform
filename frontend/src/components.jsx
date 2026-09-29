@@ -1,4 +1,33 @@
 import { useLayoutEffect, useRef, useState } from "react";
+import { CapsIcon, EyeIcon, EyeOffIcon } from "./icons";
+
+/* Every password box in the app: an eye to show or hide what was typed, and
+   a note when Caps Lock is on - the two reasons a right password is refused.
+   Takes the same props as an <input>. */
+export function PasswordInput({ onKeyDown, onKeyUp, onBlur, ...props }) {
+  const [shown, setShown] = useState(false);
+  const [caps, setCaps] = useState(false);
+  const check = (e) => setCaps(Boolean(e.getModifierState?.("CapsLock")));
+  return (
+    <>
+      <span className="password">
+        <input {...props} type={shown ? "text" : "password"}
+               onKeyDown={(e) => { check(e); onKeyDown?.(e); }}
+               onKeyUp={(e) => { check(e); onKeyUp?.(e); }}
+               onMouseDown={check}
+               onBlur={(e) => { setCaps(false); onBlur?.(e); }} />
+        <button type="button" className="eye" onClick={() => setShown((s) => !s)}
+                aria-label={shown ? "Hide password" : "Show password"}
+                aria-pressed={shown} title={shown ? "Hide password" : "Show password"}>
+          {shown ? <EyeOffIcon /> : <EyeIcon />}
+        </button>
+      </span>
+      {caps && (
+        <div className="caps" role="status"><CapsIcon /> Caps Lock is on</div>
+      )}
+    </>
+  );
+}
 
 export function Card({ title, sub, right, flush, children }) {
   if (!title && !right) return <section className="card">{children}</section>;
