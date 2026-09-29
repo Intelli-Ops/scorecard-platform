@@ -173,8 +173,11 @@ function cellClass(c) {
    Settlement Amount and Settlement % the way the workbook prints it. Without
    it the two columns read as unrelated, and a sheet with a pair per month
    becomes a wall of alternating headings. */
+/* `section(row)`, when it returns something, draws that row as one heading
+   across the whole table rather than as cells - a band that starts a section
+   (Case AR's Invalid and Valid). */
 export function DataTable({ columns, rows, empty = "Nothing to show",
-                            isTotal, rowClass, groupBy, spans }) {
+                            isTotal, rowClass, groupBy, spans, section }) {
   if (!rows?.length) return <div className="empty">{empty}</div>;
   return (
     <div className="scroll">
@@ -195,6 +198,15 @@ export function DataTable({ columns, rows, empty = "Nothing to show",
         </thead>
         <tbody>
           {rows.map((r, i) => {
+            const heading = section?.(r);
+            if (heading) {
+              return (
+                <tr key={`section-${i}`}
+                    className={["section", rowClass?.(r, i) ?? ""].filter(Boolean).join(" ")}>
+                  <td colSpan={columns.length}><div className="section-inner">{heading}</div></td>
+                </tr>
+              );
+            }
             const newGroup = groupBy && i > 0 && groupBy(r) !== groupBy(rows[i - 1]);
             const cls = [isTotal?.(r) ? "total" : "",
                          newGroup ? "group-start" : "",

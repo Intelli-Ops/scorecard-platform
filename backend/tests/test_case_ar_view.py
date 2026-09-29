@@ -43,6 +43,26 @@ def test_each_filter_narrows_the_pivot(rules):
     assert out["rows"][-1]["# Of Cases"] == 1
 
 
+def test_gfs_file_status_is_open_or_closed(rules):
+    """GFS's File status filter is FileStatus2, not the raw FileStatus."""
+    out = case_ar(raw(), rules, "gfs", {})
+    status = next(f for f in out["filters"] if f["key"] == "file_status")
+    assert status["values"] == ["Closed", "Open"]
+    out = case_ar(raw(), rules, "gfs", {"file_status": "Open"})
+    assert out["rows"][-1]["# Of Cases"] == 2
+
+
+def test_all_providers_filters_on_group_and_validity_only():
+    ap_rules = yaml.safe_load(get_report("all_providers").rules_path.read_text())
+    headers = ap_rules["case_ar"]["raw_data_headers"]
+    row = [1, "Dr A", 10, "Artheon", "WC", "CIC Pending", "Valid", "ACTIVE",
+           100.25, 10.0, 0.0, 0.0, 90.25]
+    ap_raw = pl.DataFrame([row], schema=headers, orient="row")
+    out = case_ar(ap_raw, ap_rules, "all_providers", {})
+    assert [f["key"] for f in out["filters"]] == ["group", "validity"]
+    assert out["rows"][-1]["File Status"] == "Grand Total"
+
+
 def test_nothing_matching_is_an_empty_table(rules):
     out = case_ar(raw(), rules, "gfs", {"group": "Nobody"})
     assert out["rows"] == [] and out["matched"] == 0

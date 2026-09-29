@@ -4,6 +4,7 @@ import { col } from "./columns";
 import { ErrorBox, Loading, Picker } from "./components";
 import { TableCard } from "./ui";
 import { Button } from "./buttons";
+import { GRAND_TOTAL, sectionCaseAr, sectionClass } from "./caseAr-model";
 
 /* The Case AR sheet, with the page filters its Excel pivot carries: Group,
    File status and Validity. Each change asks the server for the pivot again,
@@ -12,7 +13,6 @@ import { Button } from "./buttons";
    what the filters leave. */
 
 const ALL = "(All)";
-const GRAND_TOTAL = "Grand Total";
 const isCount = (c) => /cases/i.test(c);
 
 export default function CaseAr({ runId }) {
@@ -29,13 +29,28 @@ export default function CaseAr({ runId }) {
     return () => { alive = false; };
   }, [runId, chosen]);
 
-  const columns = useMemo(() => (data?.columns ?? []).map((c, i) => {
+  const table = useMemo(() => (data ? sectionCaseAr(data) : null), [data]);
+
+  const columns = useMemo(() => (table?.columns ?? []).map((c, i) => {
     const kind = data.kinds[c];
     if (kind === "text") {
-      return i === 0 ? col.label(c, c, { className: "sticky" }) : col.text(c, c);
+      return i === 0 ? col.label(c, c, { className: "sticky full" }) : col.text(c, c);
     }
     return kind === "int" || isCount(c) ? col.count(c, c) : col.money(c, c);
-  }), [data]);
+  }), [table, data]);
+
+  /* A section's heading: its name, and how many cases and closing orders
+     sit under it, read off its subtotal. */
+  const cases = (table?.columns ?? []).find(isCount);
+  const heading = (r) => r._kind === "section" && (
+    <>
+      <span className="section-name">{r._section}</span>
+      <span className="section-meta">
+        {cases && `${count(r._totals[cases])} cases · `}
+        {count(table.rows.filter((x) => x._section === r._section && !x._kind).length)} closing orders
+      </span>
+    </>
+  );
 
   const active = Object.entries(chosen).filter(([, v]) => v);
   const set = (key, value) =>
@@ -72,8 +87,11 @@ export default function CaseAr({ runId }) {
           ? active.map(([k, v]) => `${data.filters.find((f) => f.key === k)?.label} is ${v}`).join(" · ")
           : "Every case in Raw Data. Set a filter above to narrow it."}
         empty="No cases match these filters."
-        columns={columns} rows={data.rows}
-        isTotal={(r) => r[data.columns[0]] === GRAND_TOTAL} />
+        columns={columns} rows={table.rows}
+        section={heading}
+        rowClass={(r) => [r._section ? sectionClass(r._section) : "",
+                          r._kind === "subtotal" ? "subtotal" : ""].filter(Boolean).join(" ")}
+        isTotal={(r) => r._kind === "grand" || r[table.columns[0]] === GRAND_TOTAL} />
     </>
   );
 }

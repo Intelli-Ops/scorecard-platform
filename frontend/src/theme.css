@@ -31,6 +31,11 @@
   --total-col:   #F1F5F8;   /* a total column */
   --total-cross: #D8E3EB;   /* where the two meet: the grand total */
   --total-line:  #B9C9D4;
+  /* Case AR's Invalid section: violet, a category colour. Not red - an
+     invalid case is a kind of case, not an error or a warning. */
+  --invalid:      #6A4FA3;
+  --invalid-soft: #F2EEF9;
+  --invalid-edge: #D2C6EA;
 
   /* Ink */
   --text:        #12211F;
@@ -489,8 +494,8 @@ select.picker option {
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
 thead th {
-  text-align: left; padding: 10px 15px; color: var(--text-2);
-  font-weight: 600; font-size: 11.5px; white-space: nowrap;
+  text-align: left; padding: 10px 15px; color: var(--text);
+  font-weight: 700; font-size: 11.5px; white-space: nowrap;
   text-transform: uppercase; letter-spacing: .045em;
   background: var(--surface-2);
   border-bottom: 1px solid var(--line-2);
@@ -498,6 +503,9 @@ thead th {
   position: sticky; top: 0; z-index: 1;
 }
 thead th:last-child { border-right: 0; }
+/* Every heading bold, the label column's included: its `.strong` class is for
+   the cells under it and must not thin the heading out. */
+thead th.strong { font-weight: 700; }
 
 /* The grouped heading row - a month sitting over its amount and its per cent.
    Centred and rule-separated so the pair below reads as belonging to it, and
@@ -580,6 +588,53 @@ tr.total:hover td.total-col { background: var(--total-cross); }
    Drawn in the PAGE colour, so it reads as a gap in the table rather than as
    one more rule among the rules. A week is two rows, and without this the
    pair is not distinguishable from the pair above it. */
+/* Sections - Case AR's Invalid and Valid. Each opens with a heading band
+   across the table, a gap in the page colour before every one but the first,
+   and its rows carry the section's colour down their left edge, so which
+   half a row belongs to is plain without reading the heading again. */
+tbody tr.section td {
+  max-width: none; overflow: visible; padding: 14px 15px 9px;
+  border-right: 0; border-bottom: 1px solid var(--line-2);
+  background: var(--surface);
+}
+tbody tr.section:not(:first-child) td {
+  border-top: 12px solid var(--bg); box-shadow: inset 0 1px 0 var(--line-2);
+}
+.section-inner { position: sticky; left: 15px; display: inline-flex;
+                 align-items: center; gap: 10px; }
+.section-name {
+  font-size: 11.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+  padding: 3px 11px; border-radius: 999px;
+  background: var(--teal-soft); color: var(--teal);
+}
+.section-meta { font-size: 12.5px; color: var(--text-2); }
+
+tr.section.sec-invalid td { background: linear-gradient(90deg, var(--invalid-soft), var(--surface) 55%); }
+tr.section.sec-valid td   { background: linear-gradient(90deg, var(--green-soft), var(--surface) 55%); }
+tbody tr.section.sec-invalid:hover td { background: linear-gradient(90deg, var(--invalid-soft), var(--surface) 55%); }
+tbody tr.section.sec-valid:hover td   { background: linear-gradient(90deg, var(--green-soft), var(--surface) 55%); }
+.sec-invalid .section-name { background: var(--invalid-soft); color: var(--invalid); }
+.sec-valid .section-name   { background: var(--green-soft); color: var(--green-hi); }
+
+tr.sec-invalid td:first-child { box-shadow: inset 3px 0 0 var(--invalid-edge); }
+tr.sec-valid td:first-child   { box-shadow: inset 3px 0 0 var(--green-line); }
+
+/* A section's own total: bold, on its section's tint - lighter than the
+   Grand Total under everything. */
+tr.subtotal td { font-weight: 650; border-top: 1px solid var(--line-2); }
+tr.subtotal.sec-invalid td, tbody tr.subtotal.sec-invalid:hover td {
+  background: var(--invalid-soft); color: var(--invalid);
+}
+tr.subtotal.sec-valid td, tbody tr.subtotal.sec-valid:hover td {
+  background: var(--green-soft); color: var(--green-hi);
+}
+tr.subtotal.sec-invalid td:first-child { box-shadow: inset 3px 0 0 var(--invalid); }
+tr.subtotal.sec-valid td:first-child   { box-shadow: inset 3px 0 0 var(--green); }
+
+/* A label column whose names are the point (Case AR's closing orders):
+   shown whole rather than cut off at the usual width. */
+tbody td.full { max-width: none; }
+
 tbody tr.group-start td {
   border-top: 7px solid var(--bg);
   box-shadow: inset 0 1px 0 var(--line-2);

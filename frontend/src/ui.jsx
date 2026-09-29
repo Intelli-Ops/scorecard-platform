@@ -59,14 +59,14 @@ export function Stats({ children, cols = 4 }) {
    Tabs pass columns and rows; everything else - the total row, the empty
    state, the scroll behaviour - is the same everywhere by construction. */
 export function TableCard({ title, sub, right, columns, rows, spans,
-                            empty, isTotal, rowClass, groupBy }) {
+                            empty, isTotal, rowClass, groupBy, section }) {
   return (
     <Card flush title={title} sub={sub} right={right}>
       <DataTable
         columns={columns} rows={rows} spans={spans}
         empty={empty ?? "Nothing to show"}
         isTotal={isTotal ?? ((r) => r.group === TOTAL || r.month === TOTAL)}
-        rowClass={rowClass} groupBy={groupBy}
+        rowClass={rowClass} groupBy={groupBy} section={section}
       />
     </Card>
   );

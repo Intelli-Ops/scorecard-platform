@@ -18,7 +18,9 @@ GRAND_TOTAL = "Grand Total"
 # (query key, label, the column it filters in either report's Raw Data)
 FILTERS = (
     ("group", "Group", ("Group",)),
-    ("file_status", "File status", ("FileStatus", "File Status")),
+    # GFS only: FileStatus2 (Open / Closed), as its sheet does. All Providers
+    # has no FileStatus2, so its Case AR filters on Group and Validity alone.
+    ("file_status", "File status", ("FileStatus2",)),
     ("validity", "Validity", ("Case_Validity", "Validity")),
 )
 
