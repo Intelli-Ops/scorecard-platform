@@ -457,3 +457,42 @@ def test_the_current_scorecard_is_the_latest_approved_one(client):
     assert gfs["run"]["approver_name"] == "tester"
     assert gfs["waiting"]["week"] == "2026-W36"
     assert cards["all_providers"]["run"] is None
+
+
+def test_a_table_is_read_a_page_at_a_time_and_exported_whole(client, tmp_path):
+    """Only the page on screen is read from the parquet; the row count and
+    column types come with it. The CSV is the whole table, defused for Excel."""
+    import polars as pl
+    from app.db.models import Run, RunTable
+    from app.db.session import session
+    from app.storage.files import FileStore
+
+    df = pl.DataFrame({"CASEID": [f"C{i}" for i in range(250)],
+                       "Paid": [i / 4 for i in range(250)],
+                       "Count": list(range(250))})
+    df = df.with_columns(pl.when(pl.col("Count") == 0).then(pl.lit("=cmd"))
+                         .otherwise(pl.col("CASEID")).alias("CASEID"))
+    p = tmp_path / "raw_data.parquet"
+    df.write_parquet(p)
+    stored = FileStore(settings.results_dir).put(p)
+    with session() as s:
+        run = Run(report_key="gfs", week="2026-W35", status="review")
+        s.add(run)
+        s.flush()
+        s.add(RunTable(run_id=run.id, name="raw_data", rows=df.height,
+                       columns=df.width, sha256=stored.sha256, bytes=stored.size))
+        run_id = run.id
+
+    page = client.get(f"/api/runs/{run_id}/tables/raw_data?offset=100&limit=50").json()
+    assert page["rows"] == 250 and len(page["data"]) == 50
+    assert page["data"][0]["Count"] == 100
+    assert page["kinds"] == {"CASEID": "text", "Paid": "float", "Count": "int"}
+    assert page["columns"] == ["CASEID", "Paid", "Count"]
+
+    tail = client.get(f"/api/runs/{run_id}/tables/raw_data?offset=240&limit=50").json()
+    assert len(tail["data"]) == 10
+
+    csv = client.get(f"/api/runs/{run_id}/tables/raw_data/csv")
+    assert csv.headers["X-Row-Count"] == "250"
+    lines = csv.text.splitlines()
+    assert len(lines) == 251 and lines[1].startswith("'=cmd")

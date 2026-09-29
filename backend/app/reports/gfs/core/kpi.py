@@ -22,15 +22,10 @@ it is the one block still carried forward from the template rather than computed
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-import re
 
 import polars as pl
 
-
-def norm(s: object) -> str:
-    """Match sheet labels to source groups ignoring case and punctuation.
-    The sheet says 'BayCo', the Supporting File says 'Bayco'."""
-    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+from ...common import find_row as _find_row, norm
 
 
 @dataclass
@@ -271,11 +266,3 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
 
     rep.skipped_blocks.extend(b for b in blocks if b not in out)
     return out
-
-
-def _find_row(rows: list[list], marker: str) -> int | None:
-    want = norm(marker)
-    for i, r in enumerate(rows):
-        if r and norm(r[0]) == want:
-            return i
-    return None

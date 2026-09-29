@@ -10,7 +10,7 @@ import datetime as dt
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from ..db.models import Session as UserSession, User
@@ -35,6 +35,17 @@ class Access(BaseModel):
 
 class Approval(BaseModel):
     reports: list[str] | None = None
+
+
+class ActivityDelete(BaseModel):
+    """What to delete. `label` is how the screen named the choice - "29 Sep
+    2026", "Week of 22 Sep" - kept in the log so the record reads plainly."""
+    ids: list[int] | None = Field(default=None, max_length=audit.MAX_IDS)
+    since: dt.datetime | None = None
+    until: dt.datetime | None = None
+    everything: bool = False
+    label: str | None = Field(default=None, max_length=80)
+    dry_run: bool = False
 
 
 def _since(days: int) -> dt.datetime:
@@ -210,3 +221,38 @@ def alerts(days: int = Query(7, ge=1, le=365)) -> dict:
     with session() as s:
         return {"days": days, "summary": audit.summary(s, since),
                 "alerts": detect.alerts(s, since)}
+
+
+@router.post("/activity/delete")
+def delete_activity(body: ActivityDelete, request: Request,
+                    admin: User = Depends(require_admin)) -> dict:
+    """Delete events from the log - system admins only.
+
+    One event, a chosen few, a day, a week, a month or all of it. `dry_run`
+    only counts, so the screen can say "this deletes 132 events" before it
+    does. The deletion is logged AFTER the rows go, so even "everything"
+    leaves one row behind: who emptied the log, and when.
+    """
+    if not admin.is_system_admin:
+        audit.record("admin.denied", request=request, user=admin, outcome="denied",
+                     target="delete activity")
+        raise HTTPException(403, "Only a system admin can delete activity.")
+    try:
+        req = audit.DeleteRequest(body.ids, body.since, body.until, body.everything)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    with session() as s:
+        n = audit.delete(s, req, dry_run=body.dry_run)
+    if body.dry_run:
+        return {"count": n}
+
+    what = ("everything" if body.everything
+            else f"{len(body.ids)} chosen" if body.ids else "a period")
+    detail = {"deleted": n, "scope": what, "label": body.label}
+    if body.ids:
+        detail["ids"] = body.ids[:50]
+    if body.since:
+        detail |= {"since": body.since.isoformat(), "until": body.until.isoformat()}
+    audit.record("admin.activity_delete", request=request, user=admin,
+                 target=body.label or what, detail=detail)
+    return {"deleted": n}

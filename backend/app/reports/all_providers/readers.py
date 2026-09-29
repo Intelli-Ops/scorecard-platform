@@ -17,15 +17,14 @@ different things:
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-import time
 
 import fastexcel
 import polars as pl
 
-from ..cache import Cache, NoCache, ParquetCache
+from ..cache import Cache
 from ..locate import SourceSet
 from ..notes import Note, info
-from ..gfs.readers import FileRead
+from ..reading import FileRead, timed_reader
 
 
 @dataclass
@@ -52,20 +51,9 @@ def read_all_providers(sources: SourceSet, rules: dict,
     if not sources.ok:
         raise FileNotFoundError("; ".join(sources.problems()))
 
-    cache = cache or NoCache()
     reads: list[FileRead] = []
     notes: list[Note] = []
-
-    def timed(key, label, path, load, source_key=None):
-        t = time.perf_counter()
-        ck = (ParquetCache.key_for(key, path)
-              if isinstance(cache, ParquetCache) else key)
-        df = cache.get_or_read(ck, load)
-        elapsed = time.perf_counter() - t
-        reads.append(FileRead(key=key, source_key=source_key or key, label=label,
-                              filename=path.name, rows=df.height,
-                              seconds=elapsed, from_cache=elapsed < 0.25))
-        return df
+    timed = timed_reader(cache, reads)
 
     owner_path = sources.path("owner_case_ar")
     owner_ar = timed("owner_case_ar", "Combined Owner Case AR", owner_path,

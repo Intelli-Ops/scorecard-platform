@@ -98,6 +98,9 @@ export const api = {
   actions: () => json("/api/admin/actions"),
   activity: (filters = {}) => json(`/api/admin/activity${query(filters)}`),
   alerts: (days = 7) => json(`/api/admin/alerts?days=${days}`),
+  /* System admins only. { ids } | { since, until, label } | { everything },
+     plus dry_run to count first. */
+  deleteActivity: (body) => post("/api/admin/activity/delete", body),
   downloadActivity: (filters = {}) =>
     download(`/api/admin/activity/csv${query(filters)}`, "activity.csv"),
 

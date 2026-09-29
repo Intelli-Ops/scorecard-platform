@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, stamp, weekRange } from "../api";
 import { useAuth } from "../auth";
+import { useLoad } from "../hooks";
 import { ClearX, ErrorBox, Loading, Segmented } from "../components";
 import { ScorecardView } from "./Dashboard";
 
@@ -32,15 +33,10 @@ function closedRuns() {
 
 export default function Current() {
   const { user } = useAuth();
-  const [cards, setCards] = useState(null);
-  const [error, setError] = useState(null);
+  const { data: cards, error } = useLoad(api.currentScorecards, []);
   const [report, setReport] = useState(read() ?? "gfs");
   const [closed, setClosed] = useState(closedRuns);
   const [closing, setClosing] = useState(null);
-
-  useEffect(() => {
-    api.currentScorecards().then(setCards).catch(setError);
-  }, []);
 
   /* The banner folds away rather than vanishing: the figures below slide up
      into its place, so the page does not jump. */

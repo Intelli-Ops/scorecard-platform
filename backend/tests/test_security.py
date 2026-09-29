@@ -71,17 +71,16 @@ def test_sign_ins_and_failures_are_logged_with_where_from(client):
     assert rows[2].user_id is None and rows[2].detail["reason"] == "no_account"
 
 
-def test_the_log_cannot_be_edited_or_deleted(client):
-    """Enforced by the database, not by the app choosing not to."""
+def test_a_log_row_cannot_be_edited(client):
+    """Enforced by the database, not by the app choosing not to. A row can be
+    deleted (by a system admin, and that is logged) but never rewritten."""
     make_account(USER, "APD-0002")
     login(client, USER, PASSWORD)
     from app.db.session import engine
-    for sql in ("UPDATE activity_log SET email = 'someone-else'",
-                "DELETE FROM activity_log"):
-        with pytest.raises(Exception, match="append-only"):
-            with engine().begin() as c:
-                c.execute(text(sql))
-    assert len(log()) == 1
+    with pytest.raises(Exception, match="cannot be changed"):
+        with engine().begin() as c:
+            c.execute(text("UPDATE activity_log SET email = 'someone-else'"))
+    assert log()[0].email == USER
 
 
 def test_the_actions_people_take_are_logged(client, admin):
@@ -501,3 +500,188 @@ def test_sessions_from_before_hashing_are_closed(client):
     with session() as s:
         assert auth.retire_unhashed_sessions(s) == 1
     assert len(client.get("/api/me/sessions", headers=live).json()) == 1
+
+
+# ------------------------------------------------------------ second audit
+
+def test_one_address_is_slowed_after_many_failed_sign_ins(client):
+    """The account lock stops guessing at one account; this stops one address
+    working through many of them."""
+    from app.service import ratelimit
+    limit, _ = ratelimit.LOGIN_FAILURES
+    for n in range(limit):
+        assert login(client, f"nobody-{n}@appedology.com", "x" * 8).status_code == 401
+    r = login(client, "one-more@appedology.com", "x" * 8)
+    assert r.status_code == 429 and "Retry-After" in r.headers
+
+
+def test_a_right_password_does_not_count_against_the_address(client, user):
+    from app.service import ratelimit
+    limit, _ = ratelimit.LOGIN_FAILURES
+    for _ in range(limit + 2):
+        assert login(client, USER, PASSWORD).status_code == 200
+
+
+def test_guessing_the_current_password_from_an_open_session_is_limited(client, user):
+    from app.service import ratelimit
+    limit, _ = ratelimit.PASSWORD_FAILURES
+    for _ in range(limit):
+        r = client.post("/api/me/password", headers=user,
+                        json={"current": "not it at all", "new": "a new password"})
+        assert r.status_code == 400
+    r = client.post("/api/me/password", headers=user,
+                    json={"current": PASSWORD, "new": "a new password"})
+    assert r.status_code == 429
+
+
+def test_an_overlong_email_is_refused_before_it_reaches_the_log(client):
+    r = login(client, "a" * 400 + "@appedology.com", "whatever1")
+    assert r.status_code == 422
+
+
+def test_the_activity_export_cannot_carry_a_formula_into_excel(client, admin):
+    """The browser string of a failed sign-in is written exactly as sent."""
+    client.post("/api/auth/login", json={"email": "x@appedology.com", "password": "y" * 8},
+                headers={"User-Agent": "=HYPERLINK(\"http://evil\",\"click\")"})
+    body = client.get("/api/admin/activity/csv?days=1", headers=admin).text
+    assert "'=HYPERLINK" in body
+    assert ",=HYPERLINK" not in body and '"=HYPERLINK' not in body
+
+
+def test_csv_cells_are_defused_but_numbers_are_not():
+    import polars as pl
+    from app.service import csvsafe
+    assert csvsafe.cell("=1+1") == "'=1+1"
+    assert csvsafe.cell("@SUM(A1)") == "'@SUM(A1)"
+    assert csvsafe.cell("-12.5") == "-12.5"
+    assert csvsafe.cell(-3) == -3
+    df = csvsafe.frame(pl.DataFrame({"t": ["=cmd", "-1,200", "ok", None],
+                                     "n": [1.0, -2.0, 3.0, 4.0]}))
+    assert df["t"].to_list() == ["'=cmd", "-1,200", "ok", None]
+    assert df["n"].to_list() == [1.0, -2.0, 3.0, 4.0]
+
+
+def test_responses_carry_the_security_headers(client, user):
+    r = client.get("/api/auth/me", headers=user)
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["X-Frame-Options"] == "DENY"
+    assert r.headers["Cache-Control"] == "no-store"
+
+
+def test_a_table_page_cannot_ask_for_a_negative_offset(client, admin):
+    r = client.get("/api/runs/1/tables/raw_data?offset=-5", headers=admin)
+    assert r.status_code == 422
+    r = client.get("/api/runs/1/tables/raw_data?limit=0", headers=admin)
+    assert r.status_code == 422
+
+
+def test_an_upload_over_the_size_limit_is_refused(client, admin, monkeypatch):
+    monkeypatch.setattr(settings, "max_upload_mb", 1)
+    big = b"x" * (1024 * 1024 + 1)
+    r = client.post("/api/weeks/2026-W35/uploads", headers=admin,
+                    files=[("files", ("Supporting File.xlsx", big, "application/x"))])
+    assert r.status_code == 413
+    assert not any(settings.object_dir.rglob("*.xlsx"))
+
+
+@pytest.mark.parametrize("name", ["..", ".", "  "])
+def test_an_upload_named_like_a_folder_is_not_a_server_error(client, admin, name):
+    r = client.post("/api/weeks/2026-W35/uploads", headers=admin,
+                    files=[("files", (name, b"x", "application/x"))])
+    assert r.status_code == 200
+    assert r.json()["rejected"][0]["filename"] == "unnamed"
+
+
+def test_an_older_weaker_password_hash_is_upgraded_at_sign_in(client, user):
+    import hashlib, secrets
+    from app.db.models import User
+    from app.db.session import session
+    from app.service import auth
+    salt = secrets.token_bytes(16)
+    old = "pbkdf2_sha256$240000${}${}".format(
+        auth._b64(salt),
+        auth._b64(hashlib.pbkdf2_hmac("sha256", PASSWORD.encode(), salt, 240_000)))
+    with session() as s:
+        s.execute(select(User).where(User.email == USER)).scalar_one().password_hash = old
+    assert login(client, USER, PASSWORD).status_code == 200
+    with session() as s:
+        now = s.execute(select(User).where(User.email == USER)).scalar_one().password_hash
+    assert now.split("$")[1] == str(auth.ITERATIONS)
+    assert auth.verify_password(PASSWORD, now)
+
+
+# ------------------------------------------------------------ deleting activity
+
+SYSADMIN = "owner@appedology.com"
+
+
+@pytest.fixture
+def sysadmin(client):
+    return account(client, SYSADMIN, "APD-0009", role="system_admin")
+
+
+def _seed(days_ago: list[int]) -> list[int]:
+    from app.db.models import ActivityLog
+    from app.db.session import session
+    now = dt.datetime.now(dt.timezone.utc)
+    with session() as s:
+        rows = [ActivityLog(email=USER, action="run.view", at=now - dt.timedelta(days=d))
+                for d in days_ago]
+        s.add_all(rows)
+        s.flush()
+        return [r.id for r in rows]
+
+
+def _delete(client, headers, **body):
+    return client.post("/api/admin/activity/delete", headers=headers, json=body)
+
+
+def test_only_a_system_admin_can_delete_activity(client, admin):
+    ids = _seed([0])
+    r = _delete(client, admin, ids=ids)
+    assert r.status_code == 403
+    assert log("admin.denied")[-1].target == "delete activity"
+    assert any(row.id == ids[0] for row in log())
+
+
+def test_chosen_events_are_deleted_and_the_deletion_is_logged(client, sysadmin):
+    ids = _seed([0, 0, 0])
+    assert _delete(client, sysadmin, ids=ids[:2], dry_run=True).json() == {"count": 2}
+    assert len([r for r in log() if r.id in ids]) == 3     # a dry run deletes nothing
+    assert _delete(client, sysadmin, ids=ids[:2]).json() == {"deleted": 2}
+    left = {r.id for r in log()}
+    assert ids[2] in left and not left & set(ids[:2])
+    record = log("admin.activity_delete")[-1]
+    assert record.email == SYSADMIN and record.detail["deleted"] == 2
+
+
+def test_a_period_is_deleted_and_nothing_outside_it(client, sysadmin):
+    ids = _seed([0, 10, 40])
+    now = dt.datetime.now(dt.timezone.utc)
+    r = _delete(client, sysadmin, since=(now - dt.timedelta(days=15)).isoformat(),
+                until=(now - dt.timedelta(days=5)).isoformat(), label="a week")
+    assert r.json() == {"deleted": 1}
+    left = {r.id for r in log()}
+    assert ids[0] in left and ids[2] in left and ids[1] not in left
+    assert log("admin.activity_delete")[-1].target == "a week"
+
+
+def test_deleting_everything_leaves_only_the_record_of_it(client, sysadmin):
+    _seed([0, 3, 400])
+    assert _delete(client, sysadmin, everything=True).json()["deleted"] >= 3
+    rows = log()
+    assert [r.action for r in rows] == ["admin.activity_delete"]
+    assert rows[0].detail["scope"] == "everything"
+
+
+@pytest.mark.parametrize("body", [
+    {},                                                    # nothing named is not "all"
+    {"ids": [1], "everything": True},
+    {"since": "2026-09-01T00:00:00Z"},
+    {"since": "2026-09-02T00:00:00Z", "until": "2026-09-01T00:00:00Z"},
+])
+def test_an_unclear_delete_is_refused(client, sysadmin, body):
+    _seed([0])
+    before = len(log())
+    assert _delete(client, sysadmin, **body).status_code == 400
+    assert len(log()) == before

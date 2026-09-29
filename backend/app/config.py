@@ -52,6 +52,17 @@ class Settings:
         # map of the API handed to anyone who can reach it.
         self.api_docs = os.environ.get("SCORECARD_API_DOCS", "1") == "1"
 
+        # Browser origins allowed to call the API directly, comma-separated.
+        # The Vite dev server and nginx both serve the page and the API from
+        # one origin, so on the server this can be left empty.
+        self.cors_origins = [o.strip() for o in os.environ.get(
+            "SCORECARD_CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173").split(",") if o.strip()]
+
+        # The largest single uploaded file, in MB. The biggest real input is
+        # about 240 MB; without a ceiling one request can fill the disk.
+        self.max_upload_mb = int(os.environ.get("SCORECARD_MAX_UPLOAD_MB", "1024"))
+
     def ensure(self) -> None:
         for d in (self.data_dir, self.object_dir, self.results_dir):
             d.mkdir(parents=True, exist_ok=True)

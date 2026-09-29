@@ -7,7 +7,8 @@ anyone who opens the developer console; the API cannot.
   * the APD id is APD- followed by exactly four digits
 
 Passwords are never stored. What is stored is a PBKDF2-HMAC-SHA256 hash with a
-fresh 16-byte random salt per user, at 240,000 iterations - deliberately slow,
+fresh 16-byte random salt per user, at 600,000 iterations (OWASP's figure for
+PBKDF2-SHA256) - deliberately slow,
 so that guessing at scale costs real time. Standard library only; no dependency
 to keep patched.
 """
@@ -30,7 +31,7 @@ EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@appedology\.com$", re.IGNORECASE)
 APD_RE = re.compile(r"^APD-\d{4}$")
 
 MIN_PASSWORD = 8
-ITERATIONS = 240_000
+ITERATIONS = 600_000
 SESSION_DAYS = 14
 
 # Five wrong passwords in a row locks the account for fifteen minutes. Enough
@@ -130,10 +131,20 @@ def verify_password(password: str, stored: str) -> bool:
             return False
         dk = hashlib.pbkdf2_hmac("sha256", password.encode(),
                                  _unb64(salt_b64), int(iterations))
-    except (ValueError, TypeError):
+        expected = _unb64(hash_b64)
+    except (ValueError, TypeError):      # binascii.Error is a ValueError
         return False
     # Constant-time: a comparison that returns early leaks how much matched.
-    return hmac.compare_digest(dk, _unb64(hash_b64))
+    return hmac.compare_digest(dk, expected)
+
+
+def needs_rehash(stored: str) -> bool:
+    """True for a hash made with fewer iterations than ITERATIONS - one
+    stored before the count was raised."""
+    try:
+        return int(stored.split("$")[1]) < ITERATIONS
+    except (IndexError, ValueError):
+        return True
 
 
 def _b64(b: bytes) -> str:
@@ -239,6 +250,10 @@ def sign_in(db: DbSession, email: str, password: str, *,
     user.failed_logins = 0
     user.locked_until = None
     user.last_login_at = now
+    # An older, weaker hash is replaced the next time its owner signs in -
+    # the only moment the password itself is in hand.
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(password)
     return user, start_session(db, user, ip=ip, user_agent=user_agent)
 
 

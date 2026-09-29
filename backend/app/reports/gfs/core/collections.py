@@ -18,18 +18,9 @@ import datetime as dt
 
 import polars as pl
 
+from ...common import excel_weeknum, i64 as _i64
+
 PAYMENT_TYPES = ["BILLING", "REBILLING", "APPEAL", "SETTLEMENT"]
-
-
-def _i64(c: str) -> pl.Expr:
-    return pl.col(c).cast(pl.Float64, strict=False).round(0).cast(pl.Int64)
-
-
-def excel_weeknum(col: str, year: int) -> pl.Expr:
-    """Excel WEEKNUM with the default return type: weeks start on Sunday and
-    Jan 1 always falls in week 1. polars' dt.week() is ISO and does not match."""
-    offset = dt.date(year, 1, 1).weekday() % 7          # Mon=0 .. Sun=6 -> Sun=0
-    return ((pl.col(col).dt.ordinal_day() + offset - 1) // 7 + 1)
 
 
 @dataclass
@@ -117,15 +108,3 @@ def build_collections(payments: pl.DataFrame,
              .agg(pl.col("payment").sum().alias("Payment"))
              .sort(["Group", "Week", "PT"]))
     return out, rep
-
-
-def pace(cumulative: float, week_index: int, business_days: int) -> float:
-    """Run-rate: project the month from what has landed so far.
-
-    cumulative / min(5 * week_index, business_days) * business_days
-
-    At month end the divisor equals the multiplier, so pace becomes the actual.
-    Verified against week 35 - all 45 pace cells matched.
-    """
-    elapsed = min(5 * week_index, business_days)
-    return cumulative / elapsed * business_days if elapsed else 0.0

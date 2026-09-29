@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { api, count } from "./api";
 import { col } from "./columns";
 import { ErrorBox, Loading, Picker } from "./components";
 import { TableCard } from "./ui";
 import { Button } from "./buttons";
+import { useLoad } from "./hooks";
 import { GRAND_TOTAL, sectionCaseAr, sectionClass } from "./caseAr-model";
 
 /* The Case AR sheet, with the page filters its Excel pivot carries: Group,
@@ -17,17 +18,9 @@ const isCount = (c) => /cases/i.test(c);
 
 export default function CaseAr({ runId }) {
   const [chosen, setChosen] = useState({});
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    let alive = true;
-    setError(null);
-    api.caseAr(runId, chosen)
-      .then((d) => alive && setData(d))
-      .catch((e) => alive && setError(e));
-    return () => { alive = false; };
-  }, [runId, chosen]);
+  /* The last pivot stays on screen while the next filter's is fetched. */
+  const { data, error } = useLoad(() => api.caseAr(runId, chosen), [runId, chosen],
+                                  { keep: true });
 
   const table = useMemo(() => (data ? sectionCaseAr(data) : null), [data]);
 

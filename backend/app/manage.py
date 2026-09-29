@@ -11,8 +11,8 @@ Run from backend/, with the same SCORECARD_DB the server uses:
     python -m app.manage set-role EMAIL ROLE     viewer, admin or system_admin
     python -m app.manage reset-password EMAIL    a temporary password, for when
                                                  the only admin is locked out
-    python -m app.manage protect-log             add the triggers that make the
-                                                 activity log append-only (run
+    python -m app.manage protect-log             add the trigger that stops
+                                                 activity log rows being edited (run
                                                  with the database ADMIN's
                                                  address - see below)
     python -m app.manage copy-db FROM_URL        copy everything from another
@@ -111,7 +111,7 @@ def cmd_protect_log(a):
     itself should never hold. Pass its address with --as."""
     e = create_engine(database_url(a.as_url)) if a.as_url else engine()
     if migrate.protect_activity_log(e):
-        _say("activity_log is append-only.")
+        _say("activity_log rows cannot be edited.")
     else:
         sys.exit("could not add the triggers - see the warning above. On MySQL, "
                  "run this with --as mysql://root:...@host/scorecard")

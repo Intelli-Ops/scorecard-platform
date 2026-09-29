@@ -21,7 +21,8 @@ The rules, and why each one:
   bulk_export         many whole-table exports in a short time - data being
                       copied out
   denied              someone who is not an admin trying admin actions
-  deletions           runs or weeks deleted - not wrong, but not undoable
+  deletions           runs, weeks or activity deleted - not wrong, but not
+                      undoable
 """
 from __future__ import annotations
 import datetime as dt
@@ -41,6 +42,7 @@ GUESSING_FAILURES = 5          # wrong passwords for one account
 SPRAY_ACCOUNTS = 3             # accounts one address failed against
 EXPORTS_PER_HOUR = 10          # whole-table exports by one person in an hour
 NEW_ADDRESS_LOOKBACK = dt.timedelta(days=90)
+DELETIONS = ("run.delete", "week.delete", "admin.activity_delete")
 
 
 def _zone():
@@ -130,16 +132,28 @@ def _locked(rows) -> list[dict]:
 def _new_address(s: Session, rows) -> list[dict]:
     """A good sign-in from an address this account has not signed in from in
     the last 90 days. An account's very first sign-in is not flagged - every
-    address is new to it."""
+    address is new to it.
+
+    The earlier sign-ins are read in one query for every account involved,
+    not one query per sign-in in the window."""
+    logins = [r for r in rows if r.action == "auth.login"
+              and r.outcome == "success" and r.ip and r.user_id is not None]
+    if not logins:
+        return []
+    history = defaultdict(list)          # user_id -> [(id, at, ip)], oldest first
+    for h in s.execute(select(ActivityLog.id, ActivityLog.at, ActivityLog.user_id,
+                              ActivityLog.ip).where(
+            ActivityLog.user_id.in_({r.user_id for r in logins}),
+            ActivityLog.action == "auth.login", ActivityLog.outcome == "success",
+            ActivityLog.at >= min(r.at for r in logins) - NEW_ADDRESS_LOOKBACK,
+            ActivityLog.id < max(r.id for r in logins))
+            .order_by(ActivityLog.id)):
+        history[h.user_id].append(h)
+
     out = []
-    for r in rows:
-        if r.action != "auth.login" or r.outcome != "success" or not r.ip \
-                or r.user_id is None:
-            continue
-        before = s.execute(select(ActivityLog.ip).where(
-            ActivityLog.user_id == r.user_id, ActivityLog.action == "auth.login",
-            ActivityLog.outcome == "success", ActivityLog.id < r.id,
-            ActivityLog.at >= r.at - NEW_ADDRESS_LOOKBACK).distinct()).scalars().all()
+    for r in logins:
+        before = {h.ip for h in history[r.user_id]
+                  if h.id < r.id and h.at >= r.at - NEW_ADDRESS_LOOKBACK}
         if before and r.ip not in before:
             out.append(_alert("new_address", INFO,
                               f"{r.email} signed in from a new address",
@@ -201,12 +215,11 @@ def _denied(rows) -> list[dict]:
 
 
 def _deletions(rows) -> list[dict]:
-    gone = [r for r in rows if r.action in ("run.delete", "week.delete")
-            and r.outcome == "success"]
+    gone = [r for r in rows if r.action in DELETIONS and r.outcome == "success"]
     if not gone:
         return []
     who = sorted({r.email for r in gone if r.email})
     return [_alert("deletions", INFO,
                    f"{len(gone)} deletion{'s' if len(gone) != 1 else ''}",
-                   f"Runs or weeks deleted, by {', '.join(who)}. Deleting "
+                   f"Runs, weeks or activity deleted, by {', '.join(who)}. Deleting "
                    "cannot be undone.", gone)]

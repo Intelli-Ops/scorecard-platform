@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, stamp, when } from "../api";
 import { useAuth } from "../auth";
+import { useLoad } from "../hooks";
 import { Card, DataTable, ErrorBox, Loading } from "../components";
 import { Button, ConfirmButton, ConfirmPair, DeleteButton } from "../buttons";
 import { Stat, Stats } from "../ui";
@@ -30,25 +31,16 @@ const ROLE_LABEL = { viewer: "Viewer", admin: "Admin", system_admin: "System adm
 
 export default function AdminUsers() {
   const { user: me, signOut } = useAuth();
-  const [users, setUsers] = useState(null);
-  const [reports, setReports] = useState([]);
-  const [error, setError] = useState(null);
+  const { data: users, error, setError, reload } = useLoad(api.users, []);
+  const reports = useLoad(api.reports, []).data ?? [];
   const [temp, setTemp] = useState(null);       // a just-issued temporary password
   const [copied, setCopied] = useState(false);
-
-  async function load() {
-    try { setUsers(await api.users()); } catch (e) { setError(e); }
-  }
-  useEffect(() => {
-    load();
-    api.reports().then(setReports).catch(setError);
-  }, []);
 
   /* Every action: do it, then reload the list, so what is on screen is what
      the server now holds rather than what we assume it holds. */
   const act = (fn) => async () => {
     setError(null);
-    try { await fn(); await load(); } catch (e) { setError(e); }
+    try { await fn(); await reload(); } catch (e) { setError(e); }
   };
 
   async function reset(u) {
@@ -56,7 +48,7 @@ export default function AdminUsers() {
     try {
       const r = await api.resetPassword(u.id);
       setTemp({ email: u.email, password: r.temporary_password });
-      await load();
+      await reload();
     } catch (e) { setError(e); }
   }
 

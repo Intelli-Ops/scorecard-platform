@@ -40,7 +40,7 @@ def engine():
 
 def create_all() -> None:
     """Make the database match the models: new tables, new columns, and the
-    guard that keeps the activity log append-only."""
+    guard that stops activity log rows being edited."""
     e = engine()
     Base.metadata.create_all(e)
     migrate.add_missing_columns(e, Base.metadata)

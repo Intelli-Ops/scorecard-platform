@@ -25,15 +25,7 @@ import datetime as dt
 
 import polars as pl
 
-
-def _i64(c: str) -> pl.Expr:
-    return pl.col(c).cast(pl.Float64, strict=False).round(0).cast(pl.Int64)
-
-
-def excel_weeknum(col: str, year: int) -> pl.Expr:
-    """Excel WEEKNUM, default return type: weeks start Sunday, 1 Jan is week 1."""
-    offset = dt.date(year, 1, 1).weekday() % 7          # Mon=0 .. Sun=6 -> Sun=0
-    return ((pl.col(col).dt.ordinal_day() + offset - 1) // 7 + 1)
+from ...common import excel_weeknum, i64 as _i64
 
 
 @dataclass
@@ -115,5 +107,3 @@ def build_collections(payments: pl.DataFrame,
     return (d.group_by(["Group", "Week", "PT"])
              .agg(pl.col("payment").sum().alias("Payment"))
              .sort(["Group", "Week", "PT"]), rep)
-
-

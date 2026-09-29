@@ -11,7 +11,7 @@ routes themselves.
 from __future__ import annotations
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.admin_routes import router as admin_router
@@ -20,7 +20,7 @@ from .api.routes import router
 from .config import settings
 from .db.session import create_all, session
 from .jobs import worker
-from .service import auth
+from .service import auth, ratelimit
 
 
 @asynccontextmanager
@@ -28,6 +28,7 @@ async def lifespan(app: FastAPI):
     settings.ensure()
     create_all()
     worker.recover()           # before the worker takes anything new
+    ratelimit.reset()
     with session() as s:
         auth.purge_expired_sessions(s)
         auth.retire_unhashed_sessions(s)
@@ -45,14 +46,35 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.api_docs else None,
 )
 
-# The browser app is served from a different port in development.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Only for a browser app served from another origin. The sign-in travels in
+# an Authorization header, never a cookie, so credentials are not allowed.
+if settings.cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
+        expose_headers=["Content-Disposition", "X-Row-Count"],
+    )
+
+# What every response tells the browser. API answers carry client figures and
+# account details, so no browser or proxy may keep a copy (no-store); none of
+# them is a page to be framed or a file to be sniffed into something else.
+_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for k, v in _HEADERS.items():
+        response.headers.setdefault(k, v)
+    return response
 
 app.include_router(auth_router)   # open - how you get a token
 app.include_router(me_router)     # your own account

@@ -3,8 +3,11 @@ import { api, count, device, stamp, when } from "../api";
 import { Card, DataTable, ErrorBox, Loading, Outcome, Picker, Segmented,
          TextFilter } from "../components";
 import { Stat, Stats } from "../ui";
-import { Button } from "../buttons";
+import { useAuth } from "../auth";
+import { Button, DeleteButton } from "../buttons";
 import { DownloadIcon } from "../icons";
+import { useLoad } from "../hooks";
+import { periodOf, today } from "../activity-period";
 
 /* The activity log, for admins.
 
@@ -28,25 +31,18 @@ const WORD = { action: "Act on", warning: "Check", info: "Note" };
 const EMPTY = { action: "", outcome: "", email: "", ip: "" };
 
 export default function AdminActivity() {
+  const { user } = useAuth();
+  const canDelete = user.is_system_admin;
   const [days, setDays] = useState(7);
-  const [alerts, setAlerts] = useState(null);
-  const [actions, setActions] = useState(null);
   const [filters, setFilters] = useState(EMPTY);
   const [typed, setTyped] = useState({ email: "", ip: "" });
-  const [page, setPage] = useState(null);
   const [more, setMore] = useState(false);
-  const [error, setError] = useState(null);
+  const [actionError, setError] = useState(null);
 
-  useEffect(() => {
-    api.actions().then(setActions).catch(setError);
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    setAlerts(null);
-    api.alerts(days).then((a) => alive && setAlerts(a)).catch(setError);
-    return () => { alive = false; };
-  }, [days]);
+  const actionsLoad = useLoad(api.actions, []);
+  const alertsLoad = useLoad(() => api.alerts(days), [days]);
+  const actions = actionsLoad.data;
+  const alerts = alertsLoad.data;
 
   /* Typing in the email or address box waits for a pause before asking the
      server, rather than sending a query per keystroke. */
@@ -57,20 +53,42 @@ export default function AdminActivity() {
   }, [typed]);
 
   const query = useMemo(() => ({ ...filters, days }), [filters, days]);
+  const pageLoad = useLoad(() => api.activity({ ...query, limit: 100 }), [query]);
+  const page = pageLoad.data;
+  const error = actionError ?? actionsLoad.error ?? alertsLoad.error ?? pageLoad.error;
 
-  useEffect(() => {
-    let alive = true;
-    setPage(null);
-    api.activity({ ...query, limit: 100 })
-      .then((p) => alive && setPage(p)).catch(setError);
-    return () => { alive = false; };
-  }, [query]);
+  /* Ticked rows. Kept with the list they were ticked on, so changing a
+     filter never leaves ticks on rows that are no longer on screen. */
+  const [ticked, setTicked] = useState({ page: null, ids: new Set() });
+  const chosen = ticked.page === page ? ticked.ids : new Set();
+  const tick = (ids, on) => {
+    const next = new Set(chosen);
+    for (const id of ids) {
+      if (on) next.add(id); else next.delete(id);
+    }
+    setTicked({ page, ids: next });
+  };
+  const allTicked = page?.items.length > 0 && page.items.every((r) => chosen.has(r.id));
+
+  /* Delete, then show the log as it now is - with the deletion's own row. */
+  async function remove(body) {
+    setError(null);
+    try {
+      await api.deleteActivity(body);
+      setTicked({ page: null, ids: new Set() });
+      await Promise.all([pageLoad.reload(), alertsLoad.reload()]);
+    } catch (e) { setError(e); }
+  }
 
   async function loadMore() {
+    const before = page.next;
     setMore(true);
     try {
-      const p = await api.activity({ ...query, limit: 100, before_id: page.next });
-      setPage({ items: [...page.items, ...p.items], next: p.next });
+      const p = await api.activity({ ...query, limit: 100, before_id: before });
+      /* Only onto the page it continues: if the filters changed while this
+         was on its way, its rows belong to a list no longer on screen. */
+      pageLoad.setData((cur) => (cur?.next === before
+        ? { items: [...cur.items, ...p.items], next: p.next } : cur));
     } catch (e) { setError(e); }
     finally { setMore(false); }
   }
@@ -115,8 +133,9 @@ export default function AdminActivity() {
         <div>
           <h1>Activity</h1>
           <div className="sub">
-            Everything people have done in the app, kept permanently. Nothing
-            here can be edited or deleted.
+            Everything people have done in the app. Nothing here can be edited;
+            only a system admin can delete events, and each deletion is itself
+            recorded.
           </div>
         </div>
         <Segmented label="Period" value={days} onChange={setDays} options={PERIODS} />
@@ -196,6 +215,19 @@ export default function AdminActivity() {
         </Button>
       </div>
 
+      {canDelete && chosen.size > 0 && (
+        <div className="row" style={{ marginBottom: 12 }}>
+          <DeleteButton size="md" label={`Delete ${chosen.size} selected`}
+                        confirm={`Confirm delete ${chosen.size}`}
+                        onConfirm={() => remove({ ids: [...chosen],
+                                                  label: `${chosen.size} selected` })} />
+          <Button tone="quiet" size="sm"
+                  onClick={() => setTicked({ page: null, ids: new Set() })}>
+            Clear selection
+          </Button>
+        </div>
+      )}
+
       <Card flush>
         {!page ? <Loading what="Loading events" /> : (
           <>
@@ -204,6 +236,16 @@ export default function AdminActivity() {
               empty="No events match."
               rowClass={(r) => (r.outcome !== "success" ? `row-${r.outcome}` : "")}
               columns={[
+                ...(canDelete ? [{
+                  key: "tick", width: 34,
+                  label: <input type="checkbox" aria-label="Select every event shown"
+                                checked={allTicked}
+                                onChange={(e) => tick(page.items.map((r) => r.id),
+                                                      e.target.checked)} />,
+                  render: (r) => <input type="checkbox" aria-label="Select this event"
+                                        checked={chosen.has(r.id)}
+                                        onChange={(e) => tick([r.id], e.target.checked)} />,
+                }] : []),
                 { key: "at", label: "When", nowrap: true, render: (r) => stamp(r.at) },
                 { key: "email", label: "Person",
                   render: (r) => r.email ?? <span className="muted">-</span> },
@@ -216,6 +258,13 @@ export default function AdminActivity() {
                   render: (r) => <Outcome value={r.outcome} /> },
                 { key: "detail", label: "Detail",
                   render: (r) => <Detail d={r.detail} /> },
+                ...(canDelete ? [{
+                  key: "delete", label: "", width: 44,
+                  render: (r) => <DeleteButton label={null} title="Delete this event"
+                                               confirm="Delete"
+                                               onConfirm={() => remove({ ids: [r.id],
+                                                 label: `event ${r.id}` })} />,
+                }] : []),
               ]}
             />
             {page.next && (
@@ -228,7 +277,62 @@ export default function AdminActivity() {
           </>
         )}
       </Card>
+
+      {canDelete && <DeletePeriod onDelete={remove} />}
     </>
+  );
+}
+
+const SPANS = [
+  { value: "day", label: "A day" },
+  { value: "week", label: "A week" },
+  { value: "month", label: "A month" },
+  { value: "all", label: "Everything" },
+];
+
+/* Deleting a stretch of the log: the day, week or month holding a date, or
+   all of it. It says how many events that is before anything goes, and asks
+   once more. The deletion leaves its own row behind, even after
+   "Everything". */
+function DeletePeriod({ onDelete }) {
+  const [span, setSpan] = useState("day");
+  const [date, setDate] = useState(today());
+  const period = span === "all" ? null : periodOf(span, date);
+  const body = span === "all" ? { everything: true, label: "Everything" }
+    : period && { since: period.since, until: period.until, label: period.label };
+  const key = JSON.stringify(body);
+
+  /* How many it would delete - counted by the server, not guessed from the
+     page, which holds only the newest hundred. */
+  const preview = useLoad(() => (body ? api.deleteActivity({ ...body, dry_run: true })
+                                      : Promise.resolve(null)), [key]);
+  const n = preview.data?.count;
+
+  return (
+    <Card title="Delete activity"
+          sub="System admins only. Deleted events cannot be brought back; the deletion itself is recorded.">
+      <div className="row" style={{ flexWrap: "wrap", gap: 12 }}>
+        <Segmented value={span} onChange={setSpan} options={SPANS} />
+        {span !== "all" && (
+          <input type="date" value={date} max={today()}
+                 onChange={(e) => setDate(e.target.value)}
+                 aria-label={`A date in the ${span} to delete`} />
+        )}
+        <span className="small muted">
+          {span === "all" ? "Every event in the log"
+            : period ? period.label : "Choose a date"}
+          {n != null && ` · ${count(n)} event${n === 1 ? "" : "s"}`}
+        </span>
+        <span className="spacer" />
+        <DeleteButton size="md"
+                      label={n ? `Delete ${count(n)} event${n === 1 ? "" : "s"}` : "Delete"}
+                      disabled={!body || !n}
+                      onConfirm={async () => { await onDelete(body); await preview.reload(); }} />
+      </div>
+      {preview.error && (
+        <div className="small err" style={{ marginTop: 8 }}>{preview.error.message}</div>
+      )}
+    </Card>
   );
 }
 
@@ -242,6 +346,7 @@ function Detail({ d }) {
   if (d.rows != null) parts.push(`${count(d.rows)} rows`);
   if (d.role) parts.push(`now ${d.role}`);
   if (d.report && d.week) parts.push(`${d.report} ${d.week}`);
+  if (d.deleted != null) parts.push(`${count(d.deleted)} deleted`);
   const text = parts.join(" · ") || "details";
   return <span className="small muted" title={JSON.stringify(d, null, 1)}>{text}</span>;
 }

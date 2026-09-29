@@ -173,7 +173,7 @@ Inside each `core/` folder:
 | File | What's in it |
 |---|---|
 | [db/models.py](backend/app/db/models.py) | Tables: `User`, `Session`, `ActivityLog`, `Upload`, `Run`, `RunInput`, `RunNote`, `RunFigure`, `RunTable` |
-| [db/migrate.py](backend/app/db/migrate.py) | Adds new columns to an existing database, and the triggers that make the activity log append-only |
+| [db/migrate.py](backend/app/db/migrate.py) | Adds new columns to an existing database, and the trigger that stops activity log rows being edited |
 | [manage.py](backend/app/manage.py) | Command line for whoever runs the server: first admin, database checks, copying data across |
 | [storage/files.py](backend/app/storage/files.py) | File store. Each file is saved under the hash of its bytes, so identical files are stored once |
 | [jobs/worker.py](backend/app/jobs/worker.py) | Background thread that runs queued builds one at a time |
@@ -585,18 +585,29 @@ sign-out, password change, upload, build, scorecard view, approval, deletion,
 CSV export and admin action. Each row stores the time (UTC), the person, the IP
 address, the browser, and whether it succeeded, failed or was refused.
 
-**It is kept forever and cannot be changed.** Database triggers refuse any
-`UPDATE` or `DELETE` on the table, whoever sends it. On MySQL, creating
-triggers needs more privileges than the app's own database user should have,
-so the database admin runs this once:
+**Rows can never be edited.** A database trigger refuses any `UPDATE` on the
+table, whoever sends it, so no row can be made to say something else.
+
+**Only a system admin can delete rows**, from the **Delete activity** card at
+the bottom of the Activity screen: one event (the bin on its row), the events
+ticked on the page, or the whole of a day, a week (Monday to Sunday) or a
+month, or everything. The card says how many events a choice covers before
+anything goes, and asks once more. Every deletion writes a row of its own
+(**Deleted activity**: who, when, what period, how many), so even "Everything"
+leaves one row behind, and deletions show among the alerts. Anyone else who
+tries gets a 403, which is logged too.
+
+On MySQL, creating or dropping triggers needs more privileges than the app's
+own database user should have, so the database admin runs this once (and again
+after upgrading from a version whose log also refused deletes):
 
 ```bash
 python -m app.manage protect-log --as "mysql://root:ROOTPASS@localhost/scorecard"
 ```
 
-If the triggers are missing, the app still starts but logs a warning every
-time it does. For the same reason the app's MySQL user should not have `DROP`
-permission, because `TRUNCATE` would get around the triggers.
+If the trigger is missing, the app still starts but logs a warning every time
+it does. For the same reason the app's MySQL user should not have `DROP`
+permission, because `TRUNCATE` would get around the app's rules.
 
 ### Alerts
 The **Activity** screen works these out from the log for the chosen period:

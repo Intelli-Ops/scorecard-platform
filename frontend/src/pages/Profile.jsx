@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, device, stamp, when } from "../api";
 import { useAuth } from "../auth";
+import { useLoad } from "../hooks";
+import { reportShort } from "../reports";
 import { Card, DataTable, ErrorBox, Loading, Outcome, PasswordInput } from "../components";
 import { Button } from "../buttons";
 import { LeaveIcon } from "../icons";
@@ -106,24 +108,15 @@ function NameForm({ user, onSaved }) {
 
 export default function Profile() {
   const { user, setUser } = useAuth();
-  const [sessions, setSessions] = useState(null);
-  const [activity, setActivity] = useState(null);
-  const [error, setError] = useState(null);
+  const { data, error, setError, reload } =
+    useLoad(() => Promise.all([api.mySessions(), api.myActivity()]), []);
+  const [sessions, activity] = data ?? [null, null];
 
-  async function load() {
-    try {
-      const [s, a] = await Promise.all([api.mySessions(), api.myActivity()]);
-      setSessions(s); setActivity(a);
-    } catch (e) { setError(e); }
-  }
-  useEffect(() => { load(); }, []);
-
-  async function end(id) {
-    try { await api.endSession(id); await load(); } catch (e) { setError(e); }
-  }
-  async function endOthers() {
-    try { await api.endOtherSessions(); await load(); } catch (e) { setError(e); }
-  }
+  const act = (fn) => async (...args) => {
+    try { await fn(...args); await reload(); } catch (e) { setError(e); }
+  };
+  const end = act(api.endSession);
+  const endOthers = act(api.endOtherSessions);
 
   const others = sessions?.filter((s) => !s.current).length ?? 0;
 
@@ -146,7 +139,7 @@ export default function Profile() {
             <dt>Scorecards</dt>
             <dd>{user.is_admin ? "All scorecards"
                  : user.reports.length
-                   ? user.reports.map((k) => ({ gfs: "GFS", all_providers: "All Providers" }[k] ?? k)).join(", ")
+                   ? user.reports.map(reportShort).join(", ")
                    : "None yet. Ask an admin."}</dd>
             <dt>Member since</dt><dd>{stamp(user.created_at)}</dd>
             <dt>Password set</dt><dd>{stamp(user.password_changed_at) || "-"}</dd>
@@ -156,7 +149,7 @@ export default function Profile() {
 
         <Card title="Change password"
               sub="Your other sessions are signed out when you change it.">
-          <PasswordForm onDone={(u) => { setUser(u); load(); }} />
+          <PasswordForm onDone={(u) => { setUser(u); reload(); }} />
         </Card>
       </div>
 

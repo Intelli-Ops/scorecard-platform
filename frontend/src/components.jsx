@@ -46,15 +46,24 @@ export function Card({ title, sub, right, flush, children }) {
   );
 }
 
-export function Tile({ label, value, foot }) {
+/* A headline figure. `tone` tints the accent bar; `onClick` makes the tile
+   a button, which is the only thing that should ever look pressable. */
+export function Stat({ label, value, foot, tone, onClick, active, title }) {
+  const cls = ["tile", tone ? `tone-${tone}` : "", onClick ? "clickable" : "",
+               active ? "active" : ""].filter(Boolean).join(" ");
+  const Node = onClick ? "button" : "div";
   return (
-    <div className="tile">
+    <Node className={cls} onClick={onClick} title={title}
+          type={onClick ? "button" : undefined}>
       <div className="label">{label}</div>
       <div className="value">{value}</div>
       {foot && <div className="foot">{foot}</div>}
-    </div>
+    </Node>
   );
 }
+
+/* The same tile under its older name. */
+export const Tile = Stat;
 
 /* The one filter control, used everywhere a filter is needed.
 

@@ -11,35 +11,52 @@ wrong passwords sticks even though the request ends in an error.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..db.models import User
 from ..db.session import session
-from ..service import audit, auth
+from ..service import audit, auth, ratelimit
 from .deps import _token, signed_in
 
 router = APIRouter(prefix="/api/auth")
 me_router = APIRouter(prefix="/api/me")
 
 
+# Bounded before anything reads them. The email of a failed sign-in is stored
+# in the activity log as typed; longer than its column, MySQL refuses the row
+# and the failure goes unrecorded. The rest keep a request body a request body.
+Email = Field(max_length=320)
+Password = Field(max_length=256)
+
+
 class SignUp(BaseModel):
-    email: str
-    apd_id: str
-    password: str
+    email: str = Email
+    apd_id: str = Field(max_length=16)
+    password: str = Password
 
 
 class SignIn(BaseModel):
-    email: str
-    password: str
+    email: str = Email
+    password: str = Password
 
 
 class Profile(BaseModel):
-    display_name: str | None = None
+    display_name: str | None = Field(default=None, max_length=400)
 
 
 class PasswordChange(BaseModel):
-    current: str
-    new: str
+    current: str = Password
+    new: str = Password
+
+
+def _too_many(key: str, rule: tuple[int, int], what: str) -> None:
+    wait = ratelimit.blocked(key, rule)
+    if wait:
+        minutes = max(1, round(wait / 60))
+        raise HTTPException(
+            429, f"Too many {what}. Try again in {minutes} "
+                 f"minute{'s' if minutes != 1 else ''}.",
+            headers={"Retry-After": str(wait)})
 
 
 @router.get("/rules")
@@ -56,6 +73,9 @@ def rules() -> dict:
 def signup(body: SignUp, request: Request) -> dict:
     """Create an account. It waits for an admin before it can sign in, so no
     token comes back - see auth.sign_up for why."""
+    ip = audit.client_of(request)[0] or "?"
+    _too_many(f"signup:{ip}", ratelimit.SIGNUPS, "new accounts from this address")
+    ratelimit.hit(f"signup:{ip}", ratelimit.SIGNUPS)
     with session() as s:
         try:
             user = auth.sign_up(s, body.email, body.apd_id, body.password)
@@ -72,6 +92,8 @@ def signup(body: SignUp, request: Request) -> dict:
 @router.post("/login")
 def login(body: SignIn, request: Request) -> dict:
     ip, ua = audit.client_of(request)
+    _too_many(f"login:{ip}", ratelimit.LOGIN_FAILURES,
+              "failed sign-ins from this address")
     refused: auth.LoginRefused | None = None
     with session() as s:
         try:
@@ -82,6 +104,7 @@ def login(body: SignIn, request: Request) -> dict:
             refused = e                 # let the session commit the counters
 
     if refused is not None:
+        ratelimit.hit(f"login:{ip}", ratelimit.LOGIN_FAILURES)
         audit.record("auth.login", request=request, user=refused.user,
                      email=refused.email, outcome="failure",
                      detail={"reason": refused.reason})
@@ -139,7 +162,12 @@ def update_profile(body: Profile, request: Request,
 def change_password(body: PasswordChange, request: Request,
                     user: User = Depends(signed_in)) -> dict:
     """Change your own password. Your other sessions are signed out; this one
-    stays, so changing it does not throw you back to the sign-in page."""
+    stays, so changing it does not throw you back to the sign-in page.
+
+    Wrong current passwords are limited per account: a session left open on
+    someone else's screen must not be a way to guess the password itself."""
+    key = f"password:{user.id}"
+    _too_many(key, ratelimit.PASSWORD_FAILURES, "wrong passwords")
     failed: str | None = None
     with session() as s:
         row = s.get(User, user.id)
@@ -151,6 +179,7 @@ def change_password(body: PasswordChange, request: Request,
         except auth.AuthError as e:
             failed = str(e)
     if failed:
+        ratelimit.hit(key, ratelimit.PASSWORD_FAILURES)
         audit.record("auth.password_change", request=request, user=user,
                      outcome="failure", detail={"reason": failed})
         raise HTTPException(400, failed)

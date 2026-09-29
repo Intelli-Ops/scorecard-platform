@@ -25,11 +25,7 @@ import re
 
 import polars as pl
 
-
-def _i64(col: str) -> pl.Expr:
-    """Excel hands integers back as floats (3120398.0). Normalise before joining -
-    a float/int mismatch on a join key silently produces zero matches."""
-    return pl.col(col).cast(pl.Float64, strict=False).round(0).cast(pl.Int64)
+from ...common import i64 as _i64
 
 
 @dataclass

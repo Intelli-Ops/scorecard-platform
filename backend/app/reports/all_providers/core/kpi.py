@@ -19,15 +19,10 @@ those rows change whenever a provider is taken on.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-import re
 
 import polars as pl
 
-
-def norm(s: object) -> str:
-    """Match sheet labels to source groups ignoring case and punctuation.
-    The sheet says 'BayCo', the Supporting File says 'Bayco'."""
-    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+from ...common import find_row as _find_row, norm
 
 
 @dataclass
@@ -428,11 +423,3 @@ def head_marker(head: list[str], row: list) -> tuple[list[str], list]:
     """Keep each source row next to the header it was read under - the three blocks
     repeat their own header, and nothing guarantees the columns line up."""
     return head, row
-
-
-def _find_row(rows: list[list], marker: str) -> int | None:
-    want = norm(marker)
-    for i, r in enumerate(rows):
-        if r and norm(r[0]) == want:
-            return i
-    return None

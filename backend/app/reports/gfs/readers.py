@@ -21,28 +21,12 @@ import time
 import fastexcel
 import polars as pl
 
-from ..cache import Cache, NoCache, ParquetCache
+from ..cache import Cache
 from ..locate import SourceSet
 from ..notes import Note, info, warning
+from ..reading import FileRead, timed_reader
 from .core.case_ar import gfs_case_ids
 
-
-@dataclass
-class FileRead:
-    """What one read produced. Shown on the review screen.
-
-    key identifies the read; source_key identifies the UPLOADED FILE it came
-    from, and the two are not always the same. The delta workbooks are read
-    once per sheet - three sheets out of two files - so several reads share
-    one source_key and the run's audit trail has to add them up.
-    """
-    key: str
-    source_key: str
-    label: str
-    filename: str
-    rows: int
-    seconds: float
-    from_cache: bool = False
 
 
 @dataclass
@@ -72,21 +56,9 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
     if not sources.ok:
         raise FileNotFoundError("; ".join(sources.problems()))
 
-    cache = cache or NoCache()
     reads: list[FileRead] = []
     notes: list[Note] = []
-
-    def timed(key: str, label: str, path, load, source_key: str | None = None):
-        """Read one sheet, recording how long it took and how much came back."""
-        t = time.perf_counter()
-        ck = (ParquetCache.key_for(key, path)
-              if isinstance(cache, ParquetCache) else key)
-        df = cache.get_or_read(ck, load)
-        elapsed = time.perf_counter() - t
-        reads.append(FileRead(key=key, source_key=source_key or key, label=label,
-                              filename=path.name, rows=df.height,
-                              seconds=elapsed, from_cache=elapsed < 0.25))
-        return df
+    timed = timed_reader(cache, reads)
 
     # --- the two Case AR files ------------------------------------------
     owner_path = sources.path("owner_case_ar")

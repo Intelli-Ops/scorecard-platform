@@ -355,16 +355,17 @@ class RunTable(Base):
 
 
 class ActivityLog(Base):
-    """Who did what, when, and from where. Kept forever; only ever added to.
+    """Who did what, when, and from where. Kept until a system admin deletes it.
 
     The security record. Every sign-in (and every failed one), every upload,
     build, approval, deletion and export, and every change an admin makes to an
     account is one row here.
 
-    Append-only, enforced by the DATABASE rather than by this code: triggers
-    (see session.py) refuse any UPDATE or DELETE on this table, so neither a
-    bug nor someone holding the app's own credentials can quietly rewrite what
-    happened.
+    Never edited, enforced by the DATABASE rather than by this code: a trigger
+    (see migrate.py) refuses any UPDATE on this table, so neither a bug nor
+    someone holding the app's own credentials can make a row say something
+    else. Rows can be deleted - only by a system admin, from the Activity
+    screen - and every deletion writes a row of its own saying what went.
 
     No foreign key to the account on purpose. A failed sign-in may name no
     account at all, and the record of what someone did must never depend on

@@ -12,6 +12,7 @@ import polars as pl
 
 from ..reports.all_providers.core import case_ar as ap_case_ar
 from ..reports.gfs.core import case_ar as gfs_case_ar
+from .runner import column_kinds
 
 GRAND_TOTAL = "Grand Total"
 
@@ -56,9 +57,7 @@ def case_ar(raw: pl.DataFrame, rules: dict, report_key: str,
         # Drop it and add one here, so both tabs total the same way.
         pivot = pivot.filter(pl.col(first).cast(pl.Utf8) != GRAND_TOTAL)
         columns = pivot.columns
-        kinds = {c: ("text" if dt == pl.Utf8 else
-                     "float" if dt in (pl.Float32, pl.Float64) else "int")
-                 for c, dt in zip(pivot.columns, pivot.dtypes)}
+        kinds = column_kinds(pivot.schema)
         total = {c: (GRAND_TOTAL if c == first else "") if kinds[c] == "text"
                  else pivot[c].sum() for c in columns}
         rows = pivot.to_dicts() + [total]

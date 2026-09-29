@@ -21,7 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import hashlib
-import shutil
+import os
+import tempfile
 
 CHUNK = 1024 * 1024      # 1 MB - big files are never held whole in memory
 
@@ -52,24 +53,36 @@ class FileStore:
         return self.root / sha[:2] / f"{sha}{suffix.lower()}"
 
     def put(self, source: Path) -> StoredFile:
+        """Store a file under the hash of its bytes.
+
+        One pass: the bytes are hashed as they are copied into a private
+        temporary file, which is then renamed onto its address. Hashing,
+        copying and re-hashing read a 240 MB workbook three times. A write
+        cut short by a full disk raises, and the half-written file is removed
+        rather than renamed.
+        """
         source = Path(source)
-        sha = sha256_of(source)
-        dest = self._path_for(sha, source.suffix)
-        size = source.stat().st_size
-
-        if dest.exists():
-            return StoredFile(sha, size, dest, deduplicated=True)
-
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(dest.suffix + ".part")
-        shutil.copyfile(source, tmp)
-        # Re-hash what actually landed. A copy that was truncated by a full
-        # disk must not be recorded as a good upload.
-        if sha256_of(tmp) != sha:
+        self.root.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=self.root, suffix=".part")
+        tmp = Path(tmp_name)
+        h, size = hashlib.sha256(), 0
+        try:
+            with open(source, "rb") as src, os.fdopen(fd, "wb") as out:
+                while chunk := src.read(CHUNK):
+                    h.update(chunk)
+                    out.write(chunk)
+                    size += len(chunk)
+            sha = h.hexdigest()
+            dest = self._path_for(sha, source.suffix)
+            if dest.exists():
+                tmp.unlink()
+                return StoredFile(sha, size, dest, deduplicated=True)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp.replace(dest)
+            return StoredFile(sha, size, dest)
+        except BaseException:
             tmp.unlink(missing_ok=True)
-            raise IOError(f"{source.name}: content changed while being stored")
-        tmp.replace(dest)
-        return StoredFile(sha, size, dest)
+            raise
 
     def path(self, sha: str, suffix: str) -> Path:
         p = self._path_for(sha, suffix)

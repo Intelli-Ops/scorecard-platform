@@ -16,14 +16,13 @@ import tempfile
 from pathlib import Path
 
 import polars as pl
-import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db.models import (MonthSetting, Run, RunFigure, RunInput, RunNote,
                          RunTable, Upload)
-from ..reports import ReportType, get as get_report
+from ..reports import ReportType, get as get_report, load_rules
 from ..reports.cache import ParquetCache
 from ..reports.period import reporting_period
 from ..storage.files import FileStore
@@ -82,7 +81,7 @@ def execute(session: Session, store: FileStore, report_key: str, week: str,
         if not ss.ok:
             raise FileNotFoundError("; ".join(ss.problems()))
 
-        rules = yaml.safe_load(report.rules_path.read_text())
+        rules = load_rules(report_key)
         _apply_working_days(session, run, rules, week)
         cache = ParquetCache(settings.data_dir / "cache" / week / report_key)
         src = read_sources(ss, rules, cache)
@@ -154,15 +153,52 @@ def _apply_working_days(session: Session, run: Run, rules: dict, week: str) -> N
     run.working_days_source = "entered" if row is not None else "calendar"
 
 
-def table(session: Session, run: Run, name: str,
-          results: FileStore | None = None) -> pl.DataFrame:
-    """Read one table a run produced back out of the store."""
-    results = results or FileStore(settings.results_dir)
+def _table_row(run: Run, name: str) -> RunTable:
     row = next((t for t in run.tables if t.name == name), None)
     if row is None:
         raise KeyError(f"run {run.id} produced no table {name!r} "
                        f"(has: {', '.join(t.name for t in run.tables)})")
-    return pl.read_parquet(results.path(row.sha256, ".parquet"))
+    return row
+
+
+def _table_path(run: Run, name: str, results: FileStore | None) -> Path:
+    results = results or FileStore(settings.results_dir)
+    return results.path(_table_row(run, name).sha256, ".parquet")
+
+
+def table(session: Session, run: Run, name: str,
+          results: FileStore | None = None) -> pl.DataFrame:
+    """Read one table a run produced back out of the store."""
+    return pl.read_parquet(_table_path(run, name, results))
+
+
+def table_page(run: Run, name: str, offset: int, limit: int,
+               results: FileStore | None = None) -> tuple[pl.DataFrame, int, dict]:
+    """One page of a produced table: (rows, total row count, column kinds).
+
+    Only the page is read. Loading all 278,930 rows of Raw Data to hand back
+    fifty of them made every Next press cost a full read of the file.
+    """
+    row = _table_row(run, name)
+    lazy = pl.scan_parquet(_table_path(run, name, results))
+    return (lazy.slice(offset, limit).collect(), row.rows,
+            column_kinds(lazy.collect_schema()))
+
+
+_INTS = (pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+         pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64)
+
+
+def column_kinds(schema) -> dict[str, str]:
+    """How the browser should draw each column: "float", "int" or "text".
+
+    Sent with the rows rather than guessed per cell - a guess put "$3,071"
+    beside a bare "614" in one money column, because 614.0 is a whole number
+    and 3070.59 is not.
+    """
+    return {c: ("float" if t in (pl.Float32, pl.Float64)
+                else "int" if t in _INTS else "text")
+            for c, t in schema.items()}
 
 
 def approve(session: Session, run: Run, by: str) -> Run:

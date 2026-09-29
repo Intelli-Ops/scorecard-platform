@@ -27,7 +27,11 @@ shared.
 """
 from __future__ import annotations
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
+import copy
+
+import yaml
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,7 @@ CASE_AR_SOURCES: tuple[SourceFile, ...] = (
     SourceFile("custom_case_ar", ("combined custom", "case ar"),
                label="Combined Custom Case AR"),
 )
+CASE_AR_KEYS: frozenset[str] = frozenset(s.key for s in CASE_AR_SOURCES)
 
 
 @dataclass(frozen=True)
@@ -132,3 +137,18 @@ def get(key: str) -> ReportType:
         raise KeyError(f"unknown report type {key!r}; "
                        f"known: {', '.join(sorted(REPORTS))}")
     return REPORTS[key]
+
+
+@lru_cache(maxsize=None)
+def _parsed_rules(path: Path, mtime_ns: int) -> dict:
+    return yaml.safe_load(path.read_text()) or {}
+
+
+def load_rules(key: str) -> dict:
+    """A report's rules.yml, parsed once and reused until the file changes.
+
+    A fresh copy every call: a build writes the month's working days into the
+    dict it is given, and that must not leak into the next build or request.
+    """
+    path = get(key).rules_path
+    return copy.deepcopy(_parsed_rules(path, path.stat().st_mtime_ns))

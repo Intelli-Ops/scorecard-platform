@@ -29,9 +29,12 @@ class NoCache:
 class ParquetCache:
     """One parquet file per source, per week.
 
-    Keyed by content, not by filename: the cache key includes the size and
-    modified time of the file it came from, so replacing an upload with a
-    corrected copy re-reads it instead of quietly serving the old numbers.
+    Keyed by content, not by filename: the cache key includes the stored
+    file's name - in the object store, the SHA-256 of its bytes - as well as
+    its size and modified time, so replacing an upload with a corrected copy
+    re-reads it instead of quietly serving the old numbers. Size and time
+    alone could not tell apart two corrections of equal size stored within
+    the same second.
     """
 
     def __init__(self, directory: Path):
@@ -40,7 +43,7 @@ class ParquetCache:
     @staticmethod
     def key_for(name: str, source: Path) -> str:
         st = source.stat()
-        return f"{name}-{st.st_size}-{int(st.st_mtime)}"
+        return f"{name}-{source.stem[:16]}-{st.st_size}-{int(st.st_mtime)}"
 
     def get_or_read(self, key: str, read: Callable[[], pl.DataFrame]) -> pl.DataFrame:
         path = self.dir / f"{key}.parquet"

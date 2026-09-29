@@ -19,12 +19,9 @@ from __future__ import annotations
 import polars as pl
 
 from ...period import Period, week_index_expr
+from ...common import i64
 
 MONEY = r"[,$%\s]"
-
-
-def i64(c: str) -> pl.Expr:
-    return pl.col(c).cast(pl.Float64, strict=False).round(0).cast(pl.Int64)
 
 
 def settlement_grids(comb: pl.DataFrame, gfs_cases: pl.DataFrame, prov: pl.DataFrame,

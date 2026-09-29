@@ -9,11 +9,9 @@ from __future__ import annotations
 import datetime as dt
 import io
 import re
-import shutil
 import tempfile
+import threading
 from pathlib import Path
-
-import polars as pl
 
 from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
                      Request, UploadFile)
@@ -25,8 +23,8 @@ from ..config import settings
 from ..db.models import MonthSetting, Run, RunFigure, Upload, User
 from ..db.session import session
 from ..jobs import worker
-from ..reports import CASE_AR_SOURCES, REPORTS, get as get_report
-from ..service import audit, review as review_service, runner
+from ..reports import CASE_AR_KEYS, REPORTS, load_rules
+from ..service import audit, csvsafe, review as review_service, runner
 from ..service.ingest import ingest, week_status
 from ..storage.files import FileStore
 from .deps import current_user, require_admin
@@ -78,13 +76,12 @@ def _week(week: str) -> str:
 @router.get("/reports", dependencies=[Depends(require_admin)])
 def list_reports() -> list[dict]:
     """The two scorecards, and which files each one needs."""
-    case_ar = {s.key for s in CASE_AR_SOURCES}
     return [{
         "key": r.key, "label": r.label, "short": r.short,
         "send_day": r.send_day,
         "sheets": list(r.sheets),
         "sources": [{"key": s.key, "label": s.label, "required": s.required,
-                     "per_report": s.key in case_ar}
+                     "per_report": s.key in CASE_AR_KEYS}
                     for s in r.sources],
     } for r in REPORTS.values()]
 
@@ -136,11 +133,28 @@ def delete_week(week: str, request: Request,
     return out
 
 
-@router.post("/weeks/{week}/uploads", dependencies=[Depends(require_admin)])
-async def upload(week: str, request: Request,
-                 files: list[UploadFile] = File(...),
-                 for_report: str | None = Form(None),
-                 user=Depends(require_admin)) -> dict:
+def _save_upload(f: UploadFile, dest: Path, limit: int) -> None:
+    """Stream one uploaded file to disk, refusing it past `limit` bytes."""
+    size = 0
+    with open(dest, "wb") as out:
+        while chunk := f.file.read(1024 * 1024):
+            size += len(chunk)
+            if size > limit:
+                raise HTTPException(
+                    413, f"{dest.name} is larger than "
+                         f"{settings.max_upload_mb} MB - is it the right file?")
+            out.write(chunk)
+
+
+# A plain def, not async: FastAPI runs it on a worker thread. Everything in it
+# blocks - copying, hashing, the database - and in an async def that stalled
+# the whole server, every other request included, for as long as a 385 MB
+# upload took.
+@router.post("/weeks/{week}/uploads")
+def upload(week: str, request: Request,
+           files: list[UploadFile] = File(...),
+           for_report: str | None = Form(None),
+           user=Depends(require_admin)) -> dict:
     """Receive this week's files.
 
     for_report is needed only for the two Case AR files. Anything that is not
@@ -161,11 +175,12 @@ async def upload(week: str, request: Request,
             # The name is cut at either kind of slash: a browser on Windows
             # may send "C:\\...\\file.xlsx", which Path on Linux would take
             # as one long filename.
-            name = re.split(r"[\\/]", f.filename or "")[-1] or "unnamed"
+            name = re.split(r"[\\/]", f.filename or "")[-1].strip()
+            if name in ("", ".", ".."):
+                name = "unnamed"
             dest = Path(tmp) / str(i) / name
             dest.parent.mkdir()
-            with open(dest, "wb") as out:
-                shutil.copyfileobj(f.file, out, length=1024 * 1024)
+            _save_upload(f, dest, settings.max_upload_mb * 1024 * 1024)
             landed.append(dest)
 
         with session() as s:
@@ -191,6 +206,9 @@ async def upload(week: str, request: Request,
     return out
 
 
+_submitting = threading.Lock()
+
+
 @router.post("/runs")
 def start_run(request: Request, report: str = Query(...),
               week: str = Query(...), as_of: dt.date | None = Query(None),
@@ -204,20 +222,22 @@ def start_run(request: Request, report: str = Query(...),
     if report not in REPORTS:
         raise HTTPException(404, f"unknown report {report!r}")
 
-    with session() as s:
-        busy = s.execute(select(Run.id).where(
-            Run.report_key == report, Run.week == week,
-            Run.status.in_(("pending", "running"))).limit(1)).scalar_one_or_none()
-        if busy is not None:
-            raise HTTPException(409, {"message": "This week is already being "
-                                                 "built.", "run_id": busy})
-        st = week_status(s, week)["reports"][report]
-        if not st["ready"]:
-            raise HTTPException(
-                409, {"message": f"{st['label']} cannot be built yet",
-                      "missing": st["missing"]})
-
-    run_id = worker.submit(report, week, as_of)
+    # Checked and queued under one lock. Two presses arriving together each
+    # found nothing running, and both queued the same build.
+    with _submitting:
+        with session() as s:
+            busy = s.execute(select(Run.id).where(
+                Run.report_key == report, Run.week == week,
+                Run.status.in_(("pending", "running"))).limit(1)).scalar_one_or_none()
+            if busy is not None:
+                raise HTTPException(409, {"message": "This week is already being "
+                                                     "built.", "run_id": busy})
+            st = week_status(s, week)["reports"][report]
+            if not st["ready"]:
+                raise HTTPException(
+                    409, {"message": f"{st['label']} cannot be built yet",
+                          "missing": st["missing"]})
+        run_id = worker.submit(report, week, as_of)
     audit.record("run.start", request=request, user=user,
                  target=f"run {run_id}", detail={"report": report, "week": week})
     return {"run_id": run_id, "status": "pending", "queued_ahead": worker.depth() - 1}
@@ -250,8 +270,7 @@ def _month_info(s, week: str) -> dict:
 def _rules() -> dict:
     """The holidays both reports' rules agree on - what the calendar count
     leaves out. The two rules files keep the same list."""
-    import yaml
-    return yaml.safe_load(get_report("gfs").rules_path.read_text()) or {}
+    return load_rules("gfs")
 
 
 @router.get("/weeks/{week}/month", dependencies=[Depends(require_admin)])
@@ -478,7 +497,8 @@ def get_figures(run_id: int, name: str, request: Request,
 
 @router.get("/runs/{run_id}/tables/{name}")
 def get_table(run_id: int, name: str, request: Request,
-              limit: int = Query(100, le=5000), offset: int = 0,
+              limit: int = Query(100, ge=1, le=5000),
+              offset: int = Query(0, ge=0),
               user=Depends(current_user)) -> dict:
     """A page of one produced table.
 
@@ -489,21 +509,12 @@ def get_table(run_id: int, name: str, request: Request,
     with session() as s:
         run = _readable(s.get(Run, run_id), user, request)
         try:
-            df = runner.table(s, run, name)
+            page, rows, kinds = runner.table_page(run, name, offset, limit)
         except KeyError as e:
             raise HTTPException(404, str(e))
-        page = df.slice(offset, limit)
-        # The column types travel with the page. Guessing per cell in the
-        # browser made one money column render "$3,071" beside a bare "614",
-        # because 614.0 is a whole number and 3070.59 is not.
-        kinds = {c: ("float" if dt in (pl.Float32, pl.Float64)
-                     else "int" if dt in (pl.Int8, pl.Int16, pl.Int32, pl.Int64,
-                                          pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64)
-                     else "text")
-                 for c, dt in zip(df.columns, df.dtypes)}
-        return {"name": name, "rows": df.height, "columns": df.columns,
-                "kinds": kinds, "offset": offset, "limit": limit,
-                "data": page.to_dicts()}
+    return {"name": name, "rows": rows, "columns": list(kinds),
+            "kinds": kinds, "offset": offset, "limit": limit,
+            "data": page.to_dicts()}
 
 
 @router.get("/runs/{run_id}/case-ar")
@@ -511,7 +522,6 @@ def get_case_ar(run_id: int, request: Request, group: str | None = None,
                 file_status: str | None = None, validity: str | None = None,
                 user=Depends(current_user)) -> dict:
     """The Case AR pivot, re-built from Raw Data for the filters chosen."""
-    import yaml
     from ..service.case_ar_view import case_ar
     with session() as s:
         run = _readable(s.get(Run, run_id), user, request)
@@ -520,8 +530,7 @@ def get_case_ar(run_id: int, request: Request, group: str | None = None,
             raw = runner.table(s, run, "raw_data")
         except KeyError as e:
             raise HTTPException(404, str(e))
-    rules = yaml.safe_load(get_report(key).rules_path.read_text()) or {}
-    return case_ar(raw, rules, key, {"group": group, "file_status": file_status,
+    return case_ar(raw, load_rules(key), key, {"group": group, "file_status": file_status,
                                      "validity": validity})
 
 
@@ -548,7 +557,7 @@ def download_table(run_id: int, name: str, request: Request,
             raise HTTPException(404, str(e))
 
         buf = io.BytesIO()
-        df.write_csv(buf)
+        csvsafe.frame(df).write_csv(buf)
         buf.seek(0)
         filename = f"{run.report_key}-{run.week}-{name}.csv"
         audit.record("table.export", request=request, user=user,

@@ -6,6 +6,7 @@ import WorkingDays from "../WorkingDays";
 import { Card, DataTable, ErrorBox, Loading, Picker }
   from "../components";
 import { Button, DeleteButton } from "../buttons";
+import { REPORT_OPTIONS } from "../reports";
 
 /* Uploading a week.
 
@@ -131,8 +132,8 @@ export default function Weeks() {
                     onClear={() => setForReport("")}
                     options={[
                       { value: "", label: "Shared files only" },
-                      { value: "gfs", label: "GFS · Tuesday" },
-                      { value: "all_providers", label: "All Providers · Thursday" },
+                      ...REPORT_OPTIONS.map((r) => (
+                        { value: r.key, label: `${r.short} · ${r.sendDay}` })),
                     ]} />
             {uploaded > 0 && user.is_admin && (
               <DeleteButton

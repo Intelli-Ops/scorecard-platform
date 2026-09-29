@@ -37,10 +37,7 @@ from dataclasses import dataclass, field
 import polars as pl
 
 from ...period import Period, week_index_expr
-
-
-def _i64(c: str) -> pl.Expr:
-    return pl.col(c).cast(pl.Float64, strict=False).round(0).cast(pl.Int64)
+from ...common import i64 as _i64
 
 
 MONEY = r"[,$%\s]"

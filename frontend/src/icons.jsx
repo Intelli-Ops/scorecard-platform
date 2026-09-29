@@ -97,3 +97,81 @@ export const DownloadIcon = () => (
     <path d="M2.8 9.8v1a.9.9 0 0 0 .9.9h6.6a.9.9 0 0 0 .9-.9v-1" {...S} />
   </Icon>
 );
+
+/* ------------------------------------------------------------ the menu
+
+   The sidebar's icons: a size larger than the button icons above, on a 16px
+   grid. The menu button is drawn differently from every menu ITEM, so it
+   cannot be mistaken for one the way two identical "three lines" glyphs
+   were. */
+
+const NAV = { fill: "none", stroke: "currentColor", strokeWidth: 1.6,
+              strokeLinecap: "round", strokeLinejoin: "round" };
+
+export function MenuIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+      {[4.5, 9, 13.5].map((y) => (
+        <line key={y} x1="2" y1={y} x2="16" y2={y} {...NAV} />
+      ))}
+    </svg>
+  );
+}
+
+/* An arrow going up out of a tray - uploading. */
+export const NavUploadIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M8 10.5V2.5M4.8 5.7 8 2.5l3.2 3.2" {...NAV} />
+    <path d="M2.5 10.5v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2" {...NAV} />
+  </svg>
+);
+
+/* Stacked rows with a clock hand - a list of past builds. */
+export const NavHistoryIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M2.5 4h11M2.5 8h6M2.5 12h6" {...NAV} />
+    <circle cx="12" cy="11" r="3.2" {...NAV} />
+    <path d="M12 9.4V11l1.1.9" {...NAV} />
+  </svg>
+);
+
+/* Two people - everyone's accounts. */
+export const NavPeopleIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <circle cx="6" cy="5.8" r="2.4" {...NAV} />
+    <path d="M1.8 13.5c.5-2.3 2.2-3.7 4.2-3.7s3.7 1.4 4.2 3.7" {...NAV} />
+    <path d="M10.6 3.6a2.4 2.4 0 0 1 0 4.5M12 9.9c1.2.5 2 1.8 2.3 3.6" {...NAV} />
+  </svg>
+);
+
+/* A head and shoulders - your own account. */
+export const NavPersonIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <circle cx="8" cy="5.5" r="2.8" {...NAV} />
+    <path d="M2.8 13.8c.6-2.7 2.7-4.3 5.2-4.3s4.6 1.6 5.2 4.3" {...NAV} />
+  </svg>
+);
+
+/* A shield with a pulse line - the security record. */
+export const NavShieldIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M8 1.8 13.2 3.8v3.9c0 3.1-2.2 5.6-5.2 6.6-3-1-5.2-3.5-5.2-6.6V3.8Z" {...NAV} />
+    <path d="M4.8 8.2h1.6l1-1.8 1.4 3.3 1-1.5h1.4" {...NAV} />
+  </svg>
+);
+
+/* Three bars on a baseline - the scorecard itself. */
+export const NavChartIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M2.5 13.5h11" {...NAV} />
+    <path d="M4.5 11V8M8 11V4.5M11.5 11V6.5" {...NAV} strokeWidth="2" />
+  </svg>
+);
+
+/* A door with an arrow leaving it - signing out. */
+export const NavSignOutIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M6.5 2.5h-3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3" {...NAV} />
+    <path d="M10 5l3 3-3 3M13 8H6.5" {...NAV} />
+  </svg>
+);

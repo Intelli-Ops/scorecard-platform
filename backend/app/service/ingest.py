@@ -9,11 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..reports import (CASE_AR_SOURCES, REPORTS, SHARED_SOURCES, ReportType,
-                       SourceFile, get as get_report)
+from ..reports import CASE_AR_KEYS, REPORTS, ReportType, SourceFile
 from ..reports.locate import SourceSet, _matches
 from ..storage.files import FileStore
 from ..db.models import Upload
@@ -82,7 +81,6 @@ def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
     ever reveal it.
     """
     result = IngestResult()
-    case_ar_keys = {s.key for s in CASE_AR_SOURCES}
 
     for path in paths:
         path = Path(path)
@@ -91,13 +89,13 @@ def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
             result.rejected.append((path.name, "not one of the report inputs"))
             continue
 
-        if spec.key in case_ar_keys and for_report is None:
+        if spec.key in CASE_AR_KEYS and for_report is None:
             result.rejected.append(
                 (path.name, f"{spec.label} differs per report - say which report "
                             f"this copy is for"))
             continue
 
-        report_key = for_report if spec.key in case_ar_keys else None
+        report_key = for_report if spec.key in CASE_AR_KEYS else None
         stored = store.put(path)
 
         session.add(Upload(week=week, report_key=report_key, source_key=spec.key,
@@ -113,29 +111,33 @@ def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
     return result
 
 
-def latest_uploads(session: Session, report: ReportType,
-                   week: str) -> dict[str, Upload]:
+def _week_uploads(session: Session, week: str) -> list[Upload]:
+    """Every upload held for a week, newest first - one query, which each
+    report then picks its own files out of."""
+    return list(session.execute(
+        select(Upload).where(Upload.week == week)
+        .order_by(Upload.uploaded_at.desc(), Upload.id.desc())).scalars())
+
+
+def latest_uploads(session: Session, report: ReportType, week: str,
+                   rows: list[Upload] | None = None) -> dict[str, Upload]:
     """The upload each source_key currently resolves to for this report.
 
     Shared files match on report_key IS NULL; the two Case AR files must match
     this report specifically - falling back to another report's copy would
     silently mix Tuesday's and Thursday's data.
-    """
-    case_ar_keys = {s.key for s in CASE_AR_SOURCES}
-    out: dict[str, Upload] = {}
 
-    for spec in report.sources:
-        stmt = (select(Upload)
-                .where(Upload.week == week, Upload.source_key == spec.key)
-                .order_by(Upload.uploaded_at.desc(), Upload.id.desc())
-                .limit(1))
-        if spec.key in case_ar_keys:
-            stmt = stmt.where(Upload.report_key == report.key)
-        else:
-            stmt = stmt.where(Upload.report_key.is_(None))
-        row = session.execute(stmt).scalar_one_or_none()
-        if row is not None:
-            out[spec.key] = row
+    `rows` is the week's uploads, newest first, when the caller already has
+    them; otherwise they are fetched.
+    """
+    wanted = {s.key for s in report.sources}
+    out: dict[str, Upload] = {}
+    for row in (_week_uploads(session, week) if rows is None else rows):
+        if row.source_key not in wanted or row.source_key in out:
+            continue
+        scope = report.key if row.source_key in CASE_AR_KEYS else None
+        if row.report_key == scope:
+            out[row.source_key] = row
     return out
 
 
@@ -153,12 +155,10 @@ def week_status(session: Session, week: str) -> dict:
     # Every row held for the week, not just the latest per source. A corrected
     # re-upload is a new row and the old one is kept, so this is larger than
     # what `have` lists - and it is the number deleting the week would remove.
-    files = session.execute(select(func.count()).select_from(Upload)
-                            .where(Upload.week == week)).scalar_one()
-    out = {"week": week, "files": files, "reports": {}}
-    for key in ("gfs", "all_providers"):
-        report = get_report(key)
-        uploads = latest_uploads(session, report, week)
+    rows = _week_uploads(session, week)
+    out = {"week": week, "files": len(rows), "reports": {}}
+    for key, report in REPORTS.items():
+        uploads = latest_uploads(session, report, week, rows)
         out["reports"][key] = {
             "label": report.label,
             "send_day": report.send_day,

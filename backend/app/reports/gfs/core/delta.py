@@ -17,14 +17,12 @@ import datetime as dt
 
 import polars as pl
 
+from ...common import i64 as _i64
+
 FINDING_AND_AWARD_NOTE = (
     "'FINDING & AWARD' collapses to CIC Pending, matching the week-34 sheet and the "
     "Case AR path. The week-35 sheet left 11 such rows uncollapsed."
 )
-
-
-def _i64(c: str) -> pl.Expr:
-    return pl.col(c).cast(pl.Float64, strict=False).round(0).cast(pl.Int64)
 
 
 @dataclass

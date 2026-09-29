@@ -86,16 +86,17 @@ def upgrade_roles(engine: Engine) -> int:
     return n
 
 
-# ------------------------------------------------------------ append-only log
+# ------------------------------------------------------------ no rewriting the log
 
-_MESSAGE = "activity_log is append-only"
+# Rows of the activity log can be DELETED - by a system admin, from the
+# Activity screen, and every deletion is itself logged (see audit.delete) -
+# but never EDITED. A row either says what happened or is gone, and its going
+# is on record; nobody can make one say something else.
+_MESSAGE = "activity_log rows cannot be changed"
 
 _SQLITE = [
     f"""CREATE TRIGGER IF NOT EXISTS activity_log_no_update
         BEFORE UPDATE ON activity_log
-        BEGIN SELECT RAISE(ABORT, '{_MESSAGE}'); END""",
-    f"""CREATE TRIGGER IF NOT EXISTS activity_log_no_delete
-        BEFORE DELETE ON activity_log
         BEGIN SELECT RAISE(ABORT, '{_MESSAGE}'); END""",
 ]
 
@@ -103,30 +104,32 @@ _MYSQL = {
     "activity_log_no_update": f"""CREATE TRIGGER activity_log_no_update
         BEFORE UPDATE ON activity_log FOR EACH ROW
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '{_MESSAGE}'""",
-    "activity_log_no_delete": f"""CREATE TRIGGER activity_log_no_delete
-        BEFORE DELETE ON activity_log FOR EACH ROW
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '{_MESSAGE}'""",
 }
+
+# The guard that used to refuse deletes too. Dropped wherever it is found.
+_RETIRED = "activity_log_no_delete"
 
 
 def mysql_trigger_sql() -> list[str]:
     """The MySQL triggers, for the setup script to run as the database admin."""
-    return list(_MYSQL.values())
+    return [f"DROP TRIGGER IF EXISTS {_RETIRED}", *_MYSQL.values()]
 
 
 def protect_activity_log(engine: Engine) -> bool:
-    """Make the database itself refuse any UPDATE or DELETE on activity_log.
+    """Make the database itself refuse any UPDATE on activity_log, and let
+    DELETE through (the app allows it to system admins only, and logs it).
 
-    Returns True when the guard is in place. On MySQL, creating a trigger needs
-    the TRIGGER privilege, and with binary logging on (the default) it needs
-    more still - so the deployment's setup script creates them as the database
-    admin, and the app only checks they are there. If they are missing, the app
+    Returns True when the guard is in place. On MySQL, creating or dropping a
+    trigger needs the TRIGGER privilege, and with binary logging on (the
+    default) it needs more still - so the deployment's setup script does it as
+    the database admin, and the app only checks. If something is off, the app
     keeps running but says so loudly on every start: a server that refuses to
     come up is worse than one that tells you what it is missing.
     """
     name = engine.dialect.name
     with engine.begin() as conn:
         if name == "sqlite":
+            conn.execute(text(f"DROP TRIGGER IF EXISTS {_RETIRED}"))
             for sql in _SQLITE:
                 conn.execute(text(sql))
             return True
@@ -138,14 +141,16 @@ def protect_activity_log(engine: Engine) -> bool:
             "SELECT TRIGGER_NAME FROM information_schema.TRIGGERS "
             "WHERE TRIGGER_SCHEMA = DATABASE() "
             "AND EVENT_OBJECT_TABLE = 'activity_log'"))}
-    missing = [n for n in _MYSQL if n not in present]
-    for trigger in missing:
+    todo = ([f"DROP TRIGGER IF EXISTS {_RETIRED}"] if _RETIRED in present else [])
+    todo += [sql for n, sql in _MYSQL.items() if n not in present]
+    for sql in todo:
         try:
             with engine.begin() as conn:
-                conn.execute(text(_MYSQL[trigger]))
+                conn.execute(text(sql))
         except Exception as exc:                 # no privilege - see docstring
-            log.warning("activity_log is NOT protected: could not create %s "
-                        "(%s). Run `python -m app.manage protect-log` as the "
-                        "database admin.", trigger, exc.__class__.__name__)
+            log.warning("activity_log triggers are not as they should be: could "
+                        "not run %r (%s). Run `python -m app.manage protect-log` "
+                        "as the database admin.", sql.split(" ON ")[0],
+                        exc.__class__.__name__)
             return False
     return True

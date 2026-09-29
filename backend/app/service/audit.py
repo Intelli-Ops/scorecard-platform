@@ -12,7 +12,8 @@ writes in a session of its own, committed on its own, for two reasons:
     carries on. The alternative - refusing every action while the log is
     down - turns a logging fault into an outage.
 
-Nothing here updates or deletes a row. The database refuses to, anyway.
+Nothing here updates a row - the database refuses to. Rows are deleted only
+by delete(), for a system admin, and the deletion is logged in turn.
 """
 from __future__ import annotations
 import csv
@@ -22,11 +23,12 @@ import logging
 from dataclasses import dataclass
 
 from fastapi import Request
-from sqlalchemy import and_, func, or_, select, true
+from sqlalchemy import and_, delete as sql_delete, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from ..db.models import ActivityLog, User
 from ..db.session import session
+from .csvsafe import cell
 
 log = logging.getLogger("scorecard.audit")
 
@@ -59,6 +61,7 @@ ACTIONS: dict[str, str] = {
     "admin.password_reset":   "Reset a password",
     "admin.sign_out":         "Signed a user out",
     "admin.activity_export":  "Exported the activity log",
+    "admin.activity_delete":  "Deleted activity",
     "admin.denied":           "Tried an admin action",
 }
 
@@ -190,9 +193,10 @@ def export_csv(s: Session, f: Filters) -> io.StringIO:
             .order_by(ActivityLog.id.desc())
             .execution_options(yield_per=2000))
     for r in s.execute(stmt).scalars():
-        w.writerow([r.id, r.at.isoformat(), r.email or "", r.action,
-                    ACTIONS.get(r.action, r.action), r.outcome, r.target or "",
-                    r.ip or "", r.user_agent or "", r.detail or ""])
+        w.writerow([cell(v) for v in (
+            r.id, r.at.isoformat(), r.email or "", r.action,
+            ACTIONS.get(r.action, r.action), r.outcome, r.target or "",
+            r.ip or "", r.user_agent or "", str(r.detail or ""))])
     buf.seek(0)
     return buf
 
@@ -223,3 +227,44 @@ def for_user(s: Session, user_id: int, limit: int = 20) -> list[dict]:
     rows = s.execute(select(ActivityLog).where(ActivityLog.user_id == user_id)
                      .order_by(ActivityLog.id.desc()).limit(limit)).scalars()
     return [as_dict(r) for r in rows]
+
+
+# ------------------------------------------------------------ deleting
+
+MAX_IDS = 1000
+
+
+class DeleteRequest:
+    """Which rows to delete: chosen ids, a period, or everything.
+
+    Exactly one of the three. A request naming none must not mean "all" -
+    everything is only ever deleted when asked for in so many words.
+    """
+
+    def __init__(self, ids=None, since=None, until=None, everything=False):
+        modes = [bool(ids), since is not None or until is not None, everything]
+        if sum(modes) != 1:
+            raise ValueError("Choose events, a period, or everything - one of them.")
+        if ids and len(ids) > MAX_IDS:
+            raise ValueError(f"Choose at most {MAX_IDS} events at a time.")
+        if modes[1] and (since is None or until is None or since >= until):
+            raise ValueError("A period needs a start before its end.")
+        self.ids, self.since, self.until = ids, since, until
+        self.everything = everything
+
+    def where(self):
+        if self.everything:
+            return true()
+        if self.ids:
+            return ActivityLog.id.in_(self.ids)
+        return and_(ActivityLog.at >= self.since, ActivityLog.at < self.until)
+
+
+def delete(s: Session, req: DeleteRequest, dry_run: bool = False) -> int:
+    """Delete the rows `req` names, or with dry_run only count them.
+    Returns how many."""
+    n = s.execute(select(func.count()).select_from(ActivityLog)
+                  .where(req.where())).scalar_one()
+    if n and not dry_run:
+        s.execute(sql_delete(ActivityLog).where(req.where()))
+    return n

@@ -13,7 +13,7 @@ from __future__ import annotations
 import datetime as dt
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from ..db.models import Run, RunNote
 from ..reports import get as get_report
@@ -127,8 +127,8 @@ def review(session: Session, run: Run) -> dict:
     report = get_report(run.report_key)
     notes = _compare_notes(run, prev)
 
-    counts = {s: sum(1 for n in _shown(run.notes) if n.severity == s)
-              for s in (ACTION, WARNING, INFO)}
+    severities = [n.severity for n in _shown(run.notes)]
+    counts = {s: severities.count(s) for s in (ACTION, WARNING, INFO)}
 
     return {
         "run": {
@@ -176,23 +176,30 @@ def history(session: Session, report_key: str, weeks: int = 12) -> list[dict]:
     if not recent:
         return []
 
+    # Notes and tables in two more queries for all the runs, rather than two
+    # per run as each row's were first touched.
     stmt = (select(Run)
             .where(Run.report_key == report_key, Run.week.in_(recent))
-            .order_by(Run.week.desc(), Run.id.desc()))
+            .order_by(Run.week.desc(), Run.id.desc())
+            .options(selectinload(Run.notes), selectinload(Run.tables)))
     runs = session.execute(stmt).scalars().all()
     report = get_report(report_key)
-    return [{
-        "id": r.id, "week": r.week, "status": r.status,
-        # The history shows both reports together, so each row has to say
-        # which one it is. Without it a week is two rows that look identical.
-        "report_key": r.report_key, "report": report.short,
-        "report_full": report.label,
-        "seconds": r.seconds, "started_at": r.started_at,
-        "approved_by": r.approved_by, "approved_at": r.approved_at,
-        "actions": sum(1 for n in _shown(r.notes) if n.severity == ACTION),
-        "warnings": sum(1 for n in _shown(r.notes) if n.severity == WARNING),
-        "rows": {t.name: t.rows for t in r.tables},
-    } for r in runs]
+    out = []
+    for r in runs:
+        severities = [n.severity for n in _shown(r.notes)]
+        out.append({
+            "id": r.id, "week": r.week, "status": r.status,
+            # The history shows both reports together, so each row has to say
+            # which one it is. Without it a week is two rows that look identical.
+            "report_key": r.report_key, "report": report.short,
+            "report_full": report.label,
+            "seconds": r.seconds, "started_at": r.started_at,
+            "approved_by": r.approved_by, "approved_at": r.approved_at,
+            "actions": severities.count(ACTION),
+            "warnings": severities.count(WARNING),
+            "rows": {t.name: t.rows for t in r.tables},
+        })
+    return out
 
 
 def metric_over_time(session: Session, report_key: str, code: str,

@@ -16,26 +16,10 @@
 
 import { Children, cloneElement, isValidElement } from "react";
 
-import { Card, DataTable, Tile } from "./components";
+import { Card, DataTable, Stat, Tile } from "./components";
 import { TOTAL, toneAt } from "./columns";
 
 /* --------------------------------------------------------------- tiles */
-
-/* The headline figures. `tone` tints the accent bar; `onClick` makes the tile
-   a button, which is the only thing that should ever look pressable. */
-export function Stat({ label, value, foot, tone, onClick, active, title }) {
-  const cls = ["tile", tone ? `tone-${tone}` : "", onClick ? "clickable" : "",
-               active ? "active" : ""].filter(Boolean).join(" ");
-  const Node = onClick ? "button" : "div";
-  return (
-    <Node className={cls} onClick={onClick} title={title}
-          type={onClick ? "button" : undefined}>
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      {foot && <div className="foot">{foot}</div>}
-    </Node>
-  );
-}
 
 /* A row of them. `cols` is a hint, not a rule - the grid is auto-fit, so the
    row re-flows into whatever width the sidebar leaves it.
@@ -72,4 +56,4 @@ export function TableCard({ title, sub, right, columns, rows, spans,
   );
 }
 
-export { Tile };
+export { Stat, Tile };

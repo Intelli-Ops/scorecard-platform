@@ -14,7 +14,8 @@ import { CheckIcon } from "../icons";
 export default function Review() {
   const { id } = useParams();
   const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(null);             // the run would not load
+  const [actionError, setActionError] = useState(null); // a button did not work
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -33,26 +34,22 @@ export default function Review() {
     return () => { alive = false; clearTimeout(timer); };
   }, [id]);
 
-  async function approve() {
-    setBusy(true);
+  /* Press, then show the run as the server now holds it. A refusal - someone
+     else approved it a moment ago - is said above the review, which stays on
+     screen rather than being replaced by the message. */
+  const act = (fn) => async () => {
+    setBusy(true); setActionError(null);
     try {
-      await api.approve(id);
+      await fn(id);
       setData(await api.run(id));
-    } catch (e) { setError(e); }
+    } catch (e) { setActionError(e); }
     finally { setBusy(false); }
-  }
-
+  };
+  const approve = act(api.approve);
   /* Approving is one click, so un-approving has to be one too. Otherwise the
      only way back from a mis-click is to build the week again, which changes
      the run id that every screenshot and email already points at. */
-  async function unapprove() {
-    setBusy(true);
-    try {
-      await api.unapprove(id);
-      setData(await api.run(id));
-    } catch (e) { setError(e); }
-    finally { setBusy(false); }
-  }
+  const unapprove = act(api.unapprove);
 
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Loading what="Loading the run" />;
@@ -134,6 +131,8 @@ export default function Review() {
           <LinkButton to={`/dashboard/${run.id}`}>Open scorecard</LinkButton>
         </div>
       </div>
+
+      <ErrorBox error={actionError} />
 
       <div className="grid cols-4" style={{ marginBottom: 26 }}>
         <Tile label="Needs attention" value={data.needs_attention ? "Yes" : "No"}

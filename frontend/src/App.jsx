@@ -12,82 +12,10 @@ import ChangePassword from "./pages/ChangePassword";
 import AdminUsers from "./pages/AdminUsers";
 import AdminActivity from "./pages/AdminActivity";
 import { Loading } from "./components";
+import { MenuIcon, NavChartIcon, NavHistoryIcon, NavPeopleIcon, NavPersonIcon,
+         NavShieldIcon, NavSignOutIcon, NavUploadIcon } from "./icons";
 
 const OPEN_KEY = "scorecard.sidebar";
-
-/* Icons, drawn rather than typed: they stay crisp at any size, do not depend
-   on a font having the character, and the menu button cannot be mistaken for
-   a menu ITEM the way two identical "three lines" glyphs were. */
-const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 1.6,
-                 strokeLinecap: "round", strokeLinejoin: "round" };
-
-function MenuIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-      {[4.5, 9, 13.5].map((y) => (
-        <line key={y} x1="2" y1={y} x2="16" y2={y} {...stroke} />
-      ))}
-    </svg>
-  );
-}
-
-/* An arrow going up out of a tray - uploading. */
-const UploadIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M8 10.5V2.5M4.8 5.7 8 2.5l3.2 3.2" {...stroke} />
-    <path d="M2.5 10.5v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2" {...stroke} />
-  </svg>
-);
-
-/* Stacked rows with a clock hand - a list of past builds. */
-const HistoryIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M2.5 4h11M2.5 8h6M2.5 12h6" {...stroke} />
-    <circle cx="12" cy="11" r="3.2" {...stroke} />
-    <path d="M12 9.4V11l1.1.9" {...stroke} />
-  </svg>
-);
-
-/* Two people - everyone's accounts. */
-const PeopleIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-    <circle cx="6" cy="5.8" r="2.4" {...stroke} />
-    <path d="M1.8 13.5c.5-2.3 2.2-3.7 4.2-3.7s3.7 1.4 4.2 3.7" {...stroke} />
-    <path d="M10.6 3.6a2.4 2.4 0 0 1 0 4.5M12 9.9c1.2.5 2 1.8 2.3 3.6" {...stroke} />
-  </svg>
-);
-
-/* A shield with a pulse line - the security record. */
-/* A head and shoulders - your own account. */
-const PersonIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-    <circle cx="8" cy="5.5" r="2.8" {...stroke} />
-    <path d="M2.8 13.8c.6-2.7 2.7-4.3 5.2-4.3s4.6 1.6 5.2 4.3" {...stroke} />
-  </svg>
-);
-
-const ShieldIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M8 1.8 13.2 3.8v3.9c0 3.1-2.2 5.6-5.2 6.6-3-1-5.2-3.5-5.2-6.6V3.8Z" {...stroke} />
-    <path d="M4.8 8.2h1.6l1-1.8 1.4 3.3 1-1.5h1.4" {...stroke} />
-  </svg>
-);
-
-/* Three bars on a baseline - the scorecard itself. */
-const ChartIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M2.5 13.5h11" {...stroke} />
-    <path d="M4.5 11V8M8 11V4.5M11.5 11V6.5" {...stroke} strokeWidth="2" />
-  </svg>
-);
-
-/* A door with an arrow leaving it - signing out. */
-const LeaveIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-    <path d="M6.5 2.5h-3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3" {...stroke} />
-    <path d="M10 5l3 3-3 3M13 8H6.5" {...stroke} />
-  </svg>
-);
 
 /* One menu entry. Collapsed, only the icon shows and the tooltip names it. */
 function Item({ to, icon, label, open }) {
@@ -112,10 +40,12 @@ export default function App() {
 
   /* The sidebar remembers whether it was open. Someone who collapses it wants
      the room on every page, not just until the next click. */
-  const [open, setOpen] = useState(
-    () => localStorage.getItem(OPEN_KEY) !== "closed");
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem(OPEN_KEY) !== "closed"; } catch { return true; }
+  });
   useEffect(() => {
-    localStorage.setItem(OPEN_KEY, open ? "open" : "closed");
+    try { localStorage.setItem(OPEN_KEY, open ? "open" : "closed"); }
+    catch { /* storage blocked - remembered for this visit only */ }
   }, [open]);
 
   if (checking) return <Loading what="Signing you in" />;
@@ -150,21 +80,21 @@ export default function App() {
         </div>
 
         <nav>
-          <Item to="/scorecard" icon={<ChartIcon />} label="This week" open={open} />
+          <Item to="/scorecard" icon={<NavChartIcon />} label="This week" open={open} />
           {/* Everyone's own account - a viewer included, who has to be able
               to change their password without hunting for it. */}
-          <Item to="/profile" icon={<PersonIcon />} label="Your profile" open={open} />
+          <Item to="/profile" icon={<NavPersonIcon />} label="Your profile" open={open} />
 
           {/* A viewer reads scorecards; everything else here is an admin's.
               The API refuses it regardless - this only keeps the menu honest. */}
           {user.is_admin && (
             <>
               <Section open={open}>Workspace</Section>
-              <Item to="/upload" icon={<UploadIcon />} label="Upload a week" open={open} />
-              <Item to="/runs" icon={<HistoryIcon />} label="Run history" open={open} />
+              <Item to="/upload" icon={<NavUploadIcon />} label="Upload a week" open={open} />
+              <Item to="/runs" icon={<NavHistoryIcon />} label="Run history" open={open} />
               <Section open={open}>Admin</Section>
-              <Item to="/admin/activity" icon={<ShieldIcon />} label="Activity" open={open} />
-              <Item to="/admin/users" icon={<PeopleIcon />} label="Users" open={open} />
+              <Item to="/admin/activity" icon={<NavShieldIcon />} label="Activity" open={open} />
+              <Item to="/admin/users" icon={<NavPeopleIcon />} label="Users" open={open} />
             </>
           )}
         </nav>
@@ -182,7 +112,7 @@ export default function App() {
             )}
           </NavLink>
           <button className="signout" onClick={signOut} title="Sign out">
-            <LeaveIcon />
+            <NavSignOutIcon />
             {open && <span>Sign out</span>}
           </button>
         </div>

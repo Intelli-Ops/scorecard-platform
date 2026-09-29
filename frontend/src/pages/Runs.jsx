@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, when } from "../api";
 import { useAuth } from "../auth";
+import { useLoad } from "../hooks";
+import { REPORT_OPTIONS } from "../reports";
 import { Card, DataTable, ErrorBox, Loading, Segmented,
          Status } from "../components";
 import { Button, DeleteButton } from "../buttons";
@@ -13,34 +15,16 @@ import { Button, DeleteButton } from "../buttons";
    a quarter is far enough back to see a trend and short enough to scan. */
 export default function Runs() {
   const { user } = useAuth();
-  const [runs, setRuns] = useState(null);
-  const [error, setError] = useState(null);
   const [report, setReport] = useState("");
+  const { data: runs, error, setError, reload } =
+    useLoad(() => api.runs(report || undefined), [report]);
 
-  async function load() {
-    setError(null);
-    try { setRuns(await api.runs(report || undefined)); }
-    catch (e) { setError(e); }
-  }
-
-  useEffect(() => {
-    let alive = true;
-    setRuns(null);
-    api.runs(report || undefined)
-      .then((r) => alive && setRuns(r))
-      .catch((e) => alive && setError(e));
-    return () => { alive = false; };
-  }, [report]);
-
-  async function remove(run) {
-    try { await api.deleteRun(run.id); await load(); }
-    catch (e) { setError(e); }
-  }
-
-  async function unapprove(run) {
-    try { await api.unapprove(run.id); await load(); }
-    catch (e) { setError(e); }
-  }
+  /* Do it, then show what the server now holds. */
+  const act = (fn) => async (run) => {
+    try { await fn(run.id); await reload(); } catch (e) { setError(e); }
+  };
+  const remove = act(api.deleteRun);
+  const unapprove = act(api.unapprove);
 
   return (
     <>
@@ -56,11 +40,8 @@ export default function Runs() {
           value={report}
           onChange={setReport}
           onClear={report ? () => setReport("") : undefined}
-          options={[
-            { value: "", label: "Both" },
-            { value: "gfs", label: "GFS" },
-            { value: "all_providers", label: "All Providers" },
-          ]}
+          options={[{ value: "", label: "Both" },
+                    ...REPORT_OPTIONS.map((r) => ({ value: r.key, label: r.short }))]}
         />
       </div>
 
