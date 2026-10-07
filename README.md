@@ -613,7 +613,7 @@ Accounts from before roles existed become viewers of both reports.
 | Protection | What it does |
 |---|---|
 | Approval | A new sign-up cannot sign in until an admin approves it. Anyone can *type* an `@appedology.com` address, so an admin vouches for each one |
-| Lockout | 5 wrong passwords in a row locks the account for 15 minutes. An admin can unlock it sooner |
+| Lockout | 5 wrong passwords within 15 minutes lock the account for 15 minutes, from the network address they came from - so a person guessing locks themselves out, not the account's owner. An admin can unlock it sooner |
 | Password reset | An admin issues a one-time temporary password (there is no email server for reset links). The person must choose their own at the next sign-in |
 | Sessions | Every signed-in device is listed on **Your profile** and can be signed out. Changing your password signs out every other device; disabling an account signs out all of them |
 | Tokens | The database stores a SHA-256 of each session token, never the token itself, so a copy of the database cannot be used to sign in |

@@ -6,6 +6,8 @@ made it a single-machine program.
 """
 from __future__ import annotations
 from pathlib import Path
+from zoneinfo import ZoneInfo
+import datetime as dt
 import os
 
 
@@ -49,10 +51,11 @@ class Settings:
             "SCORECARD_GOLDEN",
             str(PROJECT_ROOT / "backend" / "tests" / "golden" / "fixtures")))
 
-        # The out-of-hours alert: sign-ins outside these hours, in this zone,
-        # are flagged on the Activity screen. An IANA name ("Asia/Karachi");
-        # empty means the server's own clock.
-        self.timezone = os.environ.get("SCORECARD_TIMEZONE", "")
+        # The zone the business works in, as an IANA name. Two things use it:
+        # which DATE a build is made as of (see today()), and the out-of-hours
+        # alert - sign-ins outside the hours below are flagged on the Activity
+        # screen. Karachi unless told otherwise, wherever the server is.
+        self.timezone = os.environ.get("SCORECARD_TIMEZONE") or "Asia/Karachi"
         start, _, end = os.environ.get("SCORECARD_WORK_HOURS", "7-21").partition("-")
         self.work_hours = (int(start), int(end or 24))
 
@@ -70,6 +73,24 @@ class Settings:
         # The largest single uploaded file, in MB. The biggest real input is
         # about 240 MB; without a ceiling one request can fill the disk.
         self.max_upload_mb = int(os.environ.get("SCORECARD_MAX_UPLOAD_MB", "1024"))
+
+        # 1 on a server: the API refuses anything that did not arrive over
+        # HTTPS (see main.py), so a password or a session can never cross the
+        # network in the clear because a certificate was not set up yet. Off
+        # by default, for a laptop, where there is no certificate to have.
+        self.require_https = os.environ.get("SCORECARD_REQUIRE_HTTPS", "0") == "1"
+
+    def today(self) -> dt.date:
+        """Today's date where the business is - not where the server is.
+
+        A server in a data centre keeps UTC, five hours behind Karachi: a
+        build started at 02:00 on Tuesday was dated Monday, and every "age in
+        days" in it came out one short.
+        """
+        try:
+            return dt.datetime.now(ZoneInfo(self.timezone)).date()
+        except Exception:                     # unknown name, or no tz data
+            return dt.date.today()
 
     def ensure(self) -> None:
         for d in (self.data_dir, self.object_dir, self.results_dir):

@@ -23,7 +23,7 @@ from ..db.models import MonthSetting, Run, Upload
 from ..db.session import session
 from ..reports import CASE_AR_KEYS, REPORTS, load_rules
 from ..service import audit, runner
-from ..service.ingest import ingest, week_status
+from ..service.ingest import ingest, too_long, week_status
 from ..storage.files import FileStore
 from .deps import current_user, require_admin, valid_week as _week
 
@@ -131,6 +131,7 @@ def upload(week: str, request: Request,
 
     with tempfile.TemporaryDirectory() as tmp:
         landed: list[Path] = []
+        refused: list[tuple[str, str]] = []
         for i, f in enumerate(files):
             # Streamed to disk in chunks: a 240 MB upload is never held whole
             # in the server's memory. One folder per file, so two files that
@@ -141,6 +142,12 @@ def upload(week: str, request: Request,
             name = re.split(r"[\\/]", f.filename or "")[-1].strip()
             if name in ("", ".", ".."):
                 name = "unnamed"
+            if too_long(name):
+                # Said plainly, before the name reaches the disk: a name the
+                # file system cannot hold failed the whole upload with a
+                # server error, the other files with it.
+                refused.append((name[:60] + "...", too_long(name)))
+                continue
             dest = Path(tmp) / str(i) / name
             dest.parent.mkdir()
             _save_upload(f, dest, settings.max_upload_mb * 1024 * 1024)
@@ -157,7 +164,7 @@ def upload(week: str, request: Request,
                               "already_held": a.deduplicated}
                              for a in result.accepted],
                 "rejected": [{"filename": n, "reason": why}
-                             for n, why in result.rejected],
+                             for n, why in refused + result.rejected],
                 "status": week_status(s, week),
             }
             audit.record(
@@ -168,6 +175,26 @@ def upload(week: str, request: Request,
                                      for a in out["accepted"]],
                         "rejected": [r["filename"] for r in out["rejected"]]})
     return out
+
+
+@router.delete("/weeks/{week}/uploads/{upload_id}")
+def remove_upload(week: str, upload_id: int, request: Request,
+                  user=Depends(require_admin)) -> dict:
+    """Take back one uploaded file - the wrong one, sent by mistake - without
+    deleting the week. Refused if a build has already read it."""
+    _week(week)
+    with session() as s:
+        row = s.get(Upload, upload_id)
+        if row is None or row.week != week:
+            raise HTTPException(404, "No such file in this week.")
+        try:
+            gone = runner.remove_upload(s, row)
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        audit.record("upload.delete", db=s, request=request, user=user,
+                     target=week, detail={"file": gone["filename"],
+                                          "sha256": gone["sha256"]})
+        return gone | {"status": week_status(s, week)}
 
 
 class WorkingDays(BaseModel):

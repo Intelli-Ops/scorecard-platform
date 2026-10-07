@@ -108,8 +108,9 @@ def test_identical_bytes_are_stored_once(db, store, tmp_path):
     assert len(list(store.root.rglob("*.xlsx"))) == 1
 
 
-def test_a_corrected_reupload_wins_without_erasing_the_old_one(db, store, tmp_path):
-    """A run that already used the old file must still point at the old bytes."""
+def test_a_corrected_reupload_replaces_the_one_before_it(db, store, tmp_path):
+    """The old copy is not kept to pile up - or to come back when the new one
+    is removed."""
     ingest(db, store, WEEK,
            [make(tmp_path / "1", "Payment Detail Report.xlsx", b"first")])
     ingest(db, store, WEEK,
@@ -117,7 +118,38 @@ def test_a_corrected_reupload_wins_without_erasing_the_old_one(db, store, tmp_pa
 
     latest = latest_uploads(db, get("gfs"), WEEK)["payment_detail"]
     assert store.path(latest.sha256, ".xlsx").read_bytes() == b"corrected"
+    assert db.query(Upload).filter_by(source_key="payment_detail").count() == 1
+
+
+def test_a_replaced_file_a_build_has_read_is_kept_for_that_build(db, store, tmp_path):
+    """A run that already used the old file must still point at the old bytes."""
+    from app.db.models import Run, RunInput
+    ingest(db, store, WEEK,
+           [make(tmp_path / "1", "Payment Detail Report.xlsx", b"first")])
+    old = db.query(Upload).one()
+    run = Run(report_key="gfs", week=WEEK, status="review")
+    db.add(run)
+    db.flush()
+    db.add(RunInput(run_id=run.id, upload_id=old.id))
+    db.flush()
+
+    ingest(db, store, WEEK,
+           [make(tmp_path / "2", "Payment Detail Report.xlsx", b"corrected")])
     assert db.query(Upload).filter_by(source_key="payment_detail").count() == 2
+    assert store.path(old.sha256, ".xlsx").read_bytes() == b"first"
+    latest = latest_uploads(db, get("gfs"), WEEK)["payment_detail"]
+    assert store.path(latest.sha256, ".xlsx").read_bytes() == b"corrected"
+
+
+def test_replacing_a_case_ar_leaves_the_other_reports_copy_alone(db, store, tmp_path):
+    name = "Combined Owner Case AR.xlsb"
+    ingest(db, store, WEEK, [make(tmp_path / "t", name, b"tuesday")], for_report="gfs")
+    ingest(db, store, WEEK, [make(tmp_path / "h", name, b"thursday")],
+           for_report="all_providers")
+    ingest(db, store, WEEK, [make(tmp_path / "t2", name, b"tuesday, fixed")],
+           for_report="gfs")
+    assert {u.report_key for u in db.query(Upload)} == {"gfs", "all_providers"}
+    assert db.query(Upload).count() == 2
 
 
 def test_week_status_reports_what_is_still_needed(db, store, tmp_path):

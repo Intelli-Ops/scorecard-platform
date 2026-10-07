@@ -1,20 +1,16 @@
 const BASE = import.meta.env.VITE_API ?? "http://127.0.0.1:8000";
-const TOKEN_KEY = "scorecard.token";
 
-export const getToken = () => localStorage.getItem(TOKEN_KEY);
-export const setToken = (t) =>
-  t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY);
-
-function authHeaders(extra = {}) {
-  const t = getToken();
-  return t ? { ...extra, Authorization: `Bearer ${t}` } : extra;
-}
+/* The sign-in is a cookie the server sets and this code cannot read
+   (HttpOnly). It used to be a token kept in localStorage, where any script
+   on the page could take it; nothing here holds it any more, and the browser
+   attaches it to requests to this server by itself. Tokens left behind by
+   the old version are cleared. */
+try { localStorage.removeItem("scorecard.token"); } catch { /* no storage */ }
 
 async function json(path, opts = {}) {
-  const r = await fetch(BASE + path, { ...opts, headers: authHeaders(opts.headers) });
+  const r = await fetch(BASE + path, opts);
   if (r.status === 401) {
-    // The token has expired or been revoked. Drop it and send them to sign in.
-    setToken(null);
+    // The session has ended or been revoked: back to the sign-in screen.
     if (!path.startsWith("/api/auth/")) window.location.reload();
   }
   if (!r.ok) {
@@ -49,10 +45,10 @@ const query = (params) => {
   return text ? `?${text}` : "";
 };
 
-/* Save a response as a file. Fetched rather than linked, because the request
-   needs the sign-in header and a plain <a href> cannot carry one. */
+/* Save a response as a file. Fetched rather than linked, so a refusal can be
+   shown as an error instead of opening as a page of JSON. */
 async function download(path, fallbackName) {
-  const r = await fetch(BASE + path, { headers: authHeaders() });
+  const r = await fetch(BASE + path);
   if (!r.ok) throw new Error(`Could not download ${fallbackName} (${r.status})`);
   const blob = await r.blob();
   const url = URL.createObjectURL(blob);
@@ -130,8 +126,6 @@ export const api = {
     return new Promise((resolve, reject) => {
       const x = new XMLHttpRequest();
       x.open("POST", `${BASE}/api/weeks/${week}/uploads`);
-      const token = getToken();
-      if (token) x.setRequestHeader("Authorization", `Bearer ${token}`);
       x.upload.onprogress = (e) =>
         e.lengthComputable && onProgress?.(e.loaded / e.total);
       x.onload = () => {
@@ -163,6 +157,9 @@ export const api = {
   // Uploads outlive runs, so deleting builds one by one never clears a
   // week. This is what removes the files themselves.
   deleteWeek: (w) => json(`/api/weeks/${w}`, { method: "DELETE" }),
+  // One wrong file, taken back - refused once a build has read it.
+  removeUpload: (w, id) =>
+    json(`/api/weeks/${w}/uploads/${id}`, { method: "DELETE" }),
   figures: (id, name) => json(`/api/runs/${id}/figures/${name}`),
   // The Case AR pivot, rebuilt on the server for { group, file_status, validity }.
   caseAr: (id, filters = {}) => json(`/api/runs/${id}/case-ar${query(filters)}`),

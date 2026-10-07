@@ -289,7 +289,7 @@ Three dependencies, each building on the last:
 
 | Dependency | Passes when | Otherwise |
 |---|---|---|
-| `signed_in` | the `Authorization: Bearer <token>` header names a live session of an active, approved account | 401 → the browser goes to the sign-in page |
+| `signed_in` | the session cookie (or, for scripts, an `Authorization: Bearer <token>` header) names a live session of an active, approved account | 401 → the browser goes to the sign-in page |
 | `current_user` | `signed_in`, and the account is not holding a temporary password | 403 with `{"code": "password_change_required"}` → the browser shows the change-password screen |
 | `require_admin` | `current_user`, and the role is admin or system admin | 403, and the attempt is logged as `admin.denied` |
 
@@ -426,10 +426,17 @@ non-info note that is new this week.
   is replaced the next time its owner signs in (`needs_rehash`).
 - **Same answer for a wrong email and a wrong password**, and the same time
   taken: an unknown email still runs a dummy hash (`_burn_time`).
-- **Lockout.** Five wrong passwords in a row lock the account for 15 minutes.
+- **Lockout.** Five wrong passwords within 15 minutes lock the account for 15
+  minutes - *from the address they came from*. Someone guessing locks only
+  themselves out; the account's owner, at their own address, is unaffected, so
+  knowing a colleague's email is not a way to keep them out. A right password
+  clears that address's count; an admin's Unlock clears every address.
 - **Sessions** are random 32-byte tokens. The database stores only their
-  SHA-256, so a copy of the database cannot be used to sign in. Sessions last
-  14 days. "Last seen" is written at most every 5 minutes, not on every request.
+  SHA-256, so a copy of the database cannot be used to sign in. A session ends
+  after 1 hour with no requests, and after 12 hours regardless; each request
+  pushes the hour back ("last seen" is written at most once a minute). The
+  browser holds the token in an `HttpOnly`, `SameSite=Strict` cookie, which no
+  script on the page can read.
 - **Who manages whom** (`manages()`): any admin manages viewers; only a system
   admin manages admins; nobody else touches a system admin. Nobody changes
   their own account from the Users screen. `permissions()` sends the result
@@ -463,7 +470,7 @@ changes every alert, past ones included:
 ### `ratelimit.py`, `csvsafe.py`
 
 ```python
-LOGIN_FAILURES    = (20, 15 * 60)   # wrong sign-ins from one IP
+LOGIN_FAILURES    = (100, 15 * 60)  # wrong sign-ins from one IP (a whole office shares one)
 SIGNUPS           = (10, 60 * 60)   # new accounts from one IP
 PASSWORD_FAILURES = (10, 15 * 60)   # wrong "current password" on one account
 ```
@@ -757,9 +764,6 @@ python -m app.manage copy-db "sqlite:///C:/dev/scorecard-platform/data/scorecard
 
 Still open, and listed so nobody assumes otherwise:
 
-- The token is kept in `localStorage`. An httpOnly cookie would keep it away
-  from any script on the page. That needs the page and the API on one domain
-  behind nginx.
 - `/docs` is on unless `SCORECARD_API_DOCS=0`. Turn it off on the server.
 - The Vite dev server is for development. Serve `npm run build` output from
   nginx for anyone else.
@@ -788,12 +792,12 @@ page cannot leak anything.
 One `json()` helper adds the token, turns error bodies into `Error`s with
 `.status` and `.detail`, and handles two cases globally:
 
-- **401**: the token is dead. It is dropped and the page reloads to sign-in.
+- **401**: the session has ended. The page reloads to sign-in.
 - **403 `password_change_required`**: it tells `AuthProvider` to show the
   change-password screen.
 
-Downloads use `fetch` + a blob, because a plain `<a href>` cannot send the
-`Authorization` header.
+Downloads use `fetch` + a blob, so a refusal shows as an error on the page
+rather than opening as a page of JSON.
 
 ### `hooks.js`: `useLoad`
 

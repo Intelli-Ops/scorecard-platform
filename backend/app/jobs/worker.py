@@ -117,7 +117,12 @@ def _build(run_id: int) -> None:
                 raise RuntimeError(f"run {run_id} is no longer this worker's "
                                    f"to finish")
             runner.record(s, run, plan, src, result)
-    except Exception as exc:
+    except BaseException as exc:
+        # BaseException, not Exception: the spreadsheet reader and polars are
+        # Rust underneath, and when one of them panics on a damaged file the
+        # error that arrives here (PanicException) is NOT an Exception. Caught
+        # as Exception it went straight past, ended this thread, and left the
+        # run saying `running` with nothing alive to build anything else.
         log.exception("run %s failed", run_id)
         _mark_failed(run_id, f"{type(exc).__name__}: {exc}")
     finally:

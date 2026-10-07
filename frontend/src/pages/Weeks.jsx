@@ -100,6 +100,18 @@ export default function Weeks() {
     } catch (e) { setError(e); }
   }
 
+  /* One wrong file, without deleting the week. The file before it, if there
+     was one, takes its place - the server sends back the week as it now is. */
+  async function removeFile(id) {
+    try {
+      setError(null);
+      const r = await api.removeUpload(week, id);
+      setResult(null);
+      statusLoad.setData(r.status);
+      await weeksLoad.reload();
+    } catch (e) { setError(e); }
+  }
+
   return (
     <>
       <div className="head">
@@ -237,6 +249,18 @@ export default function Weeks() {
                     render: (h) => when(h.uploaded_at) },
                   { key: "size_bytes", label: "Size", num: true,
                     render: (h) => bytes(h.size_bytes) },
+                  /* A file a build has read stays: that build's record of
+                     what it was made from has to remain true. */
+                  { key: "id", label: "",
+                    render: (h) => (h.read_by_a_build
+                      ? <span className="small muted"
+                              title="A build read this file. Delete that build to remove it.">
+                          used by a build
+                        </span>
+                      : <DeleteButton size="sm" label="Remove"
+                                      confirm="Confirm remove"
+                                      onConfirm={() => removeFile(h.id)}
+                                      title={`Remove ${h.filename} from ${week}`} />) },
                 ]}
                 rows={r.have}
                 empty="Nothing uploaded for this week yet."

@@ -51,6 +51,7 @@ ACTIONS: dict[str, str] = {
     "auth.session_revoke":    "Ended a session",
     "auth.profile_update":    "Updated profile",
     "upload.files":           "Uploaded files",
+    "upload.delete":          "Removed an uploaded file",
     "run.start":              "Started a build",
     "run.view":               "Opened a scorecard",
     "run.approve":            "Approved a run",

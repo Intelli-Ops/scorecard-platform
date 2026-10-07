@@ -31,7 +31,7 @@ from ..reports.period import reporting_period
 from ..storage.files import FileStore, StoredFile
 from . import blobs
 from .figures import all_figures
-from .ingest import latest_uploads
+from .ingest import latest_uploads, retire_uploads
 
 # One pipeline per report. The two are different code on purpose - see
 # app/reports/__init__.py.
@@ -67,11 +67,11 @@ def queue(session: Session, report_key: str, week: str,
     asked for before it existed.
 
     The RunInput rows written here also hold the files: an upload a queued
-    run names cannot be retired from under it (see _retire_uploads).
+    run names cannot be retired from under it (see retire_uploads).
     """
     report: ReportType = get_report(report_key)
     run = Run(report_key=report_key, week=week, status="pending",
-              as_of=as_of or dt.date.today())
+              as_of=as_of or settings.today())
     session.add(run)
     _fix_working_days(session, run, load_rules(report_key))
     session.flush()        # the database refuses a second active build here
@@ -317,46 +317,50 @@ def _next_seq(session: Session, run: Run) -> int:
     return 1 + max((n.seq for n in run.notes), default=0)
 
 
-def _retire_uploads(session: Session, upload_ids, objects: FileStore) -> tuple[int, int]:
-    """Remove uploads nothing reads any more, and the bytes behind them.
+def remove_upload(session: Session, upload: Upload,
+                  objects: FileStore | None = None) -> dict:
+    """Take back ONE uploaded file - the wrong one, sent by mistake.
 
-    Two levels of reference counting, because both are shared on purpose:
+    Before this the only way to be rid of a wrong file was to upload a right
+    one over it or to delete the whole week.
 
-      * the ROW goes only once no RunInput names it. An upload belongs to the
-        week, not to one run - the seven shared files feed both reports and
-        every rebuild reads them again.
-      * the BLOB goes only once no Upload row names its hash. Identical files
-        are stored once, and Thursday's Case AR is often byte-for-byte
-        Tuesday's, so one stored file can back two rows - and two weeks.
+    Refused once a build has read it: that build's record of what it was made
+    from must stay true. Delete the build first, which then takes the file
+    with it if nothing else reads it.
 
-    The rows go now, inside the caller's transaction. The bytes go only once
-    that transaction has COMMITTED: a row can be rolled back and a deleted
-    file cannot, and done the other way round a commit that failed would put
-    back rows pointing at files that no longer exist.
-
-    Returns (rows removed, blobs that will be unlinked).
+    Nothing comes back in its place. A newer upload replaces the one before
+    it for good (see ingest), so removing a file leaves that input empty
+    until the right one is uploaded.
     """
-    rows_gone, blobs_gone = 0, 0
-    for upload_id in upload_ids:
-        still_read = session.execute(
-            select(RunInput.id).where(RunInput.upload_id == upload_id).limit(1)
-        ).scalar_one_or_none()
-        if still_read is not None:
-            continue                      # another run still reads this file
-        upload = session.get(Upload, upload_id)
-        if upload is None:
-            continue
-        sha, suffix = upload.sha256, upload.suffix
-        session.delete(upload)
-        session.flush()
-        rows_gone += 1
-        shared = session.execute(
-            select(Upload.id).where(Upload.sha256 == sha).limit(1)
-        ).scalar_one_or_none()
-        if shared is None and blobs.remove_after_commit(
-                session, objects, sha, suffix, Upload.sha256):
-            blobs_gone += 1
-    return rows_gone, blobs_gone
+    readers = session.execute(
+        select(RunInput.run_id).where(RunInput.upload_id == upload.id)
+    ).scalars().all()
+    if readers:
+        raise ValueError(
+            f"{upload.filename} was read by build {readers[0]}. Delete that "
+            f"build first - its record of what it read has to stay true.")
+    out = {"upload_id": upload.id, "week": upload.week,
+           "filename": upload.filename, "source_key": upload.source_key,
+           "sha256": upload.sha256}
+    _, blobs_gone = retire_uploads(session, [upload.id],
+                                   objects or FileStore(settings.object_dir))
+    return out | {"file_removed": bool(blobs_gone)}
+
+
+TABLE_CHUNK = 50_000
+
+
+def table_chunks(run: Run, name: str, results: FileStore | None = None):
+    """A produced table, TABLE_CHUNK rows at a time.
+
+    For sending a whole table somewhere without ever holding the whole table:
+    Raw Data is 278,930 rows, and a few people exporting it at once each held
+    a full copy in the server's memory.
+    """
+    rows = _table_row(run, name).rows
+    lazy = pl.scan_parquet(_table_path(run, name, results))
+    for offset in range(0, max(rows, 1), TABLE_CHUNK):
+        yield lazy.slice(offset, TABLE_CHUNK).collect()
 
 
 def delete(session: Session, run: Run, results: FileStore | None = None,
@@ -364,7 +368,7 @@ def delete(session: Session, run: Run, results: FileStore | None = None,
     """Remove a run, everything it recorded, and the files it consumed.
 
     Everything is reference counted, never deleted outright - see
-    _retire_uploads for the inputs. The same holds for the outputs: a result
+    retire_uploads for the inputs. The same holds for the outputs: a result
     parquet is addressed by the hash of its own bytes, so two identical builds
     share one file, and the blob goes only once no RunTable points at the hash.
 
@@ -373,7 +377,7 @@ def delete(session: Session, run: Run, results: FileStore | None = None,
     this run's to remove - use delete_week for that.
 
     Nothing leaves the disk until the caller's transaction commits (see
-    _retire_uploads); the counts returned are of what will then go.
+    retire_uploads); the counts returned are of what will then go.
     """
     results = results or FileStore(settings.results_dir)
     objects = objects or FileStore(settings.object_dir)
@@ -396,7 +400,7 @@ def delete(session: Session, run: Run, results: FileStore | None = None,
             freed += 1
     summary["files_removed"] = freed
 
-    rows_gone, blobs_gone = _retire_uploads(session, consumed, objects)
+    rows_gone, blobs_gone = retire_uploads(session, consumed, objects)
     summary["uploads_removed"] = rows_gone
     summary["upload_files_removed"] = blobs_gone
     return summary
@@ -437,7 +441,7 @@ def delete_week(session: Session, week: str, results: FileStore | None = None,
 
     left = [u.id for u in session.execute(
         select(Upload).where(Upload.week == week)).scalars()]
-    rows_gone, blobs_gone = _retire_uploads(session, left, objects)
+    rows_gone, blobs_gone = retire_uploads(session, left, objects)
     summary["uploads_removed"] += rows_gone
     summary["upload_files_removed"] += blobs_gone
 

@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from ..db.models import ROLE_LABELS, ROLES, Session, User
+from . import ratelimit
 
 EMAIL_DOMAIN = "@appedology.com"
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@appedology\.com$", re.IGNORECASE)
@@ -31,17 +32,39 @@ APD_RE = re.compile(r"^APD-\d{4}$")
 
 MIN_PASSWORD = 8
 ITERATIONS = 600_000
-SESSION_DAYS = 14
 
-# Five wrong passwords in a row locks the account for fifteen minutes. Enough
-# for a person who mistypes; far too slow for a program guessing - at most 480
-# guesses a day against one account, each of which is logged.
+# A session ends after an hour with nothing done in it, and after twelve
+# hours whatever was done - so a browser left open on a shared desk, or a
+# token that got out, is good for an hour at most, not for two weeks. Every
+# request pushes the hour back (see touch), so nobody at work is signed out
+# in the middle of it.
+SESSION_IDLE = dt.timedelta(hours=1)
+SESSION_MAX = dt.timedelta(hours=12)
+
+# Five wrong passwords within fifteen minutes lock the account - FROM THE
+# ADDRESS THEY CAME FROM, for fifteen minutes. Enough for a person who
+# mistypes; far too slow for a program guessing - at most 480 guesses a day
+# from one address, each of which is logged.
+#
+# The lock used to be on the account, whoever was guessing. That handed
+# anyone who knew a colleague's email a way to keep them out all day: five
+# wrong passwords every fifteen minutes, with no sign-in of their own needed.
+# Now the guesser locks only themselves out, and the account's owner, signing
+# in from their own address, never notices. Someone guessing from many
+# addresses gets five tries from each - which the per-address sign-in limit
+# and the password-guessing alert (service/detect.py) are there for.
 LOCK_AFTER = 5
 LOCK_MINUTES = 15
+LOCK = (LOCK_AFTER, LOCK_MINUTES * 60)
 
-# A session's "last seen" is written at most this often. Writing it on every
-# request would turn every page load into a database write.
-SEEN_EVERY = dt.timedelta(minutes=5)
+
+def _lock_key(user: User, ip: str | None) -> str:
+    return f"lock:{user.id}:{ip or '?'}"
+
+# A session's "last seen" - and with it the hour it has left - is written at
+# most this often. Writing it on every request would turn every page load
+# into a database write.
+SEEN_EVERY = dt.timedelta(minutes=1)
 
 WRONG = "That email and password do not match."
 
@@ -212,24 +235,31 @@ def sign_in(db: DbSession, email: str, password: str, *,
         _burn_time(password or "")
         raise LoginRefused(WRONG, email=lookup, reason="no_account")
 
-    if user.locked_until and user.locked_until > now:
-        minutes = max(1, round((user.locked_until - now).total_seconds() / 60))
+    # The lock is on this account FROM THIS ADDRESS (see LOCK). The counting
+    # is the rate limiter's, in transactions of its own - so each of these
+    # calls comes BEFORE this session writes anything: SQLite allows one
+    # writer, and a second connection would wait on the first for ever.
+    lock = _lock_key(user, ip)
+    wait = ratelimit.blocked(lock, LOCK)
+    if wait:
+        minutes = max(1, round(wait / 60))
         raise LoginRefused(
-            f"This account is locked after too many wrong passwords. Try again "
-            f"in {minutes} minute{'s' if minutes != 1 else ''}, or ask an admin "
-            f"to unlock it.", email=lookup, user=user, reason="locked")
+            f"Sign-in to this account from here is locked after too many wrong "
+            f"passwords. Try again in {minutes} minute{'s' if minutes != 1 else ''}"
+            f", or ask an admin to unlock it.",
+            email=lookup, user=user, reason="locked")
 
     if not verify_password(password or "", user.password_hash):
-        user.failed_logins = (user.failed_logins or 0) + 1
-        if user.failed_logins >= LOCK_AFTER:
-            user.failed_logins = 0
+        ratelimit.hit(lock, LOCK)
+        if ratelimit.blocked(lock, LOCK):
+            # For the Users screen, which shows the account as locked and
+            # offers Unlock. It no longer decides anything here.
             user.locked_until = now + dt.timedelta(minutes=LOCK_MINUTES)
             db.flush()
             raise LoginRefused(
-                f"Too many wrong passwords. This account is locked for "
-                f"{LOCK_MINUTES} minutes.", email=lookup, user=user,
+                f"Too many wrong passwords. Sign-in to this account from here "
+                f"is locked for {LOCK_MINUTES} minutes.", email=lookup, user=user,
                 locked_now=True)
-        db.flush()
         raise LoginRefused(WRONG, email=lookup, user=user)
 
     if user.pending:
@@ -239,8 +269,7 @@ def sign_in(db: DbSession, email: str, password: str, *,
         raise LoginRefused("This account has been disabled.",
                            email=lookup, user=user, reason="disabled")
 
-    user.failed_logins = 0
-    user.locked_until = None
+    ratelimit.clear(lock)       # the right password: this address starts afresh
     user.last_login_at = now
     # An older, weaker hash is replaced the next time its owner signs in -
     # the only moment the password itself is in hand.
@@ -287,8 +316,8 @@ def start_session(db: DbSession, user: User, *, ip: str | None = None,
     now = _now()
     db.add(Session(token=digest(token), user_id=user.id, ip=ip,
                    user_agent=(user_agent or "")[:400] or None,
-                   last_seen_at=now,
-                   expires_at=now + dt.timedelta(days=SESSION_DAYS)))
+                   created_at=now, last_seen_at=now,
+                   expires_at=now + SESSION_IDLE))
     db.flush()
     return token
 
@@ -308,10 +337,12 @@ def session_for_token(db: DbSession, token: str | None) -> Session | None:
 
 
 def touch(db: DbSession, row: Session, ip: str | None) -> None:
-    """Note that the session is still in use - now and then, not every time."""
+    """Note that the session is still in use - now and then, not every time -
+    and give it another hour, up to SESSION_MAX from when it was opened."""
     now = _now()
     if row.last_seen_at is None or now - row.last_seen_at > SEEN_EVERY:
         row.last_seen_at = now
+        row.expires_at = min(now + SESSION_IDLE, row.created_at + SESSION_MAX)
         if ip:
             row.ip = ip
         db.flush()
@@ -526,9 +557,10 @@ def set_active(db: DbSession, actor: User, target: User, active: bool) -> User:
 
 
 def unlock(db: DbSession, actor: User, target: User) -> User:
+    """Lift the account's locks, from every address they were set for."""
     _manage(actor, target)
+    ratelimit.clear_prefix(f"lock:{target.id}:")    # before this session writes
     target.locked_until = None
-    target.failed_logins = 0
     db.flush()
     return target
 
@@ -547,12 +579,12 @@ def reset_password(db: DbSession, target: User, actor: User | None = None) -> st
     """
     if actor is not None:
         _manage(actor, target)
+    ratelimit.clear_prefix(f"lock:{target.id}:")    # before this session writes
     temporary = secrets.token_urlsafe(9)          # 12 characters
     target.password_hash = hash_password(temporary)
     target.password_changed_at = _now()
     target.must_change_password = True
     target.locked_until = None
-    target.failed_logins = 0
     db.flush()
     revoke_sessions(db, target.id)
     return temporary

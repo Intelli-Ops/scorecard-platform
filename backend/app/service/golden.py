@@ -33,6 +33,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+import polars as pl
+
 from ..config import settings
 from ..db.models import Run
 from ..reports import get as get_report
@@ -108,10 +110,40 @@ def save(run: Run, directory: Path | None = None,
                        "sha256": u.sha256, "suffix": u.suffix,
                        "rows_read": ri.rows_read})
 
+    # Built complete in a folder beside the real one, and only then swapped
+    # in. Written straight over the old reference, a copy that failed half
+    # way - a full disk, a file held open - left no reference at all: the old
+    # one already deleted, the new one unfinished.
     target = root / run.report_key
+    fresh = root / f".{run.report_key}.new"
+    old = root / f".{run.report_key}.old"
+    for leftover in (fresh, old):
+        if leftover.exists():
+            shutil.rmtree(leftover)
+    fresh.mkdir(parents=True)
+    try:
+        _write(run, fresh, inputs, results)
+        _check(fresh, run)
+    except BaseException:
+        shutil.rmtree(fresh, ignore_errors=True)
+        raise                       # the reference there was is untouched
     if target.exists():
-        shutil.rmtree(target)
-    target.mkdir(parents=True)
+        target.rename(old)
+    try:
+        fresh.rename(target)
+    except BaseException:
+        if old.exists():
+            old.rename(target)      # put the old one back
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+
+    _prune(root)
+    return {"report_key": run.report_key, "week": run.week, "run_id": run.id,
+            "inputs": len(inputs), "tables": len(run.tables),
+            "directory": str(target)}
+
+
+def _write(run: Run, target: Path, inputs: list, results: FileStore) -> None:
     for t in run.tables:
         shutil.copyfile(results.path(t.sha256, ".parquet"),
                         target / f"{t.name}.parquet")
@@ -133,17 +165,26 @@ def save(run: Run, directory: Path | None = None,
                         if not n.code.startswith("approval.")),
     }
     (target / META).write_text(json.dumps(meta, indent=1), encoding="utf-8")
-    _prune(root)
-    return {"report_key": run.report_key, "week": run.week, "run_id": run.id,
-            "inputs": len(inputs), "tables": len(meta["tables"]),
-            "directory": str(target)}
+
+
+def _check(folder: Path, run: Run) -> None:
+    """The new reference is whole and readable, before it replaces the old:
+    every table is there with the rows the run recorded, and the description
+    reads back."""
+    json.loads((folder / META).read_text(encoding="utf-8"))
+    for t in run.tables:
+        rows = pl.scan_parquet(folder / f"{t.name}.parquet").select(
+            pl.len()).collect().item()
+        if rows != t.rows:
+            raise ValueError(f"{t.name} was copied with {rows} rows; the run "
+                             f"recorded {t.rows}")
 
 
 def _prune(root: Path) -> None:
     """Drop kept input files no saved reference names any more - the ones
     the reference just replaced had to itself."""
     named = set()
-    for meta in root.glob(f"*/{META}"):
+    for meta in root.glob(f"[!.]*/{META}"):
         named |= {i["sha256"] for i in
                   json.loads(meta.read_text(encoding="utf-8"))["inputs"]}
     for path in (root / "objects").rglob("*"):

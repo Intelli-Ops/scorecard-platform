@@ -9,8 +9,11 @@ Then http://127.0.0.1:8000/docs for the API, which FastAPI generates from the
 routes themselves.
 """
 from __future__ import annotations
+import ipaddress
 import shutil
 import tempfile
+import threading
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
@@ -33,6 +36,7 @@ from .service import audit, auth, ratelimit
 async def lifespan(app: FastAPI):
     settings.ensure()
     create_all()
+    _health.clear()
     worker.recover()           # builds whose process died - see worker.py
     ratelimit.purge()
     with session() as s:
@@ -58,8 +62,10 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.api_docs else None,
 )
 
-# Only for a browser app served from another origin. The sign-in travels in
-# an Authorization header, never a cookie, so credentials are not allowed.
+# Only for a script or tool calling from another origin with an Authorization
+# header. The app's own page is served from the API's origin (nginx, or the
+# Vite dev server's proxy) and signs in with a SameSite=Strict cookie, which a
+# browser never sends across origins - so credentials stay disallowed here.
 if settings.cors_origins:
     app.add_middleware(
         CORSMiddleware,
@@ -81,11 +87,35 @@ _HEADERS = {
 }
 
 
+def _local(request: Request) -> bool:
+    """Asked from the server itself - the installer's check, a monitor, an
+    admin at the console - rather than from across the network."""
+    try:
+        return ipaddress.ip_address(request.client.host).is_loopback
+    except (AttributeError, ValueError):
+        return False
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
-    response = await call_next(request)
+    https = request.url.scheme == "https"
+    if settings.require_https and not https and not _local(request):
+        # DEPLOY.md says HTTPS is required before real use; this is what
+        # makes it so. Without it a server set up but not yet given a
+        # certificate took passwords over the network in the clear.
+        response = JSONResponse(
+            {"detail": "This server only accepts HTTPS. Open the https:// "
+                       "address; if there is none yet, the certificate has "
+                       "not been set up (see DEPLOY.md, 'HTTPS')."},
+            status_code=400)
+    else:
+        response = await call_next(request)
     for k, v in _HEADERS.items():
         response.headers.setdefault(k, v)
+    if https:
+        # And having come once over HTTPS, the browser never tries HTTP again.
+        response.headers.setdefault("Strict-Transport-Security",
+                                    "max-age=31536000")
     return response
 
 app.include_router(auth_router)   # open - how you get a token
@@ -135,8 +165,25 @@ def _disk_ok() -> bool:
         return False
 
 
+# The checks touch the database and the disk, and anyone can ask. Answered
+# from memory for a few seconds, a thousand requests cost one set of checks.
+HEALTH_TTL = 5.0
+_health: dict = {}
+_health_lock = threading.Lock()
+
+
+def _checks() -> dict:
+    with _health_lock:
+        if not _health or time.monotonic() - _health["at"] >= HEALTH_TTL:
+            checks = {"database": _database_ok(), "storage": _storage_ok(),
+                      "disk_space": _disk_ok(), "worker": worker.alive()}
+            _health.update(at=time.monotonic(), checks=checks,
+                           queued=worker.depth() if checks["database"] else None)
+        return dict(_health)
+
+
 @app.get("/api/health")
-def health(response: Response) -> dict:
+def health(request: Request, response: Response) -> dict:
     """Is the app able to do its job - not merely answering.
 
     It answered `ok` as long as the process was up, which is the one thing a
@@ -148,13 +195,17 @@ def health(response: Response) -> dict:
 
     Public on purpose. A health check that needs credentials is not a health
     check - whatever is watching the service has to be able to ask without an
-    account. It says which part is failing and nothing about the data.
+    account. But a stranger is told only whether it is healthy; WHICH part is
+    failing - "the disk is full", "the database is down" - is said only to
+    someone asking from the server itself (curl http://127.0.0.1/api/health).
     """
-    checks = {"database": _database_ok(), "storage": _storage_ok(),
-              "disk_space": _disk_ok(), "worker": worker.alive()}
-    out: dict = {"ok": all(checks.values()), "checks": checks}
-    if checks["database"]:
-        out["queued_builds"] = worker.depth()
-    if not out["ok"]:
+    state = _checks()
+    ok = all(state["checks"].values())
+    if not ok:
         response.status_code = 503
+    if not _local(request):
+        return {"ok": ok}
+    out: dict = {"ok": ok, "checks": state["checks"]}
+    if state["queued"] is not None:
+        out["queued_builds"] = state["queued"]
     return out

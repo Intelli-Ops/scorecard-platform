@@ -14,34 +14,58 @@ Three levels:
 
 The session's id is left on request.state, so the profile screen can say
 which of your sessions is the one you are using.
+
+WHERE THE SESSION TOKEN TRAVELS. The browser holds it in a cookie it cannot
+read: HttpOnly, so no script on the page - the app's own, or one that got in
+through some future bug - can take it; SameSite=Strict, so the browser never
+attaches it to a request another site started. It used to sit in
+localStorage, where any script could read it and send it anywhere. An
+`Authorization: Bearer` header is still accepted, for scripts and the tests.
 """
 from __future__ import annotations
 import datetime as dt
 import re
 
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, Response
 
 from ..db.models import User
 from ..db.session import session
 from ..service import audit, auth
 
-
-def _token(authorization: str | None) -> str | None:
-    if not authorization:
-        return None
-    scheme, _, value = authorization.partition(" ")
-    return value.strip() if scheme.lower() == "bearer" else None
+COOKIE = "scorecard_session"
 
 
-def signed_in(request: Request,
-              authorization: str | None = Header(default=None)) -> User:
+def set_session_cookie(request: Request, response: Response, token: str) -> None:
+    response.set_cookie(
+        COOKIE, token, max_age=int(auth.SESSION_MAX.total_seconds()),
+        path="/api", httponly=True, samesite="strict",
+        # Over HTTPS, never sent on plain HTTP again. Not on a laptop's
+        # http://localhost, where a Secure cookie would simply not be kept.
+        secure=request.url.scheme == "https")
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(COOKIE, path="/api", httponly=True, samesite="strict")
+
+
+def _token(request: Request) -> str | None:
+    """The session token this request carries: the header if there is one,
+    otherwise the cookie."""
+    authorization = request.headers.get("authorization")
+    if authorization:
+        scheme, _, value = authorization.partition(" ")
+        return value.strip() if scheme.lower() == "bearer" else None
+    return request.cookies.get(COOKIE)
+
+
+def signed_in(request: Request) -> User:
     """The signed-in user, or 401.
 
     401 rather than 403: the browser treats them differently, and the app sends
     someone to the sign-in page on a 401.
     """
     with session() as s:
-        row = auth.session_for_token(s, _token(authorization))
+        row = auth.session_for_token(s, _token(request))
         if row is None:
             raise HTTPException(401, "Sign in to continue.")
         auth.touch(s, row, audit.client_of(request)[0])

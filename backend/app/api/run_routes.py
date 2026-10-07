@@ -10,7 +10,10 @@ between the API and the background job.
 from __future__ import annotations
 import datetime as dt
 import io
+import itertools
+import threading
 
+import polars as pl
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -45,6 +48,14 @@ def _readable(run: Run | None, user: User, request: Request) -> Run:
     audit.record("admin.denied", request=request, user=user, outcome="denied",
                  target=f"run {run.id}")
     raise HTTPException(404, "No such run.")
+
+
+# How many requests may hold a whole Raw Data table in memory at once (the
+# Case AR pivot does), and how long another waits for a turn before being
+# told to try again. Two is enough for the handful of people who use this;
+# what it prevents is twenty.
+_heavy = threading.BoundedSemaphore(2)
+HEAVY_WAIT = 20.0
 
 
 def _building(s, report: str, week: str) -> int | None:
@@ -314,11 +325,22 @@ def get_case_ar(run_id: int, request: Request, group: str | None = None,
         run = _readable(s.get(Run, run_id), user, request)
         key = run.report_key
         try:
-            raw = runner.table(s, run, "raw_data")
+            path = runner._table_path(run, "raw_data", None)
         except KeyError as e:
             raise HTTPException(404, str(e))
-    return case_ar(raw, load_rules(key), key, {"group": group, "file_status": file_status,
-                                     "validity": validity})
+    # Each of these holds all of Raw Data in memory while it pivots. Let in
+    # without limit, a few people changing filters at once - or one person
+    # clicking quickly - held a copy each until the server ran out.
+    if not _heavy.acquire(timeout=HEAVY_WAIT):
+        raise HTTPException(503, "The server is busy with other Case AR "
+                                 "requests. Try again in a moment.",
+                            headers={"Retry-After": "5"})
+    try:
+        return case_ar(pl.read_parquet(path), load_rules(key), key,
+                       {"group": group, "file_status": file_status,
+                        "validity": validity})
+    finally:
+        _heavy.release()
 
 
 # A separate path segment, not a ".csv" suffix: "{name}" would otherwise match
@@ -333,24 +355,32 @@ def download_table(run_id: int, name: str, request: Request,
     somewhere else, and a scorecard nobody can get data out of just gets worked
     around.
 
-    Written to a buffer with polars rather than assembled by hand, so quoting,
-    commas inside values and nulls come out the way every spreadsheet expects.
+    Sent a piece at a time (runner.table_chunks): the table is never whole in
+    the server's memory, as the parquet AND the finished CSV both used to be.
+    Each piece is written with polars rather than assembled by hand, so
+    quoting, commas inside values and nulls come out the way every spreadsheet
+    expects.
     """
     with session() as s:
         run = _readable(s.get(Run, run_id), user, request)
         try:
-            df = runner.table(s, run, name)
-        except KeyError as e:
+            rows = runner._table_row(run, name).rows
+            chunks = runner.table_chunks(run, name)
+            first = next(chunks)            # a missing file fails here, not
+        except (KeyError, FileNotFoundError) as e:     # half-way down a download
             raise HTTPException(404, str(e))
-
-        buf = io.BytesIO()
-        csvsafe.frame(df).write_csv(buf)
-        buf.seek(0)
         filename = f"{run.report_key}-{run.week}-{name}.csv"
         audit.record("table.export", db=s, request=request, user=user,
                      target=f"run {run_id} / {name}",
-                     detail={"rows": df.height, "file": filename})
-        return StreamingResponse(
-            buf, media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"',
-                     "X-Row-Count": str(df.height)})
+                     detail={"rows": rows, "file": filename})
+
+    def body():
+        for i, df in enumerate(itertools.chain([first], chunks)):
+            buf = io.BytesIO()
+            csvsafe.frame(df).write_csv(buf, include_header=i == 0)
+            yield buf.getvalue()
+
+    return StreamingResponse(
+        body(), media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                 "X-Row-Count": str(rows)})

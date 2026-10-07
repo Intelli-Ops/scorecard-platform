@@ -1,12 +1,11 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, setToken, getToken } from "./api";
+import { api } from "./api";
 
 /* Who is signed in.
 
-   The token is kept in localStorage so a refresh does not sign you out. That
-   is the right trade for a tool on one company network in development; once
-   this is deployed on a single domain it should become an httpOnly cookie,
-   which JavaScript cannot read at all. */
+   The sign-in is an httpOnly cookie, which JavaScript cannot read at all -
+   so there is nothing here to look at to know whether someone is signed in.
+   The server is asked instead: it answers with the account, or with a 401. */
 
 const Ctx = createContext(null);
 
@@ -16,11 +15,10 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     (async () => {
-      if (!getToken()) { setChecking(false); return; }
       try {
-        setUser(await api.me());          // the token may have expired or been revoked
+        setUser(await api.me());
       } catch {
-        setToken(null);
+        // Not signed in, or the session has ended: the sign-in screen.
       } finally {
         setChecking(false);
       }
@@ -36,7 +34,7 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener("scorecard:password-change", flag);
   }, []);
 
-  const finish = ({ token, user }) => { setToken(token); setUser(user); return user; };
+  const finish = ({ user }) => { setUser(user); return user; };
 
   const value = {
     user,
@@ -46,7 +44,7 @@ export function AuthProvider({ children }) {
        it returns what to tell the person instead. */
     signUp: (email, apdId, password) => api.signup(email, apdId, password),
     signOut: async () => {
-      try { await api.logout(); } finally { setToken(null); setUser(null); }
+      try { await api.logout(); } finally { setUser(null); }
     },
     /* After a profile change, so the corner of the screen and the password
        gate reflect it without a reload. */

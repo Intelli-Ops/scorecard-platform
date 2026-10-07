@@ -11,8 +11,8 @@ A file is stored under the SHA-256 of its own bytes. Three things follow:
   by content means a re-upload of the same bytes costs nothing.
 
   A FILE CANNOT BE QUIETLY REPLACED. Change one byte and it lands at a new
-  address; the old one stays. That is what lets a run in December still point
-  at the exact bytes it read.
+  address; the old one stays for as long as a run names it. That is what lets
+  a run in December still point at the exact bytes it read.
 
 The extension is kept on the stored name because the Excel reader chooses its
 parser from it - an .xlsb and an .xlsx are not read the same way.

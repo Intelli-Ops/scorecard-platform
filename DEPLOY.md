@@ -248,7 +248,7 @@ sudo scorecard-manage protect-log --as "mysql://admin:ADMINPASS@db.yourcompany.c
 | See if it is running | `sudo systemctl status scorecard` |
 | Read its log, live | `sudo journalctl -u scorecard -f` |
 | Restart it (after editing settings) | `sudo systemctl restart scorecard` |
-| Check it is healthy | `curl -f http://127.0.0.1/api/health` → `{"ok":true,"checks":{"database":true,"storage":true,"disk_space":true,"worker":true},"queued_builds":0}`. Any check `false` makes it a 503 and names what is wrong |
+| Check it is healthy | `curl -f http://127.0.0.1/api/health` → `{"ok":true,"checks":{"database":true,"storage":true,"disk_space":true,"worker":true},"queued_builds":0}`. Any check `false` makes it a 503 and names what is wrong. Asked from another computer it says only `{"ok":true}` or `false` |
 | Check it reaches the database | `sudo scorecard-manage check` |
 | Unlock a locked-out admin | `sudo scorecard-manage reset-password EMAIL` |
 | Change someone's role | `sudo scorecard-manage set-role EMAIL admin` (`viewer`, `admin`, `system_admin`) |

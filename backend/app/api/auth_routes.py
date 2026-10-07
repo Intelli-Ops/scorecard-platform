@@ -11,13 +11,13 @@ wrong passwords sticks even though the request ends in an error.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from ..db.models import User
 from ..db.session import session
 from ..service import audit, auth, ratelimit
-from .deps import _token, signed_in
+from .deps import (_token, clear_session_cookie, set_session_cookie, signed_in)
 
 router = APIRouter(prefix="/api/auth")
 me_router = APIRouter(prefix="/api/me")
@@ -91,7 +91,10 @@ def signup(body: SignUp, request: Request) -> dict:
 
 
 @router.post("/login")
-def login(body: SignIn, request: Request) -> dict:
+def login(body: SignIn, request: Request, response: Response) -> dict:
+    """Sign in. The session travels in a cookie the page's scripts cannot
+    read (see deps.py); the token in the answer is for scripts and tests,
+    and the app itself does not keep it."""
     ip, ua = audit.client_of(request)
     _too_many(f"login:{ip}", ratelimit.LOGIN_FAILURES,
               "failed sign-ins from this address")
@@ -116,16 +119,17 @@ def login(body: SignIn, request: Request) -> dict:
             audit.record("auth.locked", request=request, user=refused.user,
                          detail={"minutes": auth.LOCK_MINUTES})
         raise HTTPException(401, str(refused))
+    set_session_cookie(request, response, token)
     return out
 
 
 @router.post("/logout")
-def logout(request: Request,
-           authorization: str | None = Header(default=None)) -> dict:
+def logout(request: Request, response: Response) -> dict:
     with session() as s:
-        user = auth.sign_out(s, _token(authorization))
+        user = auth.sign_out(s, _token(request))
         if user is not None:
             audit.record("auth.logout", db=s, request=request, user=user)
+    clear_session_cookie(response)
     return {"ok": True}
 
 

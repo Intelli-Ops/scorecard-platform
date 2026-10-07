@@ -503,7 +503,16 @@ def test_sessions_from_before_hashing_are_closed(client):
 
 # ------------------------------------------------------------ second audit
 
-def test_one_address_is_slowed_after_many_failed_sign_ins(client):
+@pytest.fixture
+def small_limits(monkeypatch):
+    """The real budgets are sized for a whole office behind one address;
+    spending a hundred password hashes per test to reach them proves nothing
+    a handful does not."""
+    from app.service import ratelimit
+    monkeypatch.setattr(ratelimit, "LOGIN_FAILURES", (6, 15 * 60))
+
+
+def test_one_address_is_slowed_after_many_failed_sign_ins(client, small_limits):
     """The account lock stops guessing at one account; this stops one address
     working through many of them."""
     from app.service import ratelimit
@@ -514,7 +523,7 @@ def test_one_address_is_slowed_after_many_failed_sign_ins(client):
     assert r.status_code == 429 and "Retry-After" in r.headers
 
 
-def test_a_right_password_does_not_count_against_the_address(client, user):
+def test_a_right_password_does_not_count_against_the_address(client, user, small_limits):
     from app.service import ratelimit
     limit, _ = ratelimit.LOGIN_FAILURES
     for _ in range(limit + 2):

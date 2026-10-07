@@ -74,9 +74,10 @@ APD-123              ->  The APD ID looks like APD-1234 - four digits.
 Small kindnesses: the email is not case-sensitive, and if you type just `1234`
 it fills in the `APD-` for you.
 
-**After that.** Sign in with your email and password. You stay signed in for
-two weeks unless you press **Sign out**, which is at the bottom of the sidebar
-next to your email and APD ID.
+**After that.** Sign in with your email and password. You stay signed in
+while you are using the app; after an hour of doing nothing in it (or twelve
+hours in all) you are asked to sign in again. **Sign out** is at the bottom of
+the sidebar, next to your email and APD ID.
 
 **Your password is never stored.** What is kept is a scrambled version that
 cannot be turned back into your password, with a random ingredient unique to

@@ -136,7 +136,7 @@ def test_a_build_runs_from_the_queue_and_records_what_it_read(client, stand_in_p
 
     review = _wait(client, r.json()["run_id"])
     assert review["run"]["status"] == "review", review["run"]["error"]
-    assert review["run"]["as_of"] == dt.date.today().isoformat()
+    assert review["run"]["as_of"] == settings.today().isoformat()
     assert {i["sha256"] for i in review["inputs"]} == set(hashes.values())
     assert all(i["rows_read"] == 7 for i in review["inputs"])
     assert review["tables"][0]["name"] == "raw_data"
@@ -496,10 +496,11 @@ def test_the_change_and_its_log_row_are_saved_together(client, monkeypatch):
 
 # ------------------------------------------------- limits that survive a restart
 
-def test_the_sign_in_limit_is_not_reset_by_a_restart(client):
+def test_the_sign_in_limit_is_not_reset_by_a_restart(client, monkeypatch):
     """The counts were a dict in the server's memory, so a restart - or a
     second server process - handed out a fresh budget of guesses."""
     from app.service import ratelimit
+    monkeypatch.setattr(ratelimit, "LOGIN_FAILURES", (6, 15 * 60))
     limit, _ = ratelimit.LOGIN_FAILURES
 
     def guess(c):
@@ -533,34 +534,372 @@ def test_old_attempts_stop_counting(client):
 
 # ------------------------------------------------- a health check that checks
 
-def test_health_reports_each_thing_it_depends_on(client):
-    body = client.get("/api/health").json()
+@pytest.fixture
+def on_the_server(client, monkeypatch):
+    """A client asking from the server itself, the way the installer and a
+    monitor do - and with no remembered answer, so each test sees its own."""
+    import app.main as main
+    monkeypatch.setattr(main, "HEALTH_TTL", 0)
+    return TestClient(client.app, client=("127.0.0.1", 50000))
+
+
+def test_health_reports_each_thing_it_depends_on(on_the_server):
+    body = on_the_server.get("/api/health").json()
     assert body == {"ok": True, "queued_builds": 0,
                     "checks": {"database": True, "storage": True,
                                "disk_space": True, "worker": True}}
 
 
-def test_health_fails_when_the_disk_is_nearly_full(client, monkeypatch):
+def test_health_fails_when_the_disk_is_nearly_full(on_the_server, monkeypatch):
     import app.main as main
     monkeypatch.setattr(main, "MIN_FREE_MB", 10 ** 12)
-    r = client.get("/api/health")
+    r = on_the_server.get("/api/health")
     assert r.status_code == 503
     assert r.json()["ok"] is False and r.json()["checks"]["disk_space"] is False
 
 
-def test_health_fails_when_the_worker_has_stopped(client):
+def test_health_fails_when_the_worker_has_stopped(on_the_server):
     from app.jobs import worker
     worker.stop()
-    r = client.get("/api/health")
+    r = on_the_server.get("/api/health")
     assert r.status_code == 503 and r.json()["checks"]["worker"] is False
 
 
-def test_health_fails_on_a_database_this_code_has_not_migrated(client):
+def test_health_fails_on_a_database_this_code_has_not_migrated(on_the_server):
     from app.db.session import engine
     with engine().begin() as c:
         c.execute(text("UPDATE alembic_version SET version_num = '0001'"))
-    r = client.get("/api/health")
+    r = on_the_server.get("/api/health")
     assert r.status_code == 503 and r.json()["checks"]["database"] is False
+
+
+def test_health_tells_a_stranger_only_whether_it_is_healthy(client, on_the_server,
+                                                          monkeypatch):
+    """Anyone can ask. Only someone on the server is told WHAT is wrong."""
+    import app.main as main
+    assert client.get("/api/health").json() == {"ok": True}
+    monkeypatch.setattr(main, "MIN_FREE_MB", 10 ** 12)
+    r = client.get("/api/health")
+    assert r.status_code == 503 and r.json() == {"ok": False}
+
+
+def test_health_is_not_worked_out_afresh_for_every_caller(client, monkeypatch):
+    """It reads the database and writes to the disk, and needs no sign-in:
+    asked a thousand times a second, it must not do that a thousand times."""
+    import app.main as main
+    calls = []
+    monkeypatch.setattr(main, "_storage_ok", lambda: calls.append(1) or True)
+    for _ in range(25):
+        assert client.get("/api/health").status_code == 200
+    assert len(calls) <= 1
+
+
+# ------------------------------------------------- the second audit
+
+def test_a_crash_inside_the_calculation_does_not_kill_the_worker(client,
+                                                                stand_in_pipeline,
+                                                                monkeypatch):
+    """A damaged spreadsheet can make the reader PANIC, which is not an
+    ordinary error. It went past the worker's `except`, ended its thread, and
+    left the run `running` and every later build waiting for ever."""
+    import polars.exceptions
+    from app.jobs import worker
+    from app.service import runner
+    real = runner.compute
+
+    def panic(plan, cache=None):
+        raise polars.exceptions.PanicException("index out of bounds")
+    monkeypatch.setattr(runner, "compute", panic)
+    upload_everything(client)
+    first = client.post(f"/api/runs?report=gfs&week={WEEK}").json()["run_id"]
+    body = _wait(client, first)
+    assert body["run"]["status"] == "failed"
+    assert "PanicException" in body["run"]["error"]
+    assert worker.alive()
+
+    monkeypatch.setattr(runner, "compute", real)     # and the next one builds
+    second = client.post(f"/api/runs?report=gfs&week={WEEK}").json()["run_id"]
+    assert _wait(client, second)["run"]["status"] == "review"
+
+
+def _run_with_table(rows: int, tmp_path) -> int:
+    from app.db.models import RunTable
+    from app.db.session import session
+    from app.storage.files import FileStore
+    p = tmp_path / "raw_data.parquet"
+    pl.DataFrame({"CASEID": [f"C{i}" for i in range(rows)],
+                  "Group": ["A" if i % 2 else "B" for i in range(rows)],
+                  "Paid": [float(i) for i in range(rows)]}).write_parquet(p)
+    stored = FileStore(settings.results_dir).put(p)
+    run_id = _run("review")
+    with session() as s:
+        s.add(RunTable(run_id=run_id, name="raw_data", rows=rows, columns=3,
+                       sha256=stored.sha256, bytes=stored.size))
+    return run_id
+
+
+def test_a_table_is_exported_in_pieces_and_arrives_whole(client, tmp_path,
+                                                        monkeypatch):
+    """The whole table, and then the whole CSV, used to sit in the server's
+    memory for every export. Now only a piece at a time does."""
+    from app.service import runner
+    monkeypatch.setattr(runner, "TABLE_CHUNK", 100)
+    run_id = _run_with_table(250, tmp_path)
+    seen = []
+    import app.api.run_routes as routes
+    frame = routes.csvsafe.frame
+    monkeypatch.setattr(routes.csvsafe, "frame",
+                        lambda df: seen.append(df.height) or frame(df))
+
+    r = client.get(f"/api/runs/{run_id}/tables/raw_data/csv")
+    lines = r.text.splitlines()
+    assert r.headers["X-Row-Count"] == "250"
+    assert lines[0] == "CASEID,Group,Paid" and len(lines) == 251     # one header
+    assert lines[1].startswith("C0,") and lines[-1].startswith("C249,")
+    assert seen == [100, 100, 50]
+
+
+def test_only_so_many_case_ar_pivots_run_at_once(client, tmp_path, monkeypatch):
+    """Each one holds all of Raw Data in memory. Past the limit a request
+    waits its turn, and is told to try again rather than joining the pile."""
+    import app.api.run_routes as routes
+    run_id = _run_with_table(10, tmp_path)
+    monkeypatch.setattr(routes, "HEAVY_WAIT", 0.05)
+    for _ in range(2):
+        assert routes._heavy.acquire(timeout=1)       # two already under way
+    try:
+        r = client.get(f"/api/runs/{run_id}/case-ar")
+        assert r.status_code == 503 and "busy" in r.json()["detail"]
+    finally:
+        for _ in range(2):
+            routes._heavy.release()
+    # ...and a turn taken is always handed back, even by a request that fails
+    # (this stand-in table has none of the columns a real pivot needs).
+    try:
+        client.get(f"/api/runs/{run_id}/case-ar", params={"group": "A"})
+    except Exception:
+        pass
+    assert routes._heavy.acquire(timeout=1) and routes._heavy.acquire(timeout=1)
+    routes._heavy.release(); routes._heavy.release()
+
+
+def test_a_build_is_dated_where_the_business_is(monkeypatch):
+    """A server on UTC is five hours behind Karachi: at 02:00 on Tuesday there
+    it still said Monday, and every age in days came out one short."""
+    import app.config as config
+
+    class At2130Utc(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return dt.datetime(2026, 10, 5, 21, 30, tzinfo=dt.timezone.utc).astimezone(tz)
+    monkeypatch.setattr(config.dt, "datetime", At2130Utc)
+    monkeypatch.setattr(settings, "timezone", "Asia/Karachi")
+    assert settings.today() == dt.date(2026, 10, 6)       # already Tuesday there
+    monkeypatch.setattr(settings, "timezone", "UTC")
+    assert settings.today() == dt.date(2026, 10, 5)
+
+
+def test_a_wrong_file_can_be_taken_back(client):
+    """Before this, a file uploaded by mistake stayed until the whole week
+    was deleted. Nothing comes back in its place: the copy it replaced went
+    when it was replaced."""
+    earlier = upload(client, "Supporting File.xlsx", body=b"the first copy")
+    wrong = upload(client, "Supporting File.xlsx", body=b"sent by mistake")
+    assert not list(settings.object_dir.rglob(f"{earlier}*"))   # replaced, gone
+    assert client.get(f"/api/weeks/{WEEK}").json()["files"] == 1
+    cache = settings.data_dir / "cache" / WEEK / "gfs"
+    cache.mkdir(parents=True)
+    (cache / f"supporting-{wrong[:16]}-15-1.parquet").write_bytes(b"parsed")
+
+    have = client.get(f"/api/weeks/{WEEK}").json()["reports"]["gfs"]["have"][0]
+    assert have["sha256"] == wrong and have["read_by_a_build"] is False
+
+    r = client.delete(f"/api/weeks/{WEEK}/uploads/{have['id']}")
+    assert r.status_code == 200 and r.json()["file_removed"] is True
+    assert r.json()["status"]["reports"]["gfs"]["have"] == []   # empty, not the old one
+    assert "Supporting File" in r.json()["status"]["reports"]["gfs"]["missing"]
+    assert not list(settings.object_dir.rglob("*.xlsx"))
+    assert not list(cache.iterdir())                  # its parsed copy too
+    assert log("upload.delete")[0].detail["file"] == "Supporting File.xlsx"
+
+    assert client.delete(f"/api/weeks/{WEEK}/uploads/{have['id']}").status_code == 404
+    assert client.delete("/api/weeks/2026-W39/uploads/1").status_code == 404
+
+
+def test_a_file_a_build_has_read_cannot_be_taken_back(client, stand_in_pipeline):
+    """That build's record of what it was made from has to stay true."""
+    upload_everything(client)
+    run_id = client.post(f"/api/runs?report=gfs&week={WEEK}").json()["run_id"]
+    _wait(client, run_id)
+    have = client.get(f"/api/weeks/{WEEK}").json()["reports"]["gfs"]["have"]
+    assert all(h["read_by_a_build"] for h in have)
+    r = client.delete(f"/api/weeks/{WEEK}/uploads/{have[0]['id']}")
+    assert r.status_code == 409 and f"build {run_id}" in r.json()["detail"]
+
+    viewer = account(client, "reader@appedology.com", "APD-0002")
+    assert client.delete(f"/api/weeks/{WEEK}/uploads/{have[0]['id']}",
+                         headers=viewer).status_code == 403
+
+
+def test_a_file_name_too_long_to_store_is_refused_with_a_reason(client):
+    """A name the disk cannot hold was a server error for the whole upload -
+    the good files in it included."""
+    name = "Supporting File " + "x" * 400 + ".xlsx"
+    r = client.post(f"/api/weeks/{WEEK}/uploads", files=[
+        ("files", (name, b"x", "application/octet-stream")),
+        ("files", ("Payment Detail.xlsx", b"y", "application/octet-stream"))])
+    assert r.status_code == 200
+    assert [a["filename"] for a in r.json()["accepted"]] == ["Payment Detail.xlsx"]
+    assert "longer than 240" in r.json()["rejected"][0]["reason"]
+
+
+def test_the_session_is_a_cookie_the_page_cannot_read(client):
+    make_account("someone@appedology.com", "APD-0002")
+    browser = TestClient(client.app)
+    r = browser.post("/api/auth/login", json={"email": "someone@appedology.com",
+                                              "password": PASSWORD})
+    cookie = r.headers["set-cookie"].lower()
+    assert "httponly" in cookie and "samesite=strict" in cookie
+    assert "path=/api" in cookie and "secure" not in cookie      # plain http here
+
+    # No header, no stored token: the cookie alone is the sign-in.
+    assert browser.get("/api/auth/me").json()["email"] == "someone@appedology.com"
+    assert browser.post("/api/auth/logout").status_code == 200
+    assert browser.get("/api/auth/me").status_code == 401
+
+    over_https = TestClient(client.app, base_url="https://testserver")
+    r = over_https.post("/api/auth/login", json={"email": "someone@appedology.com",
+                                                 "password": PASSWORD})
+    assert "secure" in r.headers["set-cookie"].lower()
+    assert "max-age=31536000" in r.headers["strict-transport-security"]
+
+
+def test_wrong_passwords_lock_out_the_guesser_not_the_owner(client):
+    """The lock was on the account: anyone who knew a colleague's email could
+    keep them out all day with five wrong passwords every fifteen minutes."""
+    uid = make_account("someone@appedology.com", "APD-0002")
+    guesser = TestClient(client.app, client=("203.0.113.9", 50000))
+    owner = TestClient(client.app, client=("198.51.100.7", 50000))
+
+    def sign_in(c, password):
+        return c.post("/api/auth/login", json={"email": "someone@appedology.com",
+                                               "password": password})
+    for _ in range(4):
+        assert "do not match" in sign_in(guesser, "a wrong guess").json()["detail"]
+    assert "locked" in sign_in(guesser, "a wrong guess").json()["detail"]
+    # Even the right password is refused from the address that was guessing...
+    r = sign_in(guesser, PASSWORD)
+    assert r.status_code == 401 and "locked" in r.json()["detail"]
+    # ...while the owner, from their own, signs in as if nothing had happened.
+    assert sign_in(owner, PASSWORD).status_code == 200
+    assert len(log("auth.locked")) == 1
+
+    # The Users screen still shows it and an admin can still lift it.
+    users = {u["id"]: u for u in client.get("/api/admin/users").json()}
+    assert users[uid]["status"] == "locked" and users[uid]["can"]["unlock"]
+    client.post(f"/api/admin/users/{uid}/unlock")
+    assert sign_in(guesser, PASSWORD).status_code == 200
+
+
+def test_the_right_password_clears_the_count_for_that_address(client):
+    """Four mistypes, then in: the next mistype is the first, not the fifth."""
+    make_account("someone@appedology.com", "APD-0002")
+
+    def sign_in(password):
+        return client.post("/api/auth/login", json={
+            "email": "someone@appedology.com", "password": password})
+    for _ in range(4):
+        sign_in("a wrong guess")
+    assert sign_in(PASSWORD).status_code == 200
+    for _ in range(4):
+        assert "do not match" in sign_in("a wrong guess").json()["detail"]
+
+
+def test_a_session_ends_after_an_hour_of_nothing(client):
+    """Two weeks, however long it sat unused, is a long time for a browser
+    left open on someone else's desk."""
+    from app.db.models import Session
+    from app.db.session import session
+    from app.service import auth
+    make_account("someone@appedology.com", "APD-0002")
+    r = client.post("/api/auth/login", json={"email": "someone@appedology.com",
+                                             "password": PASSWORD})
+    me = {"Authorization": f"Bearer {r.json()['token']}"}
+    now = dt.datetime.now(dt.timezone.utc)
+
+    def row(s):
+        return s.execute(select(Session).order_by(Session.id.desc())).scalars().first()
+
+    with session() as s:                  # 50 minutes in, still working
+        row(s).last_seen_at = now - dt.timedelta(minutes=50)
+        row(s).expires_at = now + dt.timedelta(minutes=10)
+    assert client.get("/api/auth/me", headers=me).status_code == 200
+    with session() as s:                  # ...which bought another hour
+        left = row(s).expires_at - now
+        assert dt.timedelta(minutes=59) < left <= auth.SESSION_IDLE + dt.timedelta(seconds=5)
+
+    with session() as s:                  # but never past twelve hours in all
+        row(s).created_at = now - auth.SESSION_MAX + dt.timedelta(minutes=5)
+        row(s).last_seen_at = now - dt.timedelta(minutes=2)
+    assert client.get("/api/auth/me", headers=me).status_code == 200
+    with session() as s:
+        assert row(s).expires_at - now <= dt.timedelta(minutes=5, seconds=5)
+
+    with session() as s:                  # an hour of nothing
+        row(s).expires_at = now - dt.timedelta(seconds=1)
+    assert client.get("/api/auth/me", headers=me).status_code == 401
+
+
+def test_a_server_that_requires_https_refuses_plain_http(client, monkeypatch):
+    """HTTPS was a step in the instructions. Skipped, the server still took
+    passwords - over the network, unencrypted."""
+    monkeypatch.setattr(settings, "require_https", True)
+    r = client.post("/api/auth/login", json={"email": "tester@appedology.com",
+                                             "password": PASSWORD})
+    assert r.status_code == 400 and "HTTPS" in r.json()["detail"]
+    assert "set-cookie" not in r.headers
+
+    over_https = TestClient(client.app, base_url="https://testserver")
+    assert over_https.post("/api/auth/login", json={
+        "email": "tester@appedology.com", "password": PASSWORD}).status_code == 200
+    # The installer and a monitor, asking from the server itself, still can.
+    local = TestClient(client.app, client=("127.0.0.1", 50000))
+    assert local.get("/api/health").status_code == 200
+
+
+def test_a_reference_that_cannot_be_saved_leaves_the_old_one_whole(
+        client, stand_in_pipeline, tmp_path, monkeypatch):
+    """The old reference was deleted first and the new one copied after. A
+    copy that failed half way left neither."""
+    from app.db.models import Run
+    from app.db.session import session
+    from app.service import golden
+    kept = tmp_path / "golden"
+
+    def approved_build() -> int:
+        run_id = client.post(f"/api/runs?report=gfs&week={WEEK}").json()["run_id"]
+        _wait(client, run_id)
+        client.post(f"/api/runs/{run_id}/approve")
+        return run_id
+
+    upload_everything(client)
+    first = approved_build()
+    with session() as s:
+        golden.save(s.get(Run, first), kept)
+    before = sorted(p.name for p in (kept / "gfs").iterdir())
+
+    second = approved_build()
+    monkeypatch.setattr(golden, "_check", lambda folder, run: (_ for _ in ()).throw(
+        ValueError("raw_data was copied with 2 rows; the run recorded 3")))
+    with session() as s:
+        with pytest.raises(ValueError, match="copied with 2 rows"):
+            golden.save(s.get(Run, second), kept)
+
+    ref = golden.load("gfs", kept)
+    assert ref.meta["run_id"] == first                      # still the old one
+    assert sorted(p.name for p in (kept / "gfs").iterdir()) == before
+    assert [p.name for p in kept.iterdir() if p.name.startswith(".")] == []
+    assert all(ref.objects.has(i["sha256"], i["suffix"]) for i in ref.meta["inputs"])
 
 
 # ------------------------------------------------- versioned migrations

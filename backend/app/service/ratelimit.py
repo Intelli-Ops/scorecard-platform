@@ -19,7 +19,11 @@ from ..db.models import RateHit
 from ..db.session import session
 
 # (how many, in how many seconds)
-LOGIN_FAILURES = (20, 15 * 60)       # wrong sign-ins from one address
+# A whole office usually reaches the server from ONE address, so this is the
+# office's budget, not one person's: at 20 a morning of ordinary mistypes
+# across the team locked everyone out together. 100 still stops a program
+# working down a list of accounts (the account lock handles guessing at one).
+LOGIN_FAILURES = (100, 15 * 60)      # wrong sign-ins from one address
 SIGNUPS = (10, 60 * 60)              # new accounts from one address
 PASSWORD_FAILURES = (10, 15 * 60)    # wrong "current password" on one account
 
@@ -54,6 +58,20 @@ def hit(key: str, rule: tuple[int, int]) -> None:
         s.execute(delete(RateHit).where(
             RateHit.key == key, RateHit.at <= now - dt.timedelta(seconds=window)))
         s.add(RateHit(key=key, at=now))
+
+
+def clear(key: str) -> None:
+    """Forget everything counted against `key` - it got the password right."""
+    with session() as s:
+        s.execute(delete(RateHit).where(RateHit.key == key))
+
+
+def clear_prefix(prefix: str) -> None:
+    """Forget every key that starts with `prefix` - an admin's unlock, which
+    lifts an account's locks from every address at once."""
+    with session() as s:
+        s.execute(delete(RateHit).where(
+            RateHit.key.startswith(prefix, autoescape=True)))
 
 
 def purge() -> int:

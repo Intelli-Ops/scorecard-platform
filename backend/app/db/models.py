@@ -198,8 +198,10 @@ class Upload(Base):
     filenames are identical, so without this column one silently overwrites
     the other and the two reports disagree with nothing to explain why.
 
-    Rows are never replaced. A corrected re-upload is a NEW row; the run that
-    already used the old one still points at the old bytes.
+    A corrected re-upload is a NEW row and takes the place of the one before
+    it, which is removed - unless a run has already read the old one, in
+    which case it stays, so that run still points at the bytes it was made
+    from (see service/ingest.py).
     """
     __tablename__ = "upload"
 

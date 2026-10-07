@@ -59,7 +59,17 @@ def cmd_check(_):
     _say(f"connected: {_where()} ({engine().dialect.name} {version})")
 
 
-def cmd_upgrade(_):
+def cmd_upgrade(a):
+    """Apply the migrations. The app's own database account can add tables,
+    columns and indexes but, on purpose, cannot DROP anything (that would let
+    it empty the activity log) - so a migration that removes or rebuilds a
+    table has to be run once as the database admin: pass its address with
+    --as, exactly as for protect-log."""
+    if a.as_url:
+        e = create_engine(database_url(a.as_url))
+        migrate.upgrade(e)
+        _say(f"tables up to date: {e.url.render_as_string(hide_password=True)}")
+        return
     create_all()
     _say(f"tables up to date: {_where()}")
 
@@ -217,7 +227,10 @@ def main(argv=None):
                                 description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check").set_defaults(fn=cmd_check)
-    sub.add_parser("upgrade").set_defaults(fn=cmd_upgrade)
+    c = sub.add_parser("upgrade")
+    c.add_argument("--as", dest="as_url", default=None,
+                   help="database address to run the migrations as")
+    c.set_defaults(fn=cmd_upgrade)
     c = sub.add_parser("create-admin")
     c.add_argument("email"); c.add_argument("apd_id")
     c.set_defaults(fn=cmd_create_admin)
