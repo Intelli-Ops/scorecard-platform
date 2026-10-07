@@ -4,7 +4,8 @@ The /api/auth routes are open: they are how someone gets a token in the first
 place. The /api/me routes need a session but NOT a password of your own, since
 changing a temporary password is done from there.
 
-Every outcome is written to the activity log, failures above all. A failed
+Every outcome is written to the activity log, failures above all. What
+succeeded is logged in the same transaction as the change itself. A failed
 sign-in is recorded AFTER its database session has committed, so the count of
 wrong passwords sticks even though the request ends in an error.
 """
@@ -84,8 +85,8 @@ def signup(body: SignUp, request: Request) -> dict:
                               "before you can sign in."}
         except auth.AuthError as e:
             raise HTTPException(400, str(e))
-    audit.record("auth.signup", request=request, user=user,
-                 detail={"apd_id": user.apd_id})
+        audit.record("auth.signup", db=s, request=request, user=user,
+                     detail={"apd_id": user.apd_id})
     return out
 
 
@@ -102,6 +103,9 @@ def login(body: SignIn, request: Request) -> dict:
             out = {"token": token, "user": auth.as_dict(user)}
         except auth.LoginRefused as e:
             refused = e                 # let the session commit the counters
+        else:
+            # With the session it opens: nobody is signed in unrecorded.
+            audit.record("auth.login", db=s, request=request, user=user)
 
     if refused is not None:
         ratelimit.hit(f"login:{ip}", ratelimit.LOGIN_FAILURES)
@@ -112,8 +116,6 @@ def login(body: SignIn, request: Request) -> dict:
             audit.record("auth.locked", request=request, user=refused.user,
                          detail={"minutes": auth.LOCK_MINUTES})
         raise HTTPException(401, str(refused))
-
-    audit.record("auth.login", request=request, user=user)
     return out
 
 
@@ -123,9 +125,7 @@ def logout(request: Request,
     with session() as s:
         user = auth.sign_out(s, _token(authorization))
         if user is not None:
-            s.expunge(user)
-    if user is not None:
-        audit.record("auth.logout", request=request, user=user)
+            audit.record("auth.logout", db=s, request=request, user=user)
     return {"ok": True}
 
 
@@ -152,9 +152,9 @@ def update_profile(body: Profile, request: Request,
         except auth.AuthError as e:
             raise HTTPException(400, str(e))
         out = auth.as_dict(row)
-    audit.record("auth.profile_update", request=request, user=user,
-                 detail={"display_name": {"was": before,
-                                          "now": out["display_name"]}})
+        audit.record("auth.profile_update", db=s, request=request, user=user,
+                     detail={"display_name": {"was": before,
+                                              "now": out["display_name"]}})
     return out
 
 
@@ -178,14 +178,15 @@ def change_password(body: PasswordChange, request: Request,
                    "user": auth.as_dict(row)}
         except auth.AuthError as e:
             failed = str(e)
+        else:
+            audit.record("auth.password_change", db=s, request=request, user=user,
+                         detail={"other_sessions_ended": ended,
+                                 "was_temporary": bool(user.must_change_password)})
     if failed:
         ratelimit.hit(key, ratelimit.PASSWORD_FAILURES)
         audit.record("auth.password_change", request=request, user=user,
                      outcome="failure", detail={"reason": failed})
         raise HTTPException(400, failed)
-    audit.record("auth.password_change", request=request, user=user,
-                 detail={"other_sessions_ended": ended,
-                         "was_temporary": bool(user.must_change_password)})
     return out
 
 
@@ -203,8 +204,8 @@ def end_session(session_id: int, request: Request,
     with session() as s:
         if not auth.revoke_session(s, user.id, session_id):
             raise HTTPException(404, "No such session.")
-    audit.record("auth.session_revoke", request=request, user=user,
-                 target=f"session {session_id}")
+        audit.record("auth.session_revoke", db=s, request=request, user=user,
+                     target=f"session {session_id}")
     return {"ok": True}
 
 
@@ -213,9 +214,9 @@ def end_other_sessions(request: Request,
                        user: User = Depends(signed_in)) -> dict:
     with session() as s:
         n = auth.revoke_sessions(s, user.id, keep=request.state.session_id)
-    if n:
-        audit.record("auth.session_revoke", request=request, user=user,
-                     target="all other sessions", detail={"ended": n})
+        if n:
+            audit.record("auth.session_revoke", db=s, request=request, user=user,
+                         target="all other sessions", detail={"ended": n})
     return {"ended": n}
 
 

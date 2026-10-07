@@ -139,14 +139,16 @@ sudo bash deploy/install.sh
 ```
 
 Replaced: the code, the built app and the Python packages. The service is
-restarted, and new tables or columns are added automatically.
+restarted, and the database migrations it has not yet had are applied
+automatically (`backend/app/db/migrations/versions/`).
 
 Kept: `/etc/scorecard/scorecard.env`, the MySQL database, `/var/lib/scorecard`
 and the nginx site.
 
 The service is down for a few seconds during the restart. A build that is
-running at that moment is marked failed and can be started again from the app.
-Take a backup first (below).
+running at that moment is marked failed a couple of minutes later and can be
+started again from the app; builds still waiting in the queue are kept and run
+once the service is back. Take a backup first (below).
 
 ---
 
@@ -246,7 +248,7 @@ sudo scorecard-manage protect-log --as "mysql://admin:ADMINPASS@db.yourcompany.c
 | See if it is running | `sudo systemctl status scorecard` |
 | Read its log, live | `sudo journalctl -u scorecard -f` |
 | Restart it (after editing settings) | `sudo systemctl restart scorecard` |
-| Check it answers | `curl http://127.0.0.1/api/health` → `{"ok":true,"queued_builds":0}` |
+| Check it is healthy | `curl -f http://127.0.0.1/api/health` → `{"ok":true,"checks":{"database":true,"storage":true,"disk_space":true,"worker":true},"queued_builds":0}`. Any check `false` makes it a 503 and names what is wrong |
 | Check it reaches the database | `sudo scorecard-manage check` |
 | Unlock a locked-out admin | `sudo scorecard-manage reset-password EMAIL` |
 | Change someone's role | `sudo scorecard-manage set-role EMAIL admin` (`viewer`, `admin`, `system_admin`) |
@@ -292,7 +294,10 @@ On the development machine, from the project folder:
 .venv\Scripts\python deploy\make_package.py
 ```
 
-This builds the React app and writes `release\scorecard-<date>-<commit>.zip`.
-The zip contains only files git tracks or would commit, so it never includes
-`.venv`, `node_modules` or `data\`. It also gives the server files Unix line
-endings.
+Commit first: it refuses to run while anything is changed or new and not in
+git, so every zip is exactly one commit. It then runs the backend tests - the
+golden master included, which must have its reference data (see the README) -
+installs the frontend's packages from the lockfile (`npm ci`), builds the React
+app and writes `release\scorecard-<date>-<commit>.zip`. The zip contains only
+files in that commit, so it never includes `.venv`, `node_modules` or `data\`.
+It also gives the server files Unix line endings.

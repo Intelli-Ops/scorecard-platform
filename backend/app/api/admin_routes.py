@@ -98,12 +98,15 @@ def _change(request: Request, admin: User, user_id: int, action: str,
             refused = str(e)
         except auth.AuthError as e:
             raise HTTPException(409, str(e))
+        else:
+            # In the change's own transaction: an account is never altered
+            # without the row saying who altered it.
+            audit.record(action, db=s, request=request, user=admin, target=email,
+                         detail={"user_id": user_id, **what})
     if refused:
         audit.record(action, request=request, user=admin, target=email,
                      outcome="denied", detail={"user_id": user_id, "reason": refused})
         raise HTTPException(403, refused)
-    audit.record(action, request=request, user=admin, target=email,
-                 detail={"user_id": user_id, **what})
     return out
 
 
@@ -205,9 +208,9 @@ def activity_csv(request: Request, action: str | None = None,
     f = _filters(action, email, outcome, ip, days)
     with session() as s:
         buf = audit.export_csv(s, f)
-    audit.record("admin.activity_export", request=request, user=admin,
-                 detail={"action": action, "email": email, "outcome": outcome,
-                         "ip": ip, "days": days})
+        audit.record("admin.activity_export", db=s, request=request, user=admin,
+                     detail={"action": action, "email": email, "outcome": outcome,
+                             "ip": ip, "days": days})
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M")
     return StreamingResponse(
         iter([buf.getvalue()]), media_type="text/csv",
@@ -243,16 +246,19 @@ def delete_activity(body: ActivityDelete, request: Request,
         raise HTTPException(400, str(e))
     with session() as s:
         n = audit.delete(s, req, dry_run=body.dry_run)
-    if body.dry_run:
-        return {"count": n}
+        if body.dry_run:
+            return {"count": n}
 
-    what = ("everything" if body.everything
-            else f"{len(body.ids)} chosen" if body.ids else "a period")
-    detail = {"deleted": n, "scope": what, "label": body.label}
-    if body.ids:
-        detail["ids"] = body.ids[:50]
-    if body.since:
-        detail |= {"since": body.since.isoformat(), "until": body.until.isoformat()}
-    audit.record("admin.activity_delete", request=request, user=admin,
-                 target=body.label or what, detail=detail)
+        what = ("everything" if body.everything
+                else f"{len(body.ids)} chosen" if body.ids else "a period")
+        detail = {"deleted": n, "scope": what, "label": body.label}
+        if body.ids:
+            detail["ids"] = body.ids[:50]
+        if body.since:
+            detail |= {"since": body.since.isoformat(),
+                       "until": body.until.isoformat()}
+        # With the deletion, not after it: the rows cannot go without the row
+        # saying who removed them.
+        audit.record("admin.activity_delete", db=s, request=request, user=admin,
+                     target=body.label or what, detail=detail)
     return {"deleted": n}

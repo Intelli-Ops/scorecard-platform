@@ -10,13 +10,13 @@ between the API and the background job.
 from __future__ import annotations
 import datetime as dt
 import io
-import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
-from ..db.models import Run, RunFigure, User
+from ..db.models import ACTIVE, Run, RunFigure, User
 from ..db.session import session
 from ..jobs import worker
 from ..reports import REPORTS, load_rules
@@ -47,7 +47,16 @@ def _readable(run: Run | None, user: User, request: Request) -> Run:
     raise HTTPException(404, "No such run.")
 
 
-_submitting = threading.Lock()
+def _building(s, report: str, week: str) -> int | None:
+    """The run already building this report and week, if there is one."""
+    return s.execute(select(Run.id).where(
+        Run.report_key == report, Run.week == week,
+        Run.status.in_(ACTIVE)).limit(1)).scalar_one_or_none()
+
+
+def _already_building(run_id: int | None) -> HTTPException:
+    return HTTPException(409, {"message": "This week is already being built.",
+                               "run_id": run_id})
 
 
 @router.post("/runs")
@@ -58,30 +67,39 @@ def start_run(request: Request, report: str = Query(...),
 
     One build per report and week at a time. A double-click, or two people
     pressing Build together, used to queue the same work twice.
+
+    One transaction holds all of it: the run, the files it will read (see
+    runner.queue) and the log row saying who asked. The worker only ever sees
+    a build that is completely described.
     """
     _week(week)
     if report not in REPORTS:
         raise HTTPException(404, f"unknown report {report!r}")
 
-    # Checked and queued under one lock. Two presses arriving together each
-    # found nothing running, and both queued the same build.
-    with _submitting:
-        with session() as s:
-            busy = s.execute(select(Run.id).where(
-                Run.report_key == report, Run.week == week,
-                Run.status.in_(("pending", "running"))).limit(1)).scalar_one_or_none()
-            if busy is not None:
-                raise HTTPException(409, {"message": "This week is already being "
-                                                     "built.", "run_id": busy})
-            st = week_status(s, week)["reports"][report]
-            if not st["ready"]:
-                raise HTTPException(
-                    409, {"message": f"{st['label']} cannot be built yet",
-                          "missing": st["missing"]})
-        run_id = worker.submit(report, week, as_of)
-    audit.record("run.start", request=request, user=user,
-                 target=f"run {run_id}", detail={"report": report, "week": week})
-    return {"run_id": run_id, "status": "pending", "queued_ahead": worker.depth() - 1}
+    with session() as s:
+        busy = _building(s, report, week)
+        if busy is not None:
+            raise _already_building(busy)
+        st = week_status(s, week)["reports"][report]
+        if not st["ready"]:
+            raise HTTPException(
+                409, {"message": f"{st['label']} cannot be built yet",
+                      "missing": st["missing"]})
+        try:
+            run = runner.queue(s, report, week, as_of)
+        except IntegrityError:
+            # Two presses arriving together each found nothing building. The
+            # check above cannot see the other's uncommitted run; the unique
+            # Run.active_key can, in whichever server process each landed.
+            s.rollback()
+            raise _already_building(_building(s, report, week)) from None
+        audit.record("run.start", db=s, request=request, user=user,
+                     target=f"run {run.id}",
+                     detail={"report": report, "week": week})
+        out = {"run_id": run.id, "status": "pending",
+               "queued_ahead": worker.ahead(s, run.id)}
+    worker.wake()
+    return out
 
 
 @router.get("/scorecards/current")
@@ -153,19 +171,19 @@ def get_run(run_id: int, request: Request,
     """The review screen: what it produced, what changed, what it warns about."""
     with session() as s:
         run = _readable(s.get(Run, run_id), user, request)
-        if run.status in ("pending", "running"):
+        if run.status in ACTIVE:
             return {"run": {"id": run.id, "report_key": run.report_key,
                             "week": run.week, "status": run.status,
                             "started_at": run.started_at},
-                    "queued_ahead": worker.depth()}
+                    "queued_ahead": worker.ahead(s, run.id)}
         out = review_service.review(s, run)
         if not user.is_admin:
             # The review's working - which files, which warnings - is for the
             # people who build the scorecard, not the people who read it.
             for k in ("notes", "inputs", "compared_with", "needs_attention"):
                 out.pop(k, None)
-    audit.record_once("run.view", user=user, target=f"run {run_id}",
-                      request=request)
+        audit.record_once("run.view", db=s, user=user, target=f"run {run_id}",
+                          request=request)
     return out
 
 
@@ -184,9 +202,9 @@ def approve_run(run_id: int, request: Request,
             raise HTTPException(409, str(e))
         out = {"run_id": run.id, "status": run.status,
                "approved_by": run.approved_by, "approved_at": run.approved_at}
-        what = {"report": run.report_key, "week": run.week}
-    audit.record("run.approve", request=request, user=user,
-                 target=f"run {run_id}", detail=what)
+        audit.record("run.approve", db=s, request=request, user=user,
+                     target=f"run {run_id}",
+                     detail={"report": run.report_key, "week": run.week})
     return out
 
 
@@ -208,10 +226,10 @@ def unapprove_run(run_id: int, request: Request,
             runner.unapprove(s, run, by=user.email)
         except ValueError as e:
             raise HTTPException(409, str(e))
-        what = {"report": run.report_key, "week": run.week,
-                "was_approved_by": was}
-    audit.record("run.unapprove", request=request, user=user,
-                 target=f"run {run_id}", detail=what)
+        audit.record("run.unapprove", db=s, request=request, user=user,
+                     target=f"run {run_id}",
+                     detail={"report": run.report_key, "week": run.week,
+                             "was_approved_by": was})
     return {"run_id": run_id, "status": "review",
             "approved_by": None, "approved_at": None}
 
@@ -238,13 +256,13 @@ def delete_run(run_id: int, request: Request,
         run = s.get(Run, run_id)
         if run is None:
             raise HTTPException(404, f"no run {run_id}")
-        if run.status in ("pending", "running"):
+        if run.status in ACTIVE:
             raise HTTPException(
                 409, "This build is still running. Wait for it to finish.")
         out = runner.delete(s, run) | {"deleted_by": user.email}
-    audit.record("run.delete", request=request, user=user,
-                 target=f"run {run_id}",
-                 detail={k: out[k] for k in ("report_key", "week", "rows")})
+        audit.record("run.delete", db=s, request=request, user=user,
+                     target=f"run {run_id}",
+                     detail={k: out[k] for k in ("report_key", "week", "rows")})
     return out
 
 
@@ -329,7 +347,7 @@ def download_table(run_id: int, name: str, request: Request,
         csvsafe.frame(df).write_csv(buf)
         buf.seek(0)
         filename = f"{run.report_key}-{run.week}-{name}.csv"
-        audit.record("table.export", request=request, user=user,
+        audit.record("table.export", db=s, request=request, user=user,
                      target=f"run {run_id} / {name}",
                      detail={"rows": df.height, "file": filename})
         return StreamingResponse(

@@ -261,7 +261,7 @@ def test_a_build_records_the_working_days_it_paced_on(client, admin):
         s.add(run)
         s.flush()
         rules = {"holidays": []}
-        runner._apply_working_days(s, run, rules, "2026-W38")
+        runner._fix_working_days(s, run, rules)
         assert run.working_days == 19 and run.working_days_source == "entered"
         assert rules["working_days"] == {"2026-09": 19}
         assert s.get(MonthSetting, "2026-09").set_by == "admin@appedology.com"

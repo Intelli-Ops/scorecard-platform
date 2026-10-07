@@ -136,7 +136,7 @@ scorecard-platform/
 │   │   ├── db/               tables, the session, schema upgrades
 │   │   ├── storage/          the content-addressed file store
 │   │   └── jobs/             the background build thread
-│   └── tests/                pytest; golden/ compares with the old pipeline
+│   └── tests/                pytest; golden/ compares with an approved build
 ├── frontend/
 │   ├── index.html
 │   ├── vite.config.js        dev server + /api proxy
@@ -224,29 +224,37 @@ which it still needs. The Build button turns on when nothing required is missing
 The admin presses **Build** for GFS.
 
 1. `POST /api/runs?report=gfs&week=2026-W38` → `run_routes.start_run`.
-2. Under a lock, it checks nothing is already building that report and week,
-   and that `week_status` says it is ready.
-3. `worker.submit()` inserts a `Run` row with status `pending` and puts
-   `(run_id, "gfs", "2026-W38", None)` on an in-memory queue. The request
+2. It checks nothing is already building that report and week, and that
+   `week_status` says it is ready.
+3. `runner.queue()` inserts, in ONE transaction with the activity-log row:
+   a `Run` with status `pending`, and a `RunInput` row for the upload each
+   source resolves to **right now**. The date it is built as of and the
+   month's working days are fixed on the run too. A second build of the same
+   report and week is refused by the database itself (the unique
+   `run.active_key`), whichever server process it arrives at. The request
    returns at once with `{"run_id": 12, "status": "pending"}`.
-4. The worker thread takes the job and calls `runner.execute()`:
+4. The worker thread takes the oldest `pending` run - the queue is the `run`
+   table, so a restart loses nothing - and builds it in three short
+   transactions around the long calculation:
 
 ```
-runner.execute(run 12)
- ├─ source_set()          latest upload per source_key for GFS + W38 → file paths
- ├─ load_rules("gfs")     rules.yml, parsed once and copied
- ├─ _apply_working_days() the month's working days: entered, or the calendar's
- ├─ read_gfs()            reads each Excel sheet through the parse cache
- ├─ gfs.pipeline.run()    the calculations → RunResult
- ├─ RunInput rows         which upload each source came from, rows read, seconds
- ├─ RunTable rows         raw_data, case_ar, delta_comparison, collections → parquet
- ├─ RunFigure rows        settlement grids, KPI blocks, pace… flattened to records
- ├─ RunNote rows          what the review screen shows
- └─ status = "review"
+worker._build(run 12)
+ ├─ runner.plan()         the uploads queue() recorded → file paths; rules.yml;
+ │                        the working days fixed on the run          [transaction 1]
+ ├─ runner.compute()      read_gfs() through the parse cache, then
+ │                        gfs.pipeline.run() → RunResult           [no transaction]
+ └─ runner.record()                                                 [transaction 2]
+     ├─ parquet files     raw_data, case_ar, delta_comparison, collections
+     ├─ RunInput rows     rows read and seconds, per upload
+     ├─ RunTable rows     pointers to the parquet
+     ├─ RunFigure rows    settlement grids, KPI blocks, pace… flattened to records
+     ├─ RunNote rows      what the review screen shows
+     └─ status = "review"
 ```
 
-If anything raises, the run is marked `failed` with the error, in a session
-of its own so the rollback cannot undo the "failed".
+While it calculates, a heartbeat is written to the run every 15 seconds. If
+anything raises, the run is marked `failed` with the error in a transaction of
+its own, and any parquet already written for it is removed.
 
 ### 4.3 Review and approve
 
@@ -429,8 +437,13 @@ non-info note that is new this week.
 
 ### `audit.py`, `detect.py`
 
-`record()` never raises. A broken log must not break the app, so a failed
-write is reported on the server's error output and the request carries on.
+Two rules. **The change and its record are one transaction**: a route passes
+its own session (`audit.record(..., db=s)`), so an approval, a deletion or a
+role change is saved together with the row saying who did it, or not at all.
+**No record, no action**: if the row cannot be written `record()` raises
+`AuditUnavailable` and the request fails with a 503 - the log does not fail
+open. Only a refused or failed attempt (a wrong password, a denied request) is
+written in a transaction of its own, because its own session is rolled back.
 
 `detect.alerts()` works alerts out of the log when they are asked for, rather
 than storing them. The log stays the only record, and changing a threshold
@@ -455,8 +468,8 @@ SIGNUPS           = (10, 60 * 60)   # new accounts from one IP
 PASSWORD_FAILURES = (10, 15 * 60)   # wrong "current password" on one account
 ```
 
-Kept in memory: the app is one process, and a restart forgetting the counts
-only ever errs towards letting someone in.
+Kept in the database (`rate_hit`), not in memory: the count survives a restart
+and is the same count whichever server process is asked.
 
 `csvsafe.cell("=HYPERLINK(...)")` returns `"'=HYPERLINK(...)"`. Excel shows
 the text and runs nothing. `"-12.5"` is left alone because it is a number.
@@ -661,9 +674,18 @@ The email is copied in as it was at the time.
 
 ### `db/migrate.py`, `db/session.py`
 
-- `add_missing_columns()` compares each table with its model and adds what is
-  missing. It never drops or retypes anything, so it is safe on real data and
-  harmless to run twice.
+- The schema is versioned with **Alembic**. Each change is a numbered file in
+  `db/migrations/versions/`; `migrate.upgrade()` runs at start-up and applies
+  the ones the database has not had. To change the schema: change the model,
+  then from `backend/` run
+  `alembic revision --rev-id 0003 --autogenerate -m "what changed"` and read
+  what it wrote. A test fails if the models and the migrations disagree.
+- `db/baseline.py` is the schema as it stood when migrations began (migration
+  0001), frozen. A database from before then is brought to it by
+  `add_missing_columns()` - which only ever adds - and then migrated like any
+  other.
+- `after_commit()` / `after_rollback()` hang a clean-up on a session, for the
+  one thing a transaction cannot undo: a file. See `service/blobs.py`.
 - `protect_activity_log()` installs a trigger that refuses any **UPDATE** on
   the activity log. Rows can be deleted (by a system admin, and the deletion is
   itself logged), but never edited.
@@ -684,14 +706,22 @@ put("Delta WC 09.21.2026.xlsb")
 - The first two characters are a folder, because a flat folder of tens of
   thousands of files is slow to list on Windows.
 - The extension is kept, because the Excel reader picks its parser by it.
-- `remove()` is only ever called once no database row names the hash any more.
+- `remove()` is only ever called once no database row names the hash any more,
+  and only after the transaction that dropped the last row has **committed** -
+  a row can be rolled back, a deleted file cannot. A file written for a row
+  that is then never saved is taken back out. Whatever fails, the worst left
+  behind is a file nothing names (`python -m app.manage clean-files`), never a
+  row pointing at a missing file.
 
 ### `jobs/worker.py`: one build at a time
 
-A build reads about 385 MB and holds a quarter-gigabyte sheet in memory.
-Two at once would double that and write the same week's cache. So there is one
-thread and one queue. `recover()` runs at start-up and marks builds a previous
-process never finished as `failed`, with a reason, so they do not spin forever.
+A build reads about 385 MB and holds a quarter-gigabyte sheet in memory, so
+each server process builds one at a time, on one thread. The queue is the
+`run` table: a waiting build is a `pending` row, taken with an `UPDATE` only
+one process can win. `recover()` runs at start-up and every minute after, and
+marks `failed` only a build that says `running` but has had no heartbeat for
+two minutes - one whose process has died. A waiting build, or one another
+process is still working on, is left alone.
 
 ### `manage.py`
 
@@ -896,7 +926,8 @@ npx vite build                               # the production build compiles
 | `test_case_ar_view.py` | the filtered Case AR pivot |
 | `test_delta_comments.py` | Ongoing DOR lookup by Case Id, per sheet |
 | `test_pacing.py` | the calendar, pace, Excel week numbers |
-| `golden/` | a full build against a real week, compared with the old pipeline's output. **Skipped** unless the fixtures (real client data, never committed) are on the machine |
+| `test_integrity.py` | files and rows staying in step, a build reading the files it was queued with, the database-backed queue and build lock, the log failing closed, rate limits surviving a restart, the health check, the migrations |
+| `golden/` | re-runs the calculation on the exact files of an **approved** build and compares tables, figures and checks with what was approved. The reference is saved with `python -m app.manage save-golden RUN_ID` (`service/golden.py`). **Fails** unless one is saved for each report (real client data, never committed), or `GFS_GOLDEN_OPTIONAL=1` says to skip |
 
 Tests use a fresh temporary data folder each (`settings.use(tmp_path)`), so
 they never touch your database.

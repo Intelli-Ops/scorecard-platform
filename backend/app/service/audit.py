@@ -1,16 +1,24 @@
 """The activity log: recording what people do, and reading it back.
 
-record() is called by the API after an action has happened (or failed). It
-writes in a session of its own, committed on its own, for two reasons:
+Two rules, and record() is how both are kept:
 
-  * a FAILED action still has to be logged. A wrong password raises inside the
-    request's own session, which is rolled back - a log row written there
-    would be rolled back with it, and failed sign-ins are the rows that matter
-    most.
-  * a broken log must not break the app. If the write fails it is reported
-    on the server's error output (journald, on the server) and the request
-    carries on. The alternative - refusing every action while the log is
-    down - turns a logging fault into an outage.
+  * WHAT HAPPENED AND THE RECORD OF IT ARE ONE TRANSACTION. An action that
+    changes something passes its own session (`db=`), so the log row is
+    saved with the change or not at all. Written afterwards in a transaction
+    of its own, the change could commit and the record of it then fail -
+    an approval, a deletion or a new admin with nothing to show who did it.
+
+  * NO RECORD, NO ACTION. If the row cannot be written, record() raises and
+    the request fails (503). The log used to fail open - report the fault and
+    carry on - on the reasoning that a logging fault should not become an
+    outage. For this app it should: what it holds is client case data, and an
+    export or a deletion nobody can ever be shown to have made is worse than
+    an hour in which nobody can make one.
+
+A REFUSED or FAILED action is the one case with no `db=`: a wrong password or
+a denied request rolls its own session back, and a row written there would go
+with it - and those are the rows that matter most. They are written in a
+transaction of their own, and still raise if that fails.
 
 Nothing here updates a row - the database refuses to. Rows are deleted only
 by delete(), for a system admin, and the deletion is logged in turn.
@@ -89,41 +97,56 @@ def client_of(request: Request | None) -> tuple[str | None, str | None]:
     return ip, (ua[:400] if ua else None)
 
 
-def record(action: str, *, request: Request | None = None,
+class AuditUnavailable(RuntimeError):
+    """The activity log could not be written, so the action is refused."""
+
+
+def record(action: str, *, db: Session | None = None,
+           request: Request | None = None,
            user: User | None = None, email: str | None = None,
            outcome: str = "success", target: str | None = None,
            detail: dict | None = None) -> None:
-    """Write one row. Never raises - see the module docstring."""
+    """Write one row - in the caller's transaction when given `db`, in one of
+    its own otherwise. Raises if it cannot. See the module docstring."""
     ip, ua = client_of(request)
+    who = user.email if user else email
+    row = ActivityLog(
+        user_id=user.id if user else None,
+        email=who,
+        action=action, outcome=outcome,
+        target=(target or None) and str(target)[:200],
+        detail=detail or {}, ip=ip, user_agent=ua)
+    if db is not None:
+        db.flush()      # the caller's own changes first: a fault in those
+                        # is theirs, and must not be reported as the log's
     try:
-        with session() as s:
-            s.add(ActivityLog(
-                user_id=user.id if user else None,
-                email=(user.email if user else email),
-                action=action, outcome=outcome,
-                target=(target or None) and str(target)[:200],
-                detail=detail or {}, ip=ip, user_agent=ua))
-    except Exception:
+        if db is not None:
+            db.add(row)
+            db.flush()
+        else:
+            with session() as s:
+                s.add(row)
+    except Exception as exc:
         log.exception("could not write to the activity log: %s %s by %s",
-                      action, outcome, user.email if user else email)
+                      action, outcome, who)
+        raise AuditUnavailable(
+            "The activity log could not be written, so this was not done. "
+            "Try again; if it keeps happening, tell an admin.") from exc
 
 
-def record_once(action: str, *, user: User, target: str, request: Request,
+def record_once(action: str, *, db: Session, user: User, target: str,
+                request: Request,
                 within: dt.timedelta = dt.timedelta(minutes=10)) -> None:
     """record(), unless this person did the same thing to the same target a
     moment ago. For reads: a scorecard page asks for its run several times as
     it loads, and one visit should be one row."""
     since = dt.datetime.now(dt.timezone.utc) - within
-    try:
-        with session() as s:
-            seen = s.execute(select(ActivityLog.id).where(
-                ActivityLog.user_id == user.id, ActivityLog.action == action,
-                ActivityLog.target == target, ActivityLog.at >= since)
-                .limit(1)).scalar_one_or_none()
-    except Exception:
-        seen = None
+    seen = db.execute(select(ActivityLog.id).where(
+        ActivityLog.user_id == user.id, ActivityLog.action == action,
+        ActivityLog.target == target, ActivityLog.at >= since)
+        .limit(1)).scalar_one_or_none()
     if seen is None:
-        record(action, request=request, user=user, target=target)
+        record(action, db=db, request=request, user=user, target=target)
 
 
 # ------------------------------------------------------------------ reading

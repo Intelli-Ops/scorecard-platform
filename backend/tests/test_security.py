@@ -359,22 +359,20 @@ def test_a_failed_build_is_recorded_as_failed(client, monkeypatch):
     from app.jobs import worker
     from app.service import runner
 
-    def boom(s, store, report_key, week, as_of=None, run_id=None, **_):
-        from app.db.models import Run
-        run = s.get(Run, run_id)
-        run.status = "running"
-        s.flush()
+    def boom(plan):
         raise ValueError("the spreadsheet is not what it should be")
 
-    monkeypatch.setattr(runner, "execute", boom)
-    run_id = worker.submit("gfs", "2026-W35")
-    worker._jobs.join()
+    monkeypatch.setattr(runner, "plan", lambda store, run: None)
+    monkeypatch.setattr(runner, "compute", boom)
+    run_id = _run(status="running")
+    worker._build(run_id)
     from app.db.models import Run
     from app.db.session import session
     with session() as s:
         run = s.get(Run, run_id)
         assert run.status == "failed"
         assert "not what it should be" in run.error
+        assert run.active_key is None           # the week can be built again
 
 
 def test_builds_interrupted_by_a_restart_are_closed_off(client):

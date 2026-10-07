@@ -16,9 +16,10 @@ Group=scorecard
 WorkingDirectory=/opt/scorecard/backend
 EnvironmentFile=/etc/scorecard/scorecard.env
 
-# One worker process, on purpose: builds run on a background thread inside
-# the process, and the sign-in rate limits are held in its memory. Two
-# workers would each run their own builds and keep their own counts.
+# One worker process: each process builds one scorecard at a time on a
+# background thread, and one is all this machine's memory needs to carry.
+# Nothing BREAKS with more - the build queue, the one-build-per-week rule and
+# the sign-in rate limits all live in the database, not in a process.
 # Listens on 127.0.0.1 only - nginx is the way in. --proxy-headers takes the
 # visitor's address from nginx (127.0.0.1) and from nobody else, so the
 # activity log shows real addresses.
@@ -28,8 +29,9 @@ ExecStart=/opt/scorecard/.venv/bin/uvicorn app.main:app \
 
 Restart=on-failure
 RestartSec=5
-# A build in progress is abandoned on stop; the app marks it failed on the
-# next start, and it can be started again.
+# A build in progress is abandoned on stop; the app marks it failed a couple
+# of minutes after the next start (once its heartbeat is stale), and it can
+# be started again. Builds still WAITING are kept and run after the restart.
 TimeoutStopSec=30
 
 # The service can write to its data folder and nowhere else.

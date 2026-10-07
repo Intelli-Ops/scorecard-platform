@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as dt
 import shutil
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
@@ -22,12 +23,15 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db.models import (MonthSetting, Run, RunFigure, RunInput, RunNote,
                          RunTable, Upload)
+from ..db.session import after_commit
 from ..reports import ReportType, get as get_report, load_rules
 from ..reports.cache import ParquetCache
+from ..reports.locate import SourceSet
 from ..reports.period import reporting_period
-from ..storage.files import FileStore
+from ..storage.files import FileStore, StoredFile
+from . import blobs
 from .figures import all_figures
-from .ingest import source_set
+from .ingest import latest_uploads
 
 # One pipeline per report. The two are different code on purpose - see
 # app/reports/__init__.py.
@@ -50,82 +54,151 @@ def _load(report_key: str):
             getattr(importlib.import_module(pmod), pfn))
 
 
-def execute(session: Session, store: FileStore, report_key: str, week: str,
-            as_of: dt.date | None = None,
-            results: FileStore | None = None,
-            run_id: int | None = None) -> Run:
-    """Build one report for one week. Returns the recorded Run.
+def queue(session: Session, report_key: str, week: str,
+          as_of: dt.date | None = None) -> Run:
+    """Record a build to be made, and EXACTLY what it will be made from.
 
-    run_id attaches to a row the queue already created, so a build that is
-    waiting is visible as `pending` before any work starts. Without it the run
-    only appears once it is under way, and a queued build looks like nothing
-    happened.
+    Everything a build depends on is fixed here, in the transaction that
+    creates the run, and not looked up again when the worker gets to it: which
+    upload each source resolves to, the date it is built as of, and the
+    month's working days. A build can wait in the queue - behind another
+    build, or across a restart - and before this it read whatever was newest
+    when it finally STARTED, so a file replaced in between went into a build
+    asked for before it existed.
+
+    The RunInput rows written here also hold the files: an upload a queued
+    run names cannot be retired from under it (see _retire_uploads).
     """
     report: ReportType = get_report(report_key)
-    results = results or FileStore(settings.results_dir)
-    read_sources, run_pipeline = _load(report_key)
-
-    if run_id is None:
-        run = Run(report_key=report_key, week=week, status="running", as_of=as_of)
-        session.add(run)
-    else:
-        run = session.get(Run, run_id)
-        if run is None:
-            raise KeyError(f"no run {run_id}")
-        run.status = "running"
-        run.started_at = dt.datetime.now(dt.timezone.utc)
+    run = Run(report_key=report_key, week=week, status="pending",
+              as_of=as_of or dt.date.today())
+    session.add(run)
+    _fix_working_days(session, run, load_rules(report_key))
+    session.flush()        # the database refuses a second active build here
+    for upload in latest_uploads(session, report, week).values():
+        session.add(RunInput(run_id=run.id, upload_id=upload.id))
     session.flush()
+    return run
 
+
+@dataclass
+class Plan:
+    """What one build reads, as plain values - nothing here needs the
+    database, so the long part of a build holds no transaction open."""
+    report_key: str
+    week: str
+    as_of: dt.date | None
+    rules: dict
+    sources: SourceSet
+    upload_ids: dict[str, int]          # source_key -> the upload it came from
+
+
+def plan(store: FileStore, run: Run) -> Plan:
+    """The files and rules a queued run was promised - see queue()."""
+    report: ReportType = get_report(run.report_key)
+    uploads = {ri.upload.source_key: ri.upload for ri in run.inputs}
+    found = {key: store.path(u.sha256, u.suffix) for key, u in uploads.items()}
+    ss = SourceSet(report=report, found=found,
+                   missing=tuple(s for s in report.sources if s.key not in found))
+    if not ss.ok:
+        raise FileNotFoundError("; ".join(ss.problems()))
+
+    return Plan(report_key=run.report_key, week=run.week, as_of=run.as_of,
+                rules=rules_for(run.report_key, run.week, run.working_days,
+                                run.working_days_source),
+                sources=ss,
+                upload_ids={key: u.id for key, u in uploads.items()})
+
+
+def rules_for(report_key: str, week: str, working_days: int | None,
+              source: str | None) -> dict:
+    """A report's rules, with the working days a run was fixed on if they
+    were entered by hand rather than taken from the calendar."""
+    rules = load_rules(report_key)
+    if source == "entered":
+        rules["working_days"] = {month_of(week, rules).key: working_days}
+    return rules
+
+
+def compute(p: Plan, cache: ParquetCache | None = None):
+    """Read the sources and calculate. The minute-long part; no database."""
+    read_sources, run_pipeline = _load(p.report_key)
+    cache = cache or ParquetCache(
+        settings.data_dir / "cache" / p.week / p.report_key)
+    src = read_sources(p.sources, p.rules, cache)
+    return src, run_pipeline(src, p.rules, as_of=p.as_of, week=p.week)
+
+
+def record(session: Session, run: Run, p: Plan, src, result,
+           results: FileStore | None = None) -> Run:
+    """Write down what a build read and produced, and hand it to a person."""
+    results = results or FileStore(settings.results_dir)
+
+    # What was produced. Parquet into the store, pointer into the database -
+    # the files first, so the transaction that follows is only rows. A file
+    # written for a row that is then never saved is taken back out.
+    stored: dict[str, StoredFile] = {}
+    for name, df in result.tables.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / f"{name}.parquet"
+            df.write_parquet(path)
+            stored[name] = results.put(path)
+        blobs.discard_on_rollback(session, results, stored[name], ".parquet",
+                                  RunTable.sha256)
+
+    # What was read, tied to the exact bytes. Several reads can come from
+    # one uploaded file - the delta workbooks give three sheets from two
+    # files - so they are added up per upload rather than looked up one to
+    # one, which silently recorded those two files as contributing nothing.
+    rows_by_source: dict[str, int] = {}
+    secs_by_source: dict[str, float] = {}
+    for r in src.reads:
+        rows_by_source[r.source_key] = rows_by_source.get(r.source_key, 0) + r.rows
+        secs_by_source[r.source_key] = secs_by_source.get(r.source_key, 0.0) + r.seconds
+    by_upload = {ri.upload_id: ri for ri in run.inputs}
+    for key, upload_id in p.upload_ids.items():
+        by_upload[upload_id].rows_read = rows_by_source.get(key)
+        by_upload[upload_id].seconds = secs_by_source.get(key)
+
+    for name, df in result.tables.items():
+        session.add(RunTable(run_id=run.id, name=name, rows=df.height,
+                             columns=df.width, sha256=stored[name].sha256,
+                             bytes=stored[name].size))
+
+    # The sheet-shaped results, which only ever lived inside the workbook.
+    for name, records in all_figures(result).items():
+        session.add(RunFigure(run_id=run.id, name=name, data=records))
+
+    for i, note in enumerate(result.notes):
+        session.add(RunNote(run_id=run.id, seq=i, code=note.code,
+                            severity=note.severity, text=note.message,
+                            detail=note.detail))
+
+    run.status = "review"          # a person still has to look at STEP 4
+    run.seconds = result.seconds
+    run.finished_at = dt.datetime.now(dt.timezone.utc)
+    session.flush()
+    return run
+
+
+def execute(session: Session, store: FileStore, report_key: str, week: str,
+            as_of: dt.date | None = None,
+            results: FileStore | None = None) -> Run:
+    """Build one report for one week, start to finish, in the caller's own
+    transaction. Returns the recorded Run.
+
+    For a script or a test, where nothing else is using the database. The
+    server does not call this: its worker runs the same four steps - queue,
+    plan, compute, record - as separate short transactions, so a minute of
+    calculating never holds one open (see jobs/worker.py).
+    """
+    run = queue(session, report_key, week, as_of)
+    run.status = "running"
+    session.flush()
     try:
-        ss, uploads = source_set(session, store, report, week)
-        if not ss.ok:
-            raise FileNotFoundError("; ".join(ss.problems()))
-
-        rules = load_rules(report_key)
-        _apply_working_days(session, run, rules, week)
-        cache = ParquetCache(settings.data_dir / "cache" / week / report_key)
-        src = read_sources(ss, rules, cache)
-        result = run_pipeline(src, rules, as_of=as_of, week=week)
-
-        # What was read, tied to the exact bytes. Several reads can come from
-        # one uploaded file - the delta workbooks give three sheets from two
-        # files - so they are added up per upload rather than looked up one to
-        # one, which silently recorded those two files as contributing nothing.
-        rows_by_source: dict[str, int] = {}
-        secs_by_source: dict[str, float] = {}
-        for r in src.reads:
-            rows_by_source[r.source_key] = rows_by_source.get(r.source_key, 0) + r.rows
-            secs_by_source[r.source_key] = secs_by_source.get(r.source_key, 0.0) + r.seconds
-        for key, upload in uploads.items():
-            session.add(RunInput(run_id=run.id, upload_id=upload.id,
-                                 rows_read=rows_by_source.get(key),
-                                 seconds=secs_by_source.get(key)))
-
-        # What was produced. Parquet into the store, pointer into the database.
-        for name, df in result.tables.items():
-            with tempfile.TemporaryDirectory() as tmp:
-                p = Path(tmp) / f"{name}.parquet"
-                df.write_parquet(p)
-                stored = results.put(p)
-            session.add(RunTable(run_id=run.id, name=name, rows=df.height,
-                                 columns=df.width, sha256=stored.sha256,
-                                 bytes=stored.size))
-
-        # The sheet-shaped results, which only ever lived inside the workbook.
-        for name, records in all_figures(result).items():
-            session.add(RunFigure(run_id=run.id, name=name, data=records))
-
-        for i, note in enumerate(result.notes):
-            session.add(RunNote(run_id=run.id, seq=i, code=note.code,
-                                severity=note.severity, text=note.message,
-                                detail=note.detail))
-
-        run.status = "review"          # a person still has to look at STEP 4
-        run.seconds = result.seconds
-        run.finished_at = dt.datetime.now(dt.timezone.utc)
-        session.flush()
-        return run
-
+        p = plan(store, run)
+        src, result = compute(p)
+        return record(session, run, p, src, result, results)
     except Exception as exc:
         run.status = "failed"
         run.error = f"{type(exc).__name__}: {exc}"
@@ -141,14 +214,14 @@ def month_of(week: str, rules: dict | None = None):
                             (rules or {}).get("working_days"))
 
 
-def _apply_working_days(session: Session, run: Run, rules: dict, week: str) -> None:
-    """Hand the build the working days entered for its month, if any, and
-    note on the run which number it paced on."""
-    key = month_of(week, rules).key
+def _fix_working_days(session: Session, run: Run, rules: dict) -> None:
+    """Note on the run the working days it will pace on - those entered for
+    its month, if any, or the calendar's - as they stand when it is queued."""
+    key = month_of(run.week, rules).key
     row = session.get(MonthSetting, key)
     if row is not None:
         rules["working_days"] = {key: row.working_days}
-    period = month_of(week, rules)
+    period = month_of(run.week, rules)
     run.working_days = period.business_days
     run.working_days_source = "entered" if row is not None else "calendar"
 
@@ -256,7 +329,12 @@ def _retire_uploads(session: Session, upload_ids, objects: FileStore) -> tuple[i
         are stored once, and Thursday's Case AR is often byte-for-byte
         Tuesday's, so one stored file can back two rows - and two weeks.
 
-    Returns (rows removed, blobs unlinked).
+    The rows go now, inside the caller's transaction. The bytes go only once
+    that transaction has COMMITTED: a row can be rolled back and a deleted
+    file cannot, and done the other way round a commit that failed would put
+    back rows pointing at files that no longer exist.
+
+    Returns (rows removed, blobs that will be unlinked).
     """
     rows_gone, blobs_gone = 0, 0
     for upload_id in upload_ids:
@@ -275,7 +353,8 @@ def _retire_uploads(session: Session, upload_ids, objects: FileStore) -> tuple[i
         shared = session.execute(
             select(Upload.id).where(Upload.sha256 == sha).limit(1)
         ).scalar_one_or_none()
-        if shared is None and objects.remove(sha, suffix):
+        if shared is None and blobs.remove_after_commit(
+                session, objects, sha, suffix, Upload.sha256):
             blobs_gone += 1
     return rows_gone, blobs_gone
 
@@ -292,6 +371,9 @@ def delete(session: Session, run: Run, results: FileStore | None = None,
     Deleting the GFS run leaves the files All Providers still needs; the last
     run to be deleted takes them with it. An upload no run ever read is not
     this run's to remove - use delete_week for that.
+
+    Nothing leaves the disk until the caller's transaction commits (see
+    _retire_uploads); the counts returned are of what will then go.
     """
     results = results or FileStore(settings.results_dir)
     objects = objects or FileStore(settings.object_dir)
@@ -309,7 +391,8 @@ def delete(session: Session, run: Run, results: FileStore | None = None,
         still_used = session.execute(
             select(RunTable.id).where(RunTable.sha256 == sha).limit(1)
         ).scalar_one_or_none()
-        if still_used is None and results.remove(sha, ".parquet"):
+        if still_used is None and blobs.remove_after_commit(
+                session, results, sha, ".parquet", RunTable.sha256):
             freed += 1
     summary["files_removed"] = freed
 
@@ -360,8 +443,7 @@ def delete_week(session: Session, week: str, results: FileStore | None = None,
 
     # The parquet copies the readers cached from this week's spreadsheets. They
     # are the client's case data in another format, and deleting the week used
-    # to leave them behind on disk.
+    # to leave them behind on disk. After the commit, like every other file.
     cache = settings.data_dir / "cache" / week
-    if cache.is_dir():
-        shutil.rmtree(cache, ignore_errors=True)
+    after_commit(session, lambda: shutil.rmtree(cache, ignore_errors=True))
     return summary

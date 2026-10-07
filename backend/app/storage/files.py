@@ -90,6 +90,9 @@ class FileStore:
             raise FileNotFoundError(f"no stored file {sha[:12]}...{suffix}")
         return p
 
+    def has(self, sha: str, suffix: str) -> bool:
+        return self._path_for(sha, suffix).exists()
+
     def verify(self, sha: str, suffix: str) -> bool:
         """Re-read the bytes and check they still hash to their own address."""
         return sha256_of(self.path(sha, suffix)) == sha
@@ -102,7 +105,9 @@ class FileStore:
         row. That condition is the whole safety property: while a run still
         names these bytes they stay, so a run from December can still be asked
         exactly what it read. Deleting a run is what retires its files, and
-        only after the last run sharing them has gone.
+        only after the last run sharing them has gone - and only once that
+        deletion has COMMITTED (see service/blobs.py), since a file cannot be
+        rolled back.
         """
         p = self._path_for(sha, suffix)
         if not p.exists():

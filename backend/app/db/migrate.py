@@ -1,23 +1,70 @@
-"""Bringing an existing database up to date, and keeping the log untouchable.
+"""Bringing a database up to date, and keeping the log untouchable.
 
-create_all() makes tables that are missing but never changes one that exists,
-so a database created before a column was added never gets it. That is what
-add_missing_columns is for: it compares each table with its model and adds
-whatever is absent. It only ever ADDS - it never drops, renames or retypes
-anything, so running it against a database holding real data is safe, and
-running it twice does nothing the second time.
+The schema is versioned with Alembic. Every change is a numbered file in
+migrations/versions/, the database records which ones it has had (in its
+alembic_version table), and upgrade() applies the rest in order. That covers
+what adding columns alone could not: a constraint, an index, a rename, a
+change of type, rows that have to be rewritten along the way.
 
-When a change needs more than an added column, this is the point to bring in
-Alembic. Until then, one small function beats a migrations folder nobody runs.
+add_missing_columns is what came before, and is kept for one job only: a
+database made BEFORE migrations were versioned has no record of what it has
+had, so upgrade() first brings it to the frozen baseline (db/baseline.py) the
+old way, marks it as being there, and from then on it is migrated like any
+other. It only ever ADDS - it never drops, renames or retypes anything.
 """
 from __future__ import annotations
 import logging
+from functools import lru_cache
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import MetaData, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.schema import Column
 
 log = logging.getLogger("scorecard.db")
+
+BASELINE = "0001"
+
+
+def _config(engine: Engine) -> Config:
+    cfg = Config()
+    cfg.set_main_option("script_location",
+                        str(Path(__file__).resolve().parent / "migrations"))
+    cfg.attributes["engine"] = engine
+    return cfg
+
+
+def upgrade(engine: Engine) -> None:
+    """Apply every migration this database has not had."""
+    from . import baseline
+    cfg = _config(engine)
+    tables = set(inspect(engine).get_table_names())
+    if "alembic_version" not in tables and tables & set(baseline.metadata.tables):
+        # From before versioned migrations - see the module docstring.
+        baseline.metadata.create_all(engine)
+        add_missing_columns(engine, baseline.metadata)
+        upgrade_roles(engine)
+        command.stamp(cfg, BASELINE)
+        log.warning("database from before versioned migrations - brought to "
+                    "revision %s", BASELINE)
+    command.upgrade(cfg, "head")
+
+
+def revision(engine: Engine) -> str | None:
+    """The migration this database is at, or None if it has had none."""
+    from alembic.runtime.migration import MigrationContext
+    with engine.connect() as conn:
+        return MigrationContext.configure(conn).get_current_revision()
+
+
+@lru_cache(maxsize=None)
+def head() -> str:
+    """The newest migration this code knows."""
+    from alembic.script import ScriptDirectory
+    return ScriptDirectory(str(Path(__file__).resolve().parent
+                               / "migrations")).get_current_head()
 
 
 def _default_sql(column: Column) -> str | None:

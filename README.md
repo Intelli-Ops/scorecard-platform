@@ -503,20 +503,39 @@ npm run lint
 ```
 
 ### The golden-master tests
-`backend/tests/golden/` runs this app on a real week of input files and checks
-that its four tables, and the All Providers settlement grids, **match the
-gfs-automation output exactly** (row for row, money to the cent). They need the
-gfs-automation folder, with its `inputs/` and `marts/`, on disk, and are
-skipped otherwise:
+`backend/tests/golden/` is the one test of the numbers themselves. For each
+report it takes a build that a person reviewed and **approved**, re-reads the
+exact files that build read, and checks today's code still produces the same
+tables, dashboard figures and review checks (row for row, money to the cent).
+
+The reference is this app's own approved work - nothing from the old
+gfs-automation pipeline is needed. To make it (once per report, and again
+whenever a change is *meant* to move the numbers):
+
+1. In the app, upload a week, build the report, review it and approve it.
+2. From `backend\`, with the run's id from the run history:
 
 ```powershell
-$env:GFS_LEGACY_ROOT = "C:\Users\<you>\OneDrive - MSFT\Desktop\gfs-automation"
-$env:GFS_GOLDEN_WEEK = "2026-W38"
-$env:GFS_GOLDEN_AS_OF = "2026-09-22"
+..\.venv\Scripts\python -m app.manage save-golden 12
 ..\.venv\Scripts\python -m pytest -q tests\golden
 ```
 
-Run them after any change to `reports/`.
+That copies the run's input files and results into
+`backend\tests\golden\fixtures\` (client data: git-ignored, never committed).
+They are frozen copies, so new uploads and corrected data never affect the
+test - only a change to the code or to `rules.yml` can make it fail.
+
+Without a saved reference the tests **fail** - they do not skip. A skipped
+test is green, and the check that the numbers still match must not be able to
+go quietly missing. On a machine that really has no client data, say so
+explicitly:
+
+```powershell
+$env:GFS_GOLDEN_OPTIONAL = "1"      # these tests are then skipped, visibly
+```
+
+`deploy\make_package.py` ignores that setting, so a release is never made
+without them. Run them after any change to `reports/`.
 
 ---
 

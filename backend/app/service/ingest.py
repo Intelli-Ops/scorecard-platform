@@ -13,9 +13,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..reports import CASE_AR_KEYS, REPORTS, ReportType, SourceFile
-from ..reports.locate import SourceSet, _matches
+from ..reports.locate import _matches
 from ..storage.files import FileStore
 from ..db.models import Upload
+from . import blobs
 
 
 @dataclass
@@ -86,6 +87,10 @@ def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
 
         report_key = for_report if spec.key in CASE_AR_KEYS else None
         stored = store.put(path)
+        # The file is on disk before its row is saved. If the row never is,
+        # the file is taken back out rather than left with nothing naming it.
+        blobs.discard_on_rollback(session, store, stored, path.suffix,
+                                  Upload.sha256)
 
         session.add(Upload(week=week, report_key=report_key, source_key=spec.key,
                            filename=path.name, suffix=path.suffix.lower(),
@@ -128,15 +133,6 @@ def latest_uploads(session: Session, report: ReportType, week: str,
         if row.report_key == scope:
             out[row.source_key] = row
     return out
-
-
-def source_set(session: Session, store: FileStore, report: ReportType,
-               week: str) -> tuple[SourceSet, dict[str, Upload]]:
-    """Build what the reader expects, out of the database and object store."""
-    uploads = latest_uploads(session, report, week)
-    found = {key: store.path(u.sha256, u.suffix) for key, u in uploads.items()}
-    missing = tuple(s for s in report.sources if s.key not in found)
-    return SourceSet(report=report, found=found, missing=missing), uploads
 
 
 def week_status(session: Session, week: str) -> dict:

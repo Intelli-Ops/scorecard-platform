@@ -91,8 +91,8 @@ def delete_week(week: str, request: Request,
             out = runner.delete_week(s, week) | {"deleted_by": user.email}
         except ValueError as e:
             raise HTTPException(409, str(e))
-    audit.record("week.delete", request=request, user=user, target=week,
-                 detail={k: out[k] for k in ("runs_removed", "uploads_removed")})
+        audit.record("week.delete", db=s, request=request, user=user, target=week,
+                     detail={k: out[k] for k in ("runs_removed", "uploads_removed")})
     return out
 
 
@@ -160,12 +160,13 @@ def upload(week: str, request: Request,
                              for n, why in result.rejected],
                 "status": week_status(s, week),
             }
-    audit.record("upload.files", request=request, user=user, target=week,
-                 detail={"for_report": for_report,
-                         "accepted": [{"file": a["filename"], "sha256": a["sha256"],
-                                       "bytes": a["size_bytes"]}
-                                      for a in out["accepted"]],
-                         "rejected": [r["filename"] for r in out["rejected"]]})
+            audit.record(
+                "upload.files", db=s, request=request, user=user, target=week,
+                detail={"for_report": for_report,
+                        "accepted": [{"file": a["filename"], "sha256": a["sha256"],
+                                      "bytes": a["size_bytes"]}
+                                     for a in out["accepted"]],
+                        "rejected": [r["filename"] for r in out["rejected"]]})
     return out
 
 
@@ -234,7 +235,8 @@ def set_working_days(week: str, body: WorkingDays, request: Request,
             row.set_at = dt.datetime.now(dt.timezone.utc)
         s.flush()
         out = _month_info(s, week)
-    audit.record("month.working_days", request=request, user=user, target=key,
-                 detail={"was": info["working_days"], "now": out["working_days"],
-                         "calendar": out["calendar_days"]})
+        audit.record("month.working_days", db=s, request=request, user=user,
+                     target=key,
+                     detail={"was": info["working_days"], "now": out["working_days"],
+                             "calendar": out["calendar_days"]})
     return out

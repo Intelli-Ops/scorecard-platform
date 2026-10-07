@@ -3,7 +3,13 @@
 Run from backend/, with the same SCORECARD_DB the server uses:
 
     python -m app.manage check                   can it reach the database?
-    python -m app.manage upgrade                 create / update the tables
+    python -m app.manage upgrade                 apply the migrations this
+                                                 database has not had
+    python -m app.manage save-golden RUN_ID      keep an APPROVED run as the
+                                                 reference the golden-master
+                                                 test compares against
+    python -m app.manage clean-files             list stored files no row
+                                                 names (--delete removes them)
     python -m app.manage create-admin EMAIL APD  a new SYSTEM admin account
                                                  (asks for a password)
     python -m app.manage promote EMAIL           make an existing account a
@@ -156,6 +162,56 @@ def cmd_copy_db(a):
          "the database points at files in them.")
 
 
+def cmd_clean_files(a):
+    """List - and with --delete, remove - stored files no row names.
+
+    The app keeps files and rows in step (service/blobs.py), but a process
+    killed between writing a file and saving its row leaves the file behind,
+    and nothing in the database knows to look for it. Files under an hour
+    old are left alone: one may be an upload whose row is about to be saved.
+    """
+    import time
+    from .db.models import RunTable, Upload
+    from .storage.files import FileStore
+    with session() as s:
+        named = {
+            settings.object_dir: set(s.execute(select(Upload.sha256)).scalars()),
+            settings.results_dir: set(s.execute(select(RunTable.sha256)).scalars()),
+        }
+    cutoff = time.time() - 3600
+    found = 0
+    for root, hashes in named.items():
+        for path in FileStore(root).root.rglob("*"):
+            if (not path.is_file() or path.stat().st_mtime > cutoff
+                    or path.stem in hashes):
+                continue
+            found += 1
+            _say(f"  {path}  ({path.stat().st_size:,} bytes)")
+            if a.delete:
+                path.unlink()
+    _say(f"{found} file(s) no row names" + (", removed." if a.delete else
+         ". Run again with --delete to remove them." if found else "."))
+
+
+def cmd_save_golden(a):
+    """Make an approved run the golden master's reference for its report -
+    see service/golden.py."""
+    from .db.models import Run
+    from .service import golden
+    with session() as s:
+        run = s.get(Run, a.run_id)
+        if run is None:
+            sys.exit(f"no run {a.run_id}")
+        try:
+            out = golden.save(run)
+        except (ValueError, FileNotFoundError) as e:
+            sys.exit(str(e))
+    _say(f"run {out['run_id']} ({out['report_key']}, {out['week']}) is now the "
+         f"reference: {out['inputs']} input files, {out['tables']} tables")
+    _say(f"saved in {out['directory']}")
+    _say("Check it with:  python -m pytest tests/golden")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="python -m app.manage",
                                 description=__doc__.split("\n\n")[0])
@@ -177,6 +233,12 @@ def main(argv=None):
     c.set_defaults(fn=cmd_protect_log)
     c = sub.add_parser("copy-db"); c.add_argument("from_url")
     c.set_defaults(fn=cmd_copy_db)
+    c = sub.add_parser("save-golden"); c.add_argument("run_id", type=int)
+    c.set_defaults(fn=cmd_save_golden)
+    c = sub.add_parser("clean-files")
+    c.add_argument("--delete", action="store_true",
+                   help="remove the files, rather than only listing them")
+    c.set_defaults(fn=cmd_clean_files)
     a = p.parse_args(argv)
     settings.ensure()
     a.fn(a)

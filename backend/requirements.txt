@@ -1,37 +1,47 @@
+# EVERY VERSION IS EXACT. A build made today and one made in six months
+# install the same packages, so a number that changes between them changed
+# because the code or the data did - never because a library moved underneath.
+#
+# This file pins what the app asks for by name. constraints.txt (applied by
+# the line below) pins what THOSE pull in, so nothing at all floats.
+#
+# To move a package forward: change it here, reinstall, run the whole test
+# suite INCLUDING the golden master, and regenerate constraints.txt
+# (instructions at the top of that file). Commit both.
+-c constraints.txt
+
 # --- Calculation core -------------------------------------------------
-# PINNED EXACTLY to the versions that produced the verified Week 35
-# numbers. The golden-master test compares against output from those
-# versions; do not bump these without re-running it.
+# These produced the verified Week 35 numbers. The golden-master test
+# compares against output from these versions; do not bump them without
+# re-running it.
 polars==1.44.1
 fastexcel==0.21.0        # calamine reader - 2.3s vs 34.5s for openpyxl
-pyarrow>=17              # parquet
+pyarrow==25.0.1          # parquet
 pyyaml==6.0.3            # rules.yml
 
 # --- Platform ---------------------------------------------------------
-fastapi>=0.115
-uvicorn[standard]>=0.32
-python-multipart>=0.0.17 # multipart uploads
-sqlalchemy>=2.0
-pydantic>=2.9
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32 # multipart uploads
+sqlalchemy==2.0.52
+pydantic==2.13.5
+alembic==1.20.0          # versioned migrations - see app/db/migrate.py
 
 # MySQL, on the server. Pure Python, so it installs the same on Windows and
 # Ubuntu with nothing to compile. `cryptography` is what lets it sign in to
 # MySQL 8, whose default authentication (caching_sha2_password) needs it.
 # Locally SQLite is the default and neither is used.
-pymysql>=1.1
-cryptography>=43
+pymysql==1.2.3
+cryptography==50.0.1
 # Time-zone names ("Asia/Karachi") for the out-of-hours alert. Linux ships
 # them; Windows does not.
-tzdata>=2024.1
-# alembic>=1.14          # migrations, once a change needs more than an added
-#                        # column - see app/db/migrate.py
+tzdata==2026.4
 
 # --- Jobs -------------------------------------------------------------
-# None. Builds run on a single background thread inside the web process
-# (app/jobs/worker.py). A queue server earns its place when a job must
-# survive a restart or spread across machines; here a run that dies can
-# simply be started again, and its inputs are still in the store.
+# None. Builds run on a background thread inside the web process, and the
+# queue is the database's own `run` table (app/jobs/worker.py) - so a waiting
+# build survives a restart without a queue server to install and run.
 
 # --- Dev / test -------------------------------------------------------
-pytest>=8.3
-httpx>=0.28
+pytest==9.1.1
+httpx==0.28.1

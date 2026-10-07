@@ -13,7 +13,7 @@ from __future__ import annotations
 import datetime as dt
 
 from sqlalchemy import (BigInteger, String, Integer, Float, DateTime, ForeignKey,
-                        Text, UniqueConstraint, Index, JSON, Boolean, text)
+                        Text, UniqueConstraint, Index, JSON, Boolean, event, text)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 
@@ -241,6 +241,15 @@ class Run(Base):
     # number came from: typed in on the upload screen, or the calendar's.
     working_days: Mapped[int | None] = mapped_column(Integer)
     working_days_source: Mapped[str | None] = mapped_column(String(16))
+    # "gfs:2026-W38" while the run is pending or running, NULL once it is
+    # over (see _keep_active_key). Unique, so the DATABASE refuses a second
+    # build of the same report and week - whichever server process asks. A
+    # lock inside one process could only ever stop that process.
+    active_key: Mapped[str | None] = mapped_column(String(48), unique=True,
+                                                   index=True)
+    # Written every few seconds by the process building the run. A run that
+    # says `running` with no recent beat belongs to a process that has died.
+    heartbeat_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime())
 
     inputs: Mapped[list["RunInput"]] = relationship(
         back_populates="run", cascade="all, delete-orphan")
@@ -258,6 +267,17 @@ class Run(Base):
 # approved -> signed off, safe to send the client
 # failed   -> stopped with an error
 STATUSES = ("pending", "running", "review", "approved", "failed")
+ACTIVE = ("pending", "running")
+
+
+@event.listens_for(Run, "before_insert")
+@event.listens_for(Run, "before_update")
+def _keep_active_key(_mapper, _connection, run: Run) -> None:
+    """active_key follows status, here rather than at each place a status is
+    set - the one that forgot would leave a week that can never be built
+    again."""
+    run.active_key = (f"{run.report_key}:{run.week}"
+                      if run.status in ACTIVE else None)
 
 
 class RunInput(Base):
@@ -395,6 +415,22 @@ class ActivityLog(Base):
 # failure -> it was attempted and did not work (a wrong password)
 # denied  -> it was refused because the person is not allowed (not an admin)
 OUTCOMES = ("success", "failure", "denied")
+
+
+class RateHit(Base):
+    """One counted attempt - a wrong sign-in, a sign-up - against a key such
+    as "login:203.0.113.9". See service/ratelimit.py.
+
+    In the database rather than in the server's memory, so the count survives
+    a restart and is the same count whichever server process is asked.
+    """
+    __tablename__ = "rate_hit"
+
+    id: Mapped[int] = mapped_column(BigId, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(80))
+    at: Mapped[dt.datetime] = mapped_column(UtcDateTime(), default=_now)
+
+    __table_args__ = (Index("ix_rate_hit_key_at", "key", "at"),)
 
 
 class MonthSetting(Base):
