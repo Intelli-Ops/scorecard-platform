@@ -6,9 +6,8 @@ header rows, same column subsets - with two differences:
   * nothing is printed. The .bat pipeline announced each file as it went; here
     every read is recorded in a ReadReport the API can serve and the review
     screen can show.
-  * no folder layout is assumed. Files arrive already located (see locate.py),
-    so this works the same whether they came from an upload or from an
-    inputs/<week>/ folder during the golden-master test.
+  * no folder layout is assumed. Files arrive already located (see
+    locate.py), wherever they are stored.
 
 The column subsets are not tidying. Combined Custom Case AR is 240 MB and only
 five of its columns are ever used; asking for five instead of all of them is

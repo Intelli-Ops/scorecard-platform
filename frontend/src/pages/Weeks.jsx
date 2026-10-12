@@ -100,8 +100,8 @@ export default function Weeks() {
     } catch (e) { setError(e); }
   }
 
-  /* One wrong file, without deleting the week. The file before it, if there
-     was one, takes its place - the server sends back the week as it now is. */
+  /* One wrong file, without deleting the week. Nothing takes its place - the
+     server sends back the week as it now is, with that input empty. */
   async function removeFile(id) {
     try {
       setError(null);

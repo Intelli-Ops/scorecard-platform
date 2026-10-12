@@ -9,8 +9,7 @@ tests, builds the React app (npm ci, npm run build) and writes
 release/scorecard-<date>-<commit>.zip with:
 
   * every file in that commit - so never .venv, node_modules, data/ (client
-    case data), the golden-master fixtures or anything else .gitignore keeps
-    out;
+    case data) or anything else .gitignore keeps out;
   * frontend/dist, the built app, so the server needs no Node.js.
 
 Files for the server get Unix line endings, whatever the checkout has: bash
@@ -24,9 +23,9 @@ Three things a release must be, each of which this used to let slide:
     what was reviewed, by anyone else - the name said "-modified", which
     recorded the problem without preventing it. Commit (a branch is fine),
     then package.
-  * TESTED. The backend tests run first, the golden master included, and
-    here a golden master with no reference data FAILS rather than skips
-    (see backend/tests/golden/conftest.py).
+  * TESTED. The backend tests run first, and a failure stops the zip. They
+    use stand-in files, so they do not check the figures of a real week -
+    build one and look at it before a release that changed reports/.
   * BUILT FROM THE LOCKFILE. `npm ci` every time: it throws node_modules
     away and installs exactly what package-lock.json says. Reusing whatever
     node_modules was already there built the release from one developer's
@@ -35,7 +34,6 @@ Three things a release must be, each of which this used to let slide:
 from __future__ import annotations
 
 import datetime as dt
-import os
 import subprocess
 import sys
 import zipfile
@@ -73,11 +71,8 @@ def require_clean() -> None:
 
 
 def run_tests() -> None:
-    """The whole backend suite. GFS_GOLDEN_OPTIONAL is taken OUT of the
-    environment, so a shell that had it set for everyday work cannot let a
-    release through with the golden master skipped."""
-    env = {k: v for k, v in os.environ.items() if k != "GFS_GOLDEN_OPTIONAL"}
-    run([sys.executable, "-m", "pytest", "-q"], ROOT / "backend", env)
+    """The whole backend suite."""
+    run([sys.executable, "-m", "pytest", "-q"], ROOT / "backend")
 
 
 def project_files() -> list[str]:

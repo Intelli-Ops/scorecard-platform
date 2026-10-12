@@ -20,16 +20,9 @@ dist/
 build/
 .vite/
 
-# Golden-master fixtures are parquet snapshots of real client data.
-# Kept on disk, referenced by path, never committed.
-backend/tests/golden/fixtures/
-
 # OS
 Thumbs.db
 .DS_Store
-
-# golden-master parquet cache
-.golden-cache/
 
 # local database + object store
 data/
@@ -40,3 +33,13 @@ frontend/.env.local
 
 # Zips made by deploy/make_package.py
 release/
+
+# Project notes kept on the developer's machine only; DEPLOY.md is the one
+# document that ships.
+/README.md
+/ARCHITECTURE.md
+/HOW-IT-WORKS.md
+/Review.*
+
+# Left by the removed golden-master tests: parsed copies of client files.
+.golden-cache/

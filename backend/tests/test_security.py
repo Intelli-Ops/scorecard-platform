@@ -542,6 +542,63 @@ def test_guessing_the_current_password_from_an_open_session_is_limited(client, u
     assert r.status_code == 429
 
 
+def test_a_new_password_that_is_refused_is_not_a_wrong_password(client, user):
+    """Too short, or the same as the old one: the person knew their password.
+    These were counted as guesses at it, and ten shut the form."""
+    from app.service import ratelimit
+    limit, _ = ratelimit.PASSWORD_FAILURES
+    for _ in range(limit):
+        r = client.post("/api/me/password", headers=user,
+                        json={"current": PASSWORD, "new": "short"})
+        assert r.status_code == 400 and "at least" in r.json()["detail"]
+    r = client.post("/api/me/password", headers=user,
+                    json={"current": PASSWORD, "new": "a new password"})
+    assert r.status_code == 200
+
+
+@pytest.fixture
+def received(monkeypatch):
+    """How many bytes of uploaded files the server has taken in."""
+    import starlette.formparsers as fp
+    seen = {"bytes": 0}
+    real = fp.MultiPartParser.on_part_data
+
+    def counting(self, data, start, end):
+        seen["bytes"] += end - start
+        return real(self, data, start, end)
+    monkeypatch.setattr(fp.MultiPartParser, "on_part_data", counting)
+    return seen
+
+
+def test_an_upload_is_not_taken_in_from_someone_not_signed_in(client, received):
+    """The body used to be read first and the sender checked afterwards, so
+    anyone could have the server swallow a gigabyte before being refused."""
+    files = [("files", ("Supporting File.xlsx", b"x" * 200_000, "application/x"))]
+    r = client.post("/api/weeks/2026-W35/uploads", files=files)
+    assert r.status_code == 401 and r.json()["detail"] == "Sign in to continue."
+    assert received["bytes"] == 0
+
+
+def test_an_upload_is_not_taken_in_from_a_viewer(client, user, admin, received):
+    files = [("files", ("Supporting File.xlsx", b"x" * 200_000, "application/x"))]
+    r = client.post("/api/weeks/2026-W35/uploads", headers=user, files=files)
+    assert r.status_code == 403 and received["bytes"] == 0
+    assert [e.target for e in log("admin.denied")] == [
+        "POST /api/weeks/2026-W35/uploads"]
+    # An admin's still is.
+    r = client.post("/api/weeks/2026-W35/uploads", headers=admin, files=files)
+    assert r.status_code == 200 and received["bytes"] == 200_000
+
+
+def test_nothing_but_an_upload_may_be_large(client):
+    """A megabyte is far more than any form here sends. Without a ceiling the
+    whole of it was read into memory before the route looked at it."""
+    r = client.post("/api/auth/login", content=b"x" * (1024 * 1024 + 1),
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 413
+    assert login(client, "nobody@appedology.com", "whatever1").status_code == 401
+
+
 def test_an_overlong_email_is_refused_before_it_reaches_the_log(client):
     r = login(client, "a" * 400 + "@appedology.com", "whatever1")
     assert r.status_code == 422

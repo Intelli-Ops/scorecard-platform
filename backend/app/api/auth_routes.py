@@ -173,6 +173,7 @@ def change_password(body: PasswordChange, request: Request,
     key = f"password:{user.id}"
     _too_many(key, ratelimit.PASSWORD_FAILURES, "wrong passwords")
     failed: str | None = None
+    guess = False
     with session() as s:
         row = s.get(User, user.id)
         try:
@@ -181,13 +182,17 @@ def change_password(body: PasswordChange, request: Request,
             out = {"ok": True, "other_sessions_ended": ended,
                    "user": auth.as_dict(row)}
         except auth.AuthError as e:
-            failed = str(e)
+            # Only a wrong CURRENT password is a guess. A new one that is too
+            # short, or the same as the old, used to be counted too - and ten
+            # of those shut the form with "too many wrong passwords".
+            failed, guess = str(e), isinstance(e, auth.WrongPassword)
         else:
             audit.record("auth.password_change", db=s, request=request, user=user,
                          detail={"other_sessions_ended": ended,
                                  "was_temporary": bool(user.must_change_password)})
     if failed:
-        ratelimit.hit(key, ratelimit.PASSWORD_FAILURES)
+        if guess:
+            ratelimit.hit(key, ratelimit.PASSWORD_FAILURES)
         audit.record("auth.password_change", request=request, user=user,
                      outcome="failure", detail={"reason": failed})
         raise HTTPException(400, failed)

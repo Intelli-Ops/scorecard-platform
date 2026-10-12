@@ -103,7 +103,17 @@ def start_run(request: Request, report: str = Query(...),
             # check above cannot see the other's uncommitted run; the unique
             # Run.active_key can, in whichever server process each landed.
             s.rollback()
-            raise _already_building(_building(s, report, week)) from None
+            busy = _building(s, report, week)
+            if busy is not None:
+                raise _already_building(busy) from None
+            # Not a second build: the other thing the database refuses here
+            # is a file that was replaced or removed in the same moment, so
+            # the run named an upload that had just gone. Saying "already
+            # being built" sent people looking for a build that was not there.
+            raise HTTPException(
+                409, {"message": "This week's files changed while the build "
+                                 "was being started. Press Build again."}
+            ) from None
         audit.record("run.start", db=s, request=request, user=user,
                      target=f"run {run.id}",
                      detail={"report": report, "week": week})

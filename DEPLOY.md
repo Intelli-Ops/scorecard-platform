@@ -267,7 +267,7 @@ change.
 | `SCORECARD_WORK_HOURS` | `7-21` | Sign-ins outside these hours are flagged |
 | `SCORECARD_API_DOCS` | `0` | `1` shows the API listing at `/docs` (not reachable through nginx anyway) |
 | `SCORECARD_CORS_ORIGINS` | empty | Not needed: page and API share one address |
-| `SCORECARD_MAX_UPLOAD_MB` | `1024` | Largest single upload. Keep nginx's `client_max_body_size` above it |
+| `SCORECARD_MAX_UPLOAD_MB` | `1024` | Largest single upload. Keep `client_max_body_size` in the nginx site's upload `location` above it |
 
 ---
 
@@ -276,7 +276,7 @@ change.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Browser shows **502 Bad Gateway** | The backend is not running | `sudo journalctl -u scorecard -n 50` shows why |
-| **413 Request Entity Too Large** on upload | A file is bigger than nginx allows | Raise `client_max_body_size` in the nginx site |
+| **413 Request Entity Too Large** on upload | The files are bigger than nginx allows | Raise `client_max_body_size` in the upload `location` of the nginx site (the 1m above it is for every other address, and stays) |
 | The page loads, but sign-in says it cannot reach the server | Built without `frontend/.env.production` | Rebuild the zip with `deploy/make_package.py` |
 | `ERROR: frontend/dist is missing` | The zip was not made with `make_package.py` | Make the zip with it; a plain copy of the code has no built app |
 | `bash\r: not found` | A script has Windows line endings | Use the zip from `make_package.py`, which fixes them |
@@ -295,8 +295,7 @@ On the development machine, from the project folder:
 ```
 
 Commit first: it refuses to run while anything is changed or new and not in
-git, so every zip is exactly one commit. It then runs the backend tests - the
-golden master included, which must have its reference data (see the README) -
+git, so every zip is exactly one commit. It then runs the backend tests,
 installs the frontend's packages from the lockfile (`npm ci`), builds the React
 app and writes `release\scorecard-<date>-<commit>.zip`. The zip contains only
 files in that commit, so it never includes `.venv`, `node_modules` or `data\`.

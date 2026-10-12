@@ -99,6 +99,32 @@ def require_admin(request: Request, user: User = Depends(current_user)) -> User:
     return user
 
 
+def refuse_upload(request: Request) -> tuple[int, str] | None:
+    """Why an upload must not even be RECEIVED - (status, message) - or None
+    if its sender is a signed-in admin.
+
+    FastAPI reads a request's body before it works out who sent it, so the
+    checks above only ran once the whole upload had arrived: anyone, signed
+    in or not, could have the server take a gigabyte onto its disk before
+    being told no. The middleware in main.py asks this first. It decides
+    nothing new - the route's own require_admin still runs afterwards - it
+    only asks the same question before the bytes instead of after them.
+    """
+    with session() as s:
+        row = auth.session_for_token(s, _token(request))
+        if row is None:
+            return 401, "Sign in to continue."
+        user = row.user
+        if user.must_change_password:
+            return 403, "Choose a new password to continue."
+        if user.is_admin:
+            return None
+        s.expunge(user)
+    audit.record("admin.denied", request=request, user=user, outcome="denied",
+                 target=f"{request.method} {request.url.path}")
+    return 403, "Only an admin can do that."
+
+
 # ------------------------------------------------------------------ inputs
 
 WEEK_RE = re.compile(r"^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$")

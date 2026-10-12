@@ -7,7 +7,6 @@ workbook.
 
 Nothing here calculates anything itself. It calls the audited functions in
 core/ in the same order, with the same arguments, as scripts/run_week.py.
-The golden-master test exists to keep that true.
 
 The checks a person must see before the report goes out - new providers, no
 data for the week, duplicate case ids - are collected in RunResult.notes (see

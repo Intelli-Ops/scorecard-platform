@@ -10,6 +10,7 @@ routes themselves.
 """
 from __future__ import annotations
 import ipaddress
+import re
 import shutil
 import tempfile
 import threading
@@ -17,12 +18,14 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from .api.admin_routes import router as admin_router
 from .api.auth_routes import me_router, router as auth_router
+from .api.deps import refuse_upload
 from .api.run_routes import router as run_router
 from .api.week_routes import router as week_router
 from .config import settings
@@ -87,6 +90,22 @@ _HEADERS = {
 }
 
 
+# The one address that takes files, and the most any OTHER request may carry.
+# Everything else the app is sent is a few fields of JSON; without a ceiling,
+# a gigabyte posted at the sign-in form was read into memory before anything
+# looked at it. nginx sets the same two limits (deploy/nginx-scorecard.conf);
+# these hold wherever the app is reached without it.
+UPLOADS = re.compile(r"^/api/weeks/[^/]+/uploads/?$")
+MAX_BODY = 1024 * 1024
+
+
+def _too_big(request: Request) -> bool:
+    try:
+        return int(request.headers.get("content-length", "0")) > MAX_BODY
+    except ValueError:
+        return True
+
+
 def _local(request: Request) -> bool:
     """Asked from the server itself - the installer's check, a monitor, an
     admin at the console - rather than from across the network."""
@@ -108,6 +127,18 @@ async def security_headers(request: Request, call_next):
                        "address; if there is none yet, the certificate has "
                        "not been set up (see DEPLOY.md, 'HTTPS')."},
             status_code=400)
+    elif request.method == "POST" and UPLOADS.match(request.url.path):
+        # Who is sending, asked BEFORE the files are taken in - see
+        # deps.refuse_upload. On a thread: it reads the database.
+        refused = await run_in_threadpool(refuse_upload, request)
+        if refused:
+            response = JSONResponse({"detail": refused[1]}, status_code=refused[0])
+        else:
+            response = await call_next(request)
+    elif _too_big(request):
+        response = JSONResponse(
+            {"detail": "That request is larger than anything this address "
+                       "accepts."}, status_code=413)
     else:
         response = await call_next(request)
     for k, v in _HEADERS.items():

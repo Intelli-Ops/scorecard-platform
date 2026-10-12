@@ -6,8 +6,7 @@ action with no record of who took it, a rule that only held while there was
 exactly one server process - and checks that it no longer can.
 
 No real spreadsheets: the calculation is replaced by a stand-in, because
-these are about what happens AROUND a build. The arithmetic is the golden
-master's job.
+these are about what happens AROUND a build.
 """
 from __future__ import annotations
 import datetime as dt
@@ -183,67 +182,6 @@ def test_files_a_queued_build_will_read_cannot_be_deleted_under_it(client):
     assert len(list(settings.object_dir.rglob("*.xlsx"))) == 7
 
 
-# ------------------------------------------------- the golden master's reference
-
-def test_an_approved_build_can_be_kept_as_the_reference(client, stand_in_pipeline,
-                                                       tmp_path):
-    """What tests/golden compares against: the files an approved run read and
-    what it produced, copied somewhere new uploads never touch."""
-    from app.db.models import Run
-    from app.db.session import session
-    from app.service import golden, runner
-    hashes = upload_everything(client)
-    run_id = client.post(f"/api/runs?report=gfs&week={WEEK}").json()["run_id"]
-    assert _wait(client, run_id)["run"]["status"] == "review"
-    kept = tmp_path / "golden"
-
-    with session() as s:
-        with pytest.raises(ValueError, match="not approved"):
-            golden.save(s.get(Run, run_id), kept)
-    assert golden.load("gfs", kept) is None
-
-    client.post(f"/api/runs/{run_id}/approve")
-    with session() as s:
-        golden.save(s.get(Run, run_id), kept)
-
-    # The week can now be deleted from the app; the reference stands alone.
-    assert client.delete(f"/api/weeks/{WEEK}").status_code == 200
-    ref = golden.load("gfs", kept)
-    assert ref.meta["week"] == WEEK and ref.meta["run_id"] == run_id
-    assert {i["source_key"]: i["sha256"] for i in ref.meta["inputs"]} == hashes
-    assert all(i["rows_read"] == 7 for i in ref.meta["inputs"])
-    assert ref.meta["figures"] == {"kpi": [{"a": 1}]}
-
-    stand_in_pipeline.clear()
-    _, result = runner.compute(ref.plan())
-    assert stand_in_pipeline == hashes               # read from the kept copies
-    assert result.tables["raw_data"].equals(pl.read_parquet(ref.tables["raw_data"]))
-
-
-def test_saving_a_new_reference_drops_the_files_only_the_old_one_needed(
-        client, stand_in_pipeline, tmp_path):
-    from app.db.models import Run
-    from app.db.session import session
-    from app.service import golden
-    kept = tmp_path / "golden"
-
-    def approved_build():
-        run_id = client.post(f"/api/runs?report=gfs&week={WEEK}").json()["run_id"]
-        _wait(client, run_id)
-        client.post(f"/api/runs/{run_id}/approve")
-        with session() as s:
-            golden.save(s.get(Run, run_id), kept)
-
-    first = upload_everything(client)
-    approved_build()
-    corrected = upload(client, "supporting file.xlsx", body=b"a corrected copy")
-    approved_build()
-
-    have = {p.stem for p in (kept / "objects").rglob("*") if p.is_file()}
-    assert corrected in have and first["supporting"] not in have
-    assert len(have) == len(first)
-
-
 # ------------------------------------------------- the queue is the database
 
 def test_a_waiting_build_survives_a_restart(client, stand_in_pipeline):
@@ -305,11 +243,33 @@ def test_two_presses_at_once_get_one_build_and_one_refusal(client, monkeypatch):
     from app.jobs import worker
     worker.stop()
     upload_everything(client)
-    monkeypatch.setattr(routes, "_building", lambda s, report, week: None)
-    assert client.post(f"/api/runs?report=gfs&week={WEEK}").status_code == 200
+    real, checks = routes._building, iter([None, None])     # each press's first look
+    monkeypatch.setattr(routes, "_building", lambda s, report, week: next(
+        checks, False) or real(s, report, week))
+    first = client.post(f"/api/runs?report=gfs&week={WEEK}")
+    assert first.status_code == 200
     r = client.post(f"/api/runs?report=gfs&week={WEEK}")
     assert r.status_code == 409 and "already being built" in r.json()["detail"]["message"]
+    assert r.json()["detail"]["run_id"] == first.json()["run_id"]
     assert len(log("run.start")) == 1
+
+
+def test_a_clash_that_is_not_a_second_build_does_not_say_it_is(client, monkeypatch):
+    """A file replaced in the moment Build was pressed is refused by the
+    database too. It used to be reported as "already being built"."""
+    from app.jobs import worker
+    from app.service import runner
+    worker.stop()
+    upload_everything(client)
+
+    def gone(*a, **k):
+        raise IntegrityError("INSERT INTO run_input", {}, Exception("no such upload"))
+    monkeypatch.setattr(runner, "queue", gone)
+    r = client.post(f"/api/runs?report=gfs&week={WEEK}")
+    assert r.status_code == 409
+    assert "Press Build again" in r.json()["detail"]["message"]
+    assert "run_id" not in r.json()["detail"]
+    assert log("run.start") == []
 
 
 # ------------------------------------------------- files and rows stay in step
@@ -865,41 +825,6 @@ def test_a_server_that_requires_https_refuses_plain_http(client, monkeypatch):
     # The installer and a monitor, asking from the server itself, still can.
     local = TestClient(client.app, client=("127.0.0.1", 50000))
     assert local.get("/api/health").status_code == 200
-
-
-def test_a_reference_that_cannot_be_saved_leaves_the_old_one_whole(
-        client, stand_in_pipeline, tmp_path, monkeypatch):
-    """The old reference was deleted first and the new one copied after. A
-    copy that failed half way left neither."""
-    from app.db.models import Run
-    from app.db.session import session
-    from app.service import golden
-    kept = tmp_path / "golden"
-
-    def approved_build() -> int:
-        run_id = client.post(f"/api/runs?report=gfs&week={WEEK}").json()["run_id"]
-        _wait(client, run_id)
-        client.post(f"/api/runs/{run_id}/approve")
-        return run_id
-
-    upload_everything(client)
-    first = approved_build()
-    with session() as s:
-        golden.save(s.get(Run, first), kept)
-    before = sorted(p.name for p in (kept / "gfs").iterdir())
-
-    second = approved_build()
-    monkeypatch.setattr(golden, "_check", lambda folder, run: (_ for _ in ()).throw(
-        ValueError("raw_data was copied with 2 rows; the run recorded 3")))
-    with session() as s:
-        with pytest.raises(ValueError, match="copied with 2 rows"):
-            golden.save(s.get(Run, second), kept)
-
-    ref = golden.load("gfs", kept)
-    assert ref.meta["run_id"] == first                      # still the old one
-    assert sorted(p.name for p in (kept / "gfs").iterdir()) == before
-    assert [p.name for p in kept.iterdir() if p.name.startswith(".")] == []
-    assert all(ref.objects.has(i["sha256"], i["suffix"]) for i in ref.meta["inputs"])
 
 
 # ------------------------------------------------- versioned migrations

@@ -6,14 +6,13 @@
 # the line below) pins what THOSE pull in, so nothing at all floats.
 #
 # To move a package forward: change it here, reinstall, run the whole test
-# suite INCLUDING the golden master, and regenerate constraints.txt
+# suite, check one real week's figures, and regenerate constraints.txt
 # (instructions at the top of that file). Commit both.
 -c constraints.txt
 
 # --- Calculation core -------------------------------------------------
-# These produced the verified Week 35 numbers. The golden-master test
-# compares against output from these versions; do not bump them without
-# re-running it.
+# These produced the verified Week 35 numbers; do not bump them without
+# checking a real week's figures again.
 polars==1.44.1
 fastexcel==0.21.0        # calamine reader - 2.3s vs 34.5s for openpyxl
 pyarrow==25.0.1          # parquet

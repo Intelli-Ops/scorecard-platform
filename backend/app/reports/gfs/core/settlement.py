@@ -11,8 +11,7 @@ They live here because they are calculations, not rendering. The All-Providers
 pipeline already keeps its equivalents in ap/marts/delta.py; this brings GFS in
 line with that.
 
-The .bat pipeline still has its own copies and is not modified. It keeps running
-weekly until the golden master proves this project reproduces it.
+The .bat pipeline still has its own copies and is not modified.
 """
 from __future__ import annotations
 

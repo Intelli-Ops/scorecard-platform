@@ -43,14 +43,6 @@ class Settings:
         self.database_url = database_url(os.environ.get(
             "SCORECARD_DB", f"sqlite:///{(self.data_dir / 'scorecard.db').as_posix()}"))
 
-        # The golden master's reference: one approved build per report, saved
-        # by `python -m app.manage save-golden` (service/golden.py). Client
-        # case data, so the folder is in .gitignore. Not moved by use() -
-        # tests get a fresh database each, but one shared reference.
-        self.golden_dir = Path(os.environ.get(
-            "SCORECARD_GOLDEN",
-            str(PROJECT_ROOT / "backend" / "tests" / "golden" / "fixtures")))
-
         # The zone the business works in, as an IANA name. Two things use it:
         # which DATE a build is made as of (see today()), and the out-of-hours
         # alert - sign-ins outside the hours below are flagged on the Activity

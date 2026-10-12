@@ -3,7 +3,7 @@
 No real spreadsheets here - these check the behaviour around a build: what the
 upload endpoint accepts and refuses, that a week which is not ready cannot be
 built, and that approving is a separate act from finishing. The arithmetic is
-covered by the golden master.
+not tested here: a person checks the figures of a real week before approving.
 """
 from __future__ import annotations
 

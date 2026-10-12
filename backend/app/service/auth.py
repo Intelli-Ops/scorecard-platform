@@ -73,6 +73,11 @@ class AuthError(Exception):
     """Something the person can fix, with wording safe to show them."""
 
 
+class WrongPassword(AuthError):
+    """The current password given to change_password was not right - the one
+    refusal there that is a guess at a password, and is counted as one."""
+
+
 class LoginRefused(AuthError):
     """A sign-in that did not work, carrying what the activity log needs to
     know about it - which account, if any, and whether it just got locked."""
@@ -292,7 +297,7 @@ def change_password(db: DbSession, user: User, current: str, new: str,
     someone else knew it, their session must not outlive the old password.
     """
     if not verify_password(current or "", user.password_hash):
-        raise AuthError("Your current password is not right.")
+        raise WrongPassword("Your current password is not right.")
     check_password(new)
     if new == current:
         raise AuthError("Choose a password different from the current one.")
