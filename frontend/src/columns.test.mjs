@@ -1,11 +1,4 @@
-/* The shared column vocabulary.
- *
- *   node --test src/columns.test.mjs
- *
- * These are the rules every table in the app now inherits, so a change here
- * changes every screen at once. That is the point of the file - and the reason
- * it is worth pinning down.
- */
+// Tests for columns.js.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -26,8 +19,6 @@ test("the row's subject carries the weight", () => {
 });
 
 test("nothing renders as an em dash, never a bare zero", () => {
-  // A group that settled nothing and a group with no row at all must read
-  // differently on a scorecard.
   assert.equal(col.money("m", "A").render({}), "-");
   assert.equal(col.money("m", "A").render({ m: 0 }), "-");
   assert.equal(col.count("c", "A").render({}), "-");
@@ -35,8 +26,6 @@ test("nothing renders as an em dash, never a bare zero", () => {
 });
 
 test("a real zero per cent is a number, not a dash", () => {
-  // 0% is a fact - a group billed and settled none of it. Only a MISSING
-  // per cent is unknown, so pct dashes on null alone.
   assert.equal(col.pct("p", "A").render({ p: 0 }), "0.00%");
 });
 
@@ -59,8 +48,6 @@ test("extras override the defaults rather than being ignored", () => {
   assert.equal(c.className, "current");
 });
 
-/* ------------------------------------------------------- grouped headers */
-
 test("a month pair is two columns under one heading", () => {
   const p = amountPctPair("M8", "Aug");
   assert.equal(p.span.label, "Aug");
@@ -76,8 +63,6 @@ test("the current month's pair is marked on both of its columns", () => {
 });
 
 test("spans always cover exactly as many columns as there are", () => {
-  // The bug this shape exists to make impossible: a heading that spans two
-  // columns while only one was added shifts every month after it by one.
   const { columns, spans } = assemble(col.label("group", "Group"), [
     amountPctPair("M1", "Jan"),
     amountPctPair("M2", "Feb"),
@@ -93,11 +78,7 @@ test("TOTAL is one spelling, shared", () => {
   assert.equal(TOTAL, "Total");
 });
 
-/* ---------------------------------------------------------------- tones */
-
 test("no two tiles in a row share an accent", () => {
-  // The bug this replaced: tones picked by hand gave the settlement row two
-  // greens, two teals and one odd one out.
   const row = Array.from({ length: 5 }, (_, i) => toneAt(i));
   assert.equal(new Set(row).size, 5);
 });

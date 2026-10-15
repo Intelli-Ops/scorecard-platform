@@ -1,10 +1,4 @@
-"""Accounts: the company rules, and that they hold at the API and not only in
-the browser form.
-
-The two rules are the point of this file. An email outside @appedology.com and
-an APD id that is not APD-#### must both be refused by the API itself, because
-a form can be bypassed by anyone who opens the developer console.
-"""
+"""Sign-up rules, email confirmation codes and sign-in."""
 from __future__ import annotations
 
 import pytest
@@ -12,7 +6,9 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.db import session as db_session
-from tests.accounts import sign_in
+from app.service import codes as codes_service
+from tests.accounts import (age_codes, confirm_email, last_mail, mailed_code,
+                            sign_in, token_of)
 
 GOOD = {"email": "ali.asghar@appedology.com", "apd_id": "APD-1234",
         "password": "correct horse battery"}
@@ -34,12 +30,15 @@ def signup(client, **over):
 
 
 def approve_all():
-    """What an admin does on the Users screen, done directly."""
+    """Following the mailed link and an admin's approval, done directly."""
+    import datetime as dt
     from sqlalchemy import update
     from app.db.models import User
     from app.db.session import session
     with session() as s:
-        s.execute(update(User).values(pending=False, is_active=True))
+        s.execute(update(User).values(
+            pending=False, is_active=True,
+            email_verified_at=dt.datetime.now(dt.timezone.utc)))
 
 
 def auth(client, **over):
@@ -48,8 +47,6 @@ def auth(client, **over):
     approve_all()
     return sign_in(client, body["email"], body["password"])
 
-
-# ------------------------------------------------------------------ the rules
 
 @pytest.mark.parametrize("email", [
     "someone@gmail.com",
@@ -110,20 +107,145 @@ def test_email_is_stored_lower_case(client):
     assert r.json()["user"]["email"] == "ali.asghar@appedology.com"
 
 
-# ------------------------------------------------------------------ accounts
-
-def test_signing_up_waits_for_an_admin(client):
-    """Anyone can TYPE an @appedology.com address. Until an admin approves the
-    account, it cannot sign in - and no token comes back from signing up."""
+def test_signing_up_waits_for_the_email_and_then_an_admin(client):
+    """Anyone can type an @appedology.com address."""
     body = signup(client).json()
     assert body["pending"] is True and "token" not in body
-    r = client.post("/api/auth/login",
-                    json={"email": GOOD["email"], "password": GOOD["password"]})
+    login = lambda: client.post("/api/auth/login", json={
+        "email": GOOD["email"], "password": GOOD["password"]})
+
+    r = login()
+    assert r.status_code == 401
+    assert r.json()["detail"]["code"] == "email_unverified"
+
+    confirm_email(client, GOOD["email"])
+    r = login()
     assert r.status_code == 401 and "approve" in r.json()["detail"]
 
     approve_all()
     headers = sign_in(client, GOOD["email"], GOOD["password"])
     assert client.get("/api/auth/me", headers=headers).json()["apd_id"] == "APD-1234"
+
+
+def verify(client, code, email=GOOD["email"]):
+    return client.post("/api/auth/verify-email", json={"email": email, "code": code})
+
+
+def test_a_confirmation_code_works_once(client):
+    signup(client)
+    code = mailed_code(GOOD["email"])
+    assert len(code) == 6 and code.isdigit()
+    assert verify(client, code).status_code == 200
+    r = verify(client, code)
+    assert r.status_code == 400 and r.json()["detail"] == codes_service.WRONG_CODE
+
+
+def test_a_code_is_accepted_however_it_is_typed(client):
+    signup(client)
+    code = mailed_code(GOOD["email"])
+    assert verify(client, f" {code[:3]} {code[3:]} ").status_code == 200
+
+
+def test_a_confirmation_code_expires_after_five_minutes(client):
+    signup(client)
+    code = mailed_code(GOOD["email"])
+    age_codes(minutes=5, seconds=1)
+    assert verify(client, code).status_code == 400
+
+
+def test_five_wrong_guesses_spend_a_code(client):
+    signup(client)
+    code = mailed_code(GOOD["email"])
+    wrong = "000000" if code != "000000" else "111111"
+    for _ in range(codes_service.CODE_TRIES):
+        assert verify(client, wrong).status_code == 400
+    assert verify(client, code).status_code == 400
+
+
+def test_a_wrong_email_and_a_wrong_code_get_the_same_answer(client):
+    signup(client)
+    code = mailed_code(GOOD["email"])
+    nobody = verify(client, code, email="nobody@appedology.com")
+    wrong = verify(client, "999999" if code != "999999" else "888888")
+    assert nobody.status_code == wrong.status_code == 400
+    assert nobody.json() == wrong.json()
+
+
+def test_the_code_itself_is_never_stored(client):
+    from sqlalchemy import select
+    from app.db.models import OneTimeCode
+    from app.db.session import session
+    signup(client)
+    code = mailed_code(GOOD["email"])
+    with session() as s:
+        stored = s.execute(select(OneTimeCode.secret)).scalar_one()
+    assert code not in stored and stored.startswith("pbkdf2_sha256$")
+
+
+def test_the_confirmation_code_is_sent_again_only_with_the_password(client):
+    from app.service import mail
+    signup(client)
+    age_codes(seconds=61)
+    before = len(mail.outbox)
+    wrong = client.post("/api/auth/verify-email/resend",
+                        json={"email": GOOD["email"], "password": "not it"})
+    nobody = client.post("/api/auth/verify-email/resend",
+                         json={"email": "nobody@appedology.com", "password": "x"})
+    right = client.post("/api/auth/verify-email/resend",
+                        json={"email": GOOD["email"], "password": GOOD["password"]})
+    assert wrong.json() == nobody.json() == right.json()
+    assert len(mail.outbox) == before + 1
+
+
+def test_a_new_code_waits_a_minute_after_the_last(client):
+    signup(client)
+    r = client.post("/api/auth/verify-email/resend",
+                    json={"email": GOOD["email"], "password": GOOD["password"]})
+    assert r.status_code == 429 and "seconds" in r.json()["detail"]
+    old = mailed_code(GOOD["email"])
+    age_codes(seconds=61)
+    client.post("/api/auth/verify-email/resend",
+                json={"email": GOOD["email"], "password": GOOD["password"]})
+    new = mailed_code(GOOD["email"])
+    if new != old:
+        assert verify(client, old).status_code == 400
+    assert verify(client, new).status_code == 200
+
+
+def test_the_email_is_html_with_a_plain_text_copy(client):
+    signup(client)
+    msg = last_mail(GOOD["email"])
+    code = msg["Subject"].split()[0]
+    html = msg.get_body(("html",)).get_content()
+    text = msg.get_body(("plain",)).get_content()
+    assert code in html and code in text
+    assert "5 minutes" in html and "5 minutes" in text
+
+
+def test_what_a_person_typed_is_escaped_in_the_html():
+    from app.service import emails
+    html = emails.verify_email("<script>x</script>@appedology.com", "123456", 5).html
+    assert "<script>" not in html and "&lt;script&gt;" in html
+
+
+def test_if_the_mail_cannot_go_no_account_is_made(client, monkeypatch):
+    from app.service import mail
+
+    def broken(*_):
+        raise mail.MailUnavailable("The email could not be sent just now.")
+    monkeypatch.setattr(mail, "send", broken)
+    r = signup(client)
+    assert r.status_code == 503
+    monkeypatch.undo()
+    assert signup(client).status_code == 200      # not "already has an account"
+
+
+def test_a_server_without_mail_set_up_does_not_pretend_to_send(monkeypatch):
+    from app.service import mail
+    monkeypatch.setattr(settings, "require_https", True)
+    monkeypatch.setattr(settings, "smtp_host", "")
+    with pytest.raises(mail.MailUnavailable, match="cannot send email"):
+        mail.send("a@appedology.com", "subject", "body")
 
 
 def test_waiting_for_approval_is_only_said_to_the_right_password(client):
@@ -152,13 +274,13 @@ def test_login_and_logout(client):
     r = client.post("/api/auth/login",
                     json={"email": GOOD["email"], "password": GOOD["password"]})
     assert r.status_code == 200
-    token = r.json()["token"]
-    headers = {"Authorization": f"Bearer {token}"}
+    assert set(r.json()) == {"user"}
+    cookie = r.headers["set-cookie"].lower()
+    assert "httponly" in cookie and "samesite=strict" in cookie
+    headers = {"Authorization": f"Bearer {token_of(r)}"}
 
     assert client.get("/api/auth/me", headers=headers).status_code == 200
     client.post("/api/auth/logout", headers=headers)
-    # Signing out revokes the token, which is why sessions are rows rather than
-    # self-contained tokens.
     assert client.get("/api/auth/me", headers=headers).status_code == 401
 
 
@@ -169,7 +291,6 @@ def test_login_says_the_same_thing_for_a_wrong_email_and_a_wrong_password(client
     no_user = client.post("/api/auth/login",
                           json={"email": "ghost@appedology.com", "password": "whatever!"})
     assert wrong_pw.status_code == no_user.status_code == 401
-    # Different messages would tell someone guessing which addresses exist.
     assert wrong_pw.json()["detail"] == no_user.json()["detail"]
 
 
@@ -194,8 +315,6 @@ def test_two_accounts_with_the_same_password_hash_differently(client):
         hashes = s.execute(select(User.password_hash)).scalars().all()
     assert len(set(hashes)) == 2      # per-user salt
 
-
-# ------------------------------------------------------------------ the gate
 
 @pytest.mark.parametrize("method,path", [
     ("get", "/api/weeks"),

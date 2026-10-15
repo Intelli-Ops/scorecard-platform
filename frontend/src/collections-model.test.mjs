@@ -1,11 +1,4 @@
-/* The Collections grid's arithmetic, checked against the delivered workbook.
- *
- *   node --test src/collections-model.test.mjs
- *
- * The expected figures are read out of "GFS - Weekly Scorecard (Week -35)
- * 2026", Collection High-Level 2026: row 17 (the Total row) for the week
- * totals, row 30 for the pace, and rows 34-37 for the payment-type footer.
- */
+// Tests for collections-model.js, against the delivered workbook.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -14,8 +7,6 @@ import {
   pivotCollections, pivotCollectionsPace, PAYMENT_TYPES, TOTAL,
 } from "./collections-model.js";
 
-/* Med-Legal's week 32, straight off the sheet: BILLING 0, REBILLING 0,
-   APPEAL 2076.73, SETTLEMENT 17718.64, week total 19795.37. */
 const rows = [
   { Group: "Med-Legal", Week: 32, PT: "APPEAL", Payment: 2076.73 },
   { Group: "Med-Legal", Week: 32, PT: "SETTLEMENT", Payment: 17718.64 },
@@ -39,14 +30,12 @@ test("a week's total is its payment types added up", () => {
 test("the Artheon week 32 total matches the sheet", () => {
   const g = pivotCollections(rows);
   const artheon = g.rows.find((r) => r.group === "Artheon");
-  // 37294.24 + 29.29 + 3934.88 + 84999.89
   assert.equal(round2(artheon.w32), 126258.30);
 });
 
 test("weeks come out in order and payment types in the sheet's order", () => {
   const g = pivotCollections(rows);
   assert.deepEqual(g.weeks, [32, 33]);
-  // Not alphabetical: BILLING, REBILLING, APPEAL, SETTLEMENT is how it prints.
   assert.deepEqual(g.types, PAYMENT_TYPES);
 });
 
@@ -75,9 +64,6 @@ test("an empty run yields an empty grid rather than a crash", () => {
   assert.deepEqual(pivotCollections(undefined).weeks, []);
 });
 
-/* ---------------------------------------------------------------- pace */
-
-/* Row 30 of the sheet, the Collections Pace Total. */
 const PACE = { W32: 748851.978, W33: 663188.358, W34: 800879.758,
                W35: 1002578.0835 };
 const paceRows = Object.entries(PACE).map(([bucket, pace]) => ({
@@ -92,7 +78,6 @@ test("the pace block keeps the workbook's numbers and week order", () => {
 });
 
 test("the pace total is the LAST week alone, not the weeks summed", () => {
-  // Summing all four would claim 3.2m for a month pacing to 1.0m.
   assert.equal(collectionsPaceTotal(paceRows), 1002578.0835);
 });
 
@@ -101,8 +86,6 @@ test("a run built before collections pacing existed yields nothing", () => {
   assert.equal(collectionsPaceTotal([]), null);
   assert.equal(collectionsPaceTotal(undefined), null);
 });
-
-/* -------------------------------------------------------------- footer */
 
 test("the payment-type footer keeps the sheet's order and totals", () => {
   const f = paymentTypeTotals(rows);

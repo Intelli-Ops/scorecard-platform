@@ -1,20 +1,7 @@
+// Shared hooks: loading data, and closing popovers on outside click.
 import { useCallback, useEffect, useRef, useState } from "react";
 
-/* Fetching what a screen shows, once, in one place.
-
-   Every screen needed the same few lines: start the request, drop its answer
-   if the screen has moved on before it arrived (a late answer for the last
-   filter must not overwrite the one for this filter), keep the error, and
-   fetch again after an action. They were written out in ten components.
-
-     const { data, error, setError, setData, reload } =
-       useLoad(() => api.runs(report), [report]);
-
-   `load` is called whenever a value in `deps` changes. Until the first answer
-   `data` is null. `keep` holds on to the previous answer while the next one
-   is fetched, for a table that should not blank out while a filter changes.
-   `reload()` fetches again without clearing what is on screen, and never
-   throws - a failure lands in `error`. */
+// Fetching what a screen shows, once, in one place.
 export function useLoad(load, deps, { keep = false } = {}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -41,9 +28,7 @@ export function useLoad(load, deps, { keep = false } = {}) {
   return { data, error, setData, setError, reload };
 }
 
-/* Closing something - a confirmation, a pending choice - when the person
-   clicks anywhere else or presses Escape. The way a macOS popover goes away:
-   no timer that takes it back while they are still reading it. */
+// Closing something - a confirmation, a pending choice - when the person clicks anywhere else or presses Escape.
 export function useDismiss(active, onDismiss) {
   const ref = useRef(null);
   const latest = useRef(onDismiss);

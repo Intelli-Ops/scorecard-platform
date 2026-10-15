@@ -1,16 +1,4 @@
-# The exact version of every package requirements.txt pulls in INDIRECTLY.
-# Applied automatically (requirements.txt starts with "-c constraints.txt").
-# A constraint only pins a package if something asks for it; it never
-# installs one - so a line for a package one platform does not use is inert.
-#
-# To regenerate, after changing requirements.txt, in a fresh environment:
-#
-#     python -m venv fresh
-#     fresh\Scripts\pip install -r requirements.txt
-#     fresh\Scripts\pip freeze
-#
-# and replace the list below with what it prints (keeping the Linux-only
-# section, which a freeze on Windows cannot see).
+# The exact version of every package requirements.txt pulls in indirectly.
 alembic==1.20.0
 annotated-doc==0.0.5
 annotated-types==0.8.0
@@ -54,9 +42,5 @@ uvicorn==0.52.4
 watchfiles==1.2.0
 websockets==17.1
 
-# --- Linux only -------------------------------------------------------
-# uvicorn[standard] installs uvloop on Linux and not on Windows, so the
-# freeze above (taken on Windows) has no line for it. Pinned here by hand.
-# After an install on the server, `/opt/scorecard/.venv/bin/pip freeze`
-# should list nothing that is not in this file.
+# --- Linux only ------------------------------------------------------- uvicorn[standard] installs uvloop on Linux and not on Windows, so the freeze above (taken on Windows) has no line for it.
 uvloop==0.23.0

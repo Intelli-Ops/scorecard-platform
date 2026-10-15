@@ -1,36 +1,4 @@
-"""Make the zip that goes to the server.
-
-Run on your own machine, from the project folder:
-
-    .venv\\Scripts\\python deploy\\make_package.py
-
-It refuses to start unless the zip would be exactly one commit, then runs the
-tests, builds the React app (npm ci, npm run build) and writes
-release/scorecard-<date>-<commit>.zip with:
-
-  * every file in that commit - so never .venv, node_modules, data/ (client
-    case data) or anything else .gitignore keeps out;
-  * frontend/dist, the built app, so the server needs no Node.js.
-
-Files for the server get Unix line endings, whatever the checkout has: bash
-reads a Windows line ending as part of the command. Scripts are marked
-executable inside the zip.
-
-Three things a release must be, each of which this used to let slide:
-
-  * COMMITTED. Changed or new files that are not in git stop it. A zip made
-    from a working folder "as it is" cannot be rebuilt, or compared with
-    what was reviewed, by anyone else - the name said "-modified", which
-    recorded the problem without preventing it. Commit (a branch is fine),
-    then package.
-  * TESTED. The backend tests run first, and a failure stops the zip. They
-    use stand-in files, so they do not check the figures of a real week -
-    build one and look at it before a release that changed reports/.
-  * BUILT FROM THE LOCKFILE. `npm ci` every time: it throws node_modules
-    away and installs exactly what package-lock.json says. Reusing whatever
-    node_modules was already there built the release from one developer's
-    own tree.
-"""
+"""Builds the release zip: runs the tests, builds the frontend, packs one commit."""
 from __future__ import annotations
 
 import datetime as dt
@@ -44,15 +12,16 @@ FRONTEND = ROOT / "frontend"
 OUT_DIR = ROOT / "release"
 TOP = "scorecard"                       # the folder the zip unpacks into
 
-# Given Unix line endings in the zip.
 LF_SUFFIXES = {".sh", ".service", ".conf", ".example", ".md", ".py", ".yml",
-               ".txt", ".ini", ".json", ".js", ".jsx", ".css", ".html", ".svg"}
+               ".txt", ".ini", ".json", ".js", ".jsx", ".css", ".html", ".svg",
+               ".env"}
 LF_NAMES = {"scorecard-manage"}
 EXECUTABLE = {"deploy/install.sh", "deploy/scorecard-manage"}
+MAIL_ENV = "mail.env"
+PRIVATE = {MAIL_ENV}
 
 
 def run(cmd: list[str], cwd: Path, env: dict | None = None) -> str:
-    # shell=True on Windows so "npm" finds npm.cmd.
     done = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env,
                           shell=sys.platform == "win32")
     if done.returncode:
@@ -101,7 +70,7 @@ def add(z: zipfile.ZipFile, rel: str) -> None:
         dt.datetime.fromtimestamp((ROOT / rel).stat().st_mtime).timetuple()[:6]))
     info.compress_type = zipfile.ZIP_DEFLATED
     info.create_system = 3              # Unix, so the modes below are honoured
-    mode = 0o755 if rel in EXECUTABLE else 0o644
+    mode = 0o755 if rel in EXECUTABLE else 0o600 if rel in PRIVATE else 0o644
     info.external_attr = (0o100000 | mode) << 16
     z.writestr(info, data)
 
@@ -115,9 +84,14 @@ def main() -> None:
     run_tests()
     print("building the frontend ...", flush=True)
     files = project_files() + build_frontend()
-    # npm must not have rewritten anything tracked (package-lock.json, say):
-    # the zip would then no longer be the commit its name claims.
     require_clean()
+    if (ROOT / MAIL_ENV).is_file():
+        files.append(MAIL_ENV)
+        print(f"including {MAIL_ENV}: this zip holds the mail password - "
+              f"share it as you would the password itself", flush=True)
+    else:
+        print(f"no {MAIL_ENV}: the server keeps the mail settings it has "
+              f"(see mail.env.example)", flush=True)
 
     OUT_DIR.mkdir(exist_ok=True)
     target = OUT_DIR / name

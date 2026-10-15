@@ -1,8 +1,7 @@
-"""The schema as it stood when migrations became versioned.
+"""Migration 0001: the starting schema.
 
 Revision ID: 0001
-Revises:
-"""
+Revises:"""
 from __future__ import annotations
 
 from alembic import op

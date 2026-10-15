@@ -1,3 +1,4 @@
+// Tests for activity-period.js.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseDay, periodOf, today } from "./activity-period.js";

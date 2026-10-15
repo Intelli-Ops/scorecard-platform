@@ -1,3 +1,4 @@
+// Reviewing a build before approving it.
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, count, when } from "../api";
@@ -5,12 +6,7 @@ import { Card, ErrorBox, Loading, Notes, Stat, Status } from "../components";
 import { Button, LinkButton } from "../buttons";
 import { CheckIcon } from "../icons";
 
-/* The review: what a person has to check before the report goes out.
-
-   Three things, and only these - new providers (and whether their figures made
-   it in), figures with no data for the week, and duplicate case ids. Routine
-   row drops happen every week and are not shown; each check says whether it
-   is new since last week. */
+// The review: what a person has to check before the report goes out.
 export default function Review() {
   const { id } = useParams();
   const [data, setData] = useState(null);
@@ -34,9 +30,6 @@ export default function Review() {
     return () => { alive = false; clearTimeout(timer); };
   }, [id]);
 
-  /* Press, then show the run as the server now holds it. A refusal - someone
-     else approved it a moment ago - is said above the review, which stays on
-     screen rather than being replaced by the message. */
   const act = (fn) => async () => {
     setBusy(true); setActionError(null);
     try {
@@ -46,9 +39,6 @@ export default function Review() {
     finally { setBusy(false); }
   };
   const approve = act(api.approve);
-  /* Approving is one click, so un-approving has to be one too. Otherwise the
-     only way back from a mis-click is to build the week again, which changes
-     the run id that every screenshot and email already points at. */
   const unapprove = act(api.unapprove);
 
   if (error) return <ErrorBox error={error} />;

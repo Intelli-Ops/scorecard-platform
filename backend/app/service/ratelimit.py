@@ -1,43 +1,27 @@
-"""Slowing down guessing, per address.
-
-The account lock stops guessing at ONE account. It does nothing about one
-address trying a different account each time, and it hands anyone who knows
-an email a way to lock that person out, over and over. Signing up, too, costs
-a quarter of a second of password hashing, and anyone can do it.
-
-So each address gets a budget of failures in a window. The counts are rows in
-the database (RateHit), not a dict in the server's memory: held in memory, a
-restart handed everyone a fresh budget, and each server process kept a count
-of its own - two processes, twice the guesses.
-"""
+"""Per-address limits on failed sign-ins, sign-ups and codes."""
 from __future__ import annotations
 import datetime as dt
 
 from sqlalchemy import delete, func, select
 
+from ..clock import utcnow
 from ..db.models import RateHit
 from ..db.session import session
 
-# (how many, in how many seconds)
-# A whole office usually reaches the server from ONE address, so this is the
-# office's budget, not one person's: at 20 a morning of ordinary mistypes
-# across the team locked everyone out together. 100 still stops a program
-# working down a list of accounts (the account lock handles guessing at one).
 LOGIN_FAILURES = (100, 15 * 60)      # wrong sign-ins from one address
 SIGNUPS = (10, 60 * 60)              # new accounts from one address
 PASSWORD_FAILURES = (10, 15 * 60)    # wrong "current password" on one account
+CODE_REQUESTS = (30, 60 * 60)        # codes asked for: "Forgot password?", resend
+CODE_FAILURES = (50, 15 * 60)        # wrong codes entered
 
-LONGEST = max(window for _, window in (LOGIN_FAILURES, SIGNUPS, PASSWORD_FAILURES))
-
-
-def _now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
+LONGEST = max(window for _, window in (LOGIN_FAILURES, SIGNUPS, PASSWORD_FAILURES,
+                                       CODE_REQUESTS, CODE_FAILURES))
 
 
 def blocked(key: str, rule: tuple[int, int]) -> int:
     """Seconds until `key` may try again, or 0 if it may now."""
     limit, window = rule
-    now = _now()
+    now = utcnow()
     since = now - dt.timedelta(seconds=window)
     with session() as s:
         count, oldest = s.execute(
@@ -51,10 +35,8 @@ def blocked(key: str, rule: tuple[int, int]) -> int:
 def hit(key: str, rule: tuple[int, int]) -> None:
     """Count one attempt against `key`."""
     _limit, window = rule
-    now = _now()
+    now = utcnow()
     with session() as s:
-        # This key's spent hits go as the new one arrives, so the table holds
-        # only what is still being counted.
         s.execute(delete(RateHit).where(
             RateHit.key == key, RateHit.at <= now - dt.timedelta(seconds=window)))
         s.add(RateHit(key=key, at=now))
@@ -75,8 +57,7 @@ def clear_prefix(prefix: str) -> None:
 
 
 def purge() -> int:
-    """Drop every hit too old for any rule to count. Run at start-up: a key
-    that is never hit again would otherwise keep its last rows forever."""
+    """Drop every hit too old for any rule to count."""
     with session() as s:
         return s.execute(delete(RateHit).where(
-            RateHit.at <= _now() - dt.timedelta(seconds=LONGEST))).rowcount
+            RateHit.at <= utcnow() - dt.timedelta(seconds=LONGEST))).rowcount

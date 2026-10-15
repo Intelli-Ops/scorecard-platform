@@ -1,20 +1,13 @@
+// Shows and edits a month's working days.
 import { useState } from "react";
 import { api, stamp } from "./api";
 import { useLoad } from "./hooks";
 import { ClearX } from "./components";
 import { Button } from "./buttons";
 
-/* How many working days the week's month has - the number every pace figure
-   is projected on (month-to-date, over the days elapsed, times this).
-
-   The calendar's count (weekdays less the holidays in the rules) is shown and
-   used until someone enters a different one. An entry is for the whole month,
-   so every week of it - and every build from then on - paces on it. Builds
-   already made keep the number they used; build again to pick up a change. */
-/* The parent keys this by week, so a new week starts from a clean form. */
+// The parent keys this by week, so a new week starts from a clean form.
 export default function WorkingDays({ week }) {
   const { data: info, error, setData: setInfo } = useLoad(() => api.weekMonth(week), [week]);
-  // What is typed; null means "the number in use", so nothing is copied in.
   const [typedValue, setValue] = useState(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState(null);
@@ -56,7 +49,6 @@ export default function WorkingDays({ week }) {
                className={info.entered ? "has-x" : ""}
                onChange={(e) => { setValue(e.target.value); setSaved(false); }}
                onKeyDown={(e) => {
-                 // Escape drops an unsaved number and puts back the one in use.
                  if (e.key === "Escape") { setValue(null); setProblem(null); }
                }} />
         {info.entered && (
@@ -74,9 +66,7 @@ export default function WorkingDays({ week }) {
   );
 }
 
-/* The working days gone by the end of the week being built - what the pace
-   divides the month-to-date by. Worked out, not entered: it follows from the
-   calendar, the holidays and the month's working days above. */
+// The working days gone by the end of the week being built.
 function DaysPassed({ week, info }) {
   const through = new Date(`${info.passed_through}T00:00:00`)
     .toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });

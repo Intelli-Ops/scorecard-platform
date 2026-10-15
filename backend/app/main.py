@@ -1,13 +1,4 @@
-"""The application.
-
-Run it with:
-
-    cd backend
-    ../.venv/Scripts/uvicorn app.main:app --reload
-
-Then http://127.0.0.1:8000/docs for the API, which FastAPI generates from the
-routes themselves.
-"""
+"""The FastAPI application: routers, security headers and the health check."""
 from __future__ import annotations
 import ipaddress
 import re
@@ -30,15 +21,18 @@ from .api.run_routes import router as run_router
 from .api.week_routes import router as week_router
 from .config import settings
 from .db import migrate
-from .db.session import create_all, engine, session
+from .db.session import check_schema, create_all, engine, session
 from .jobs import worker
-from .service import audit, auth, ratelimit
+from .service import audit, auth, mail, ratelimit
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure()
-    create_all()
+    if settings.auto_migrate:
+        create_all()
+    else:
+        check_schema()
     _health.clear()
     worker.recover()           # builds whose process died - see worker.py
     ratelimit.purge()
@@ -50,8 +44,6 @@ async def lifespan(app: FastAPI):
     worker.stop()
 
 
-# The least free space, in MB, at which the data folder still counts as
-# healthy: one build reads about 385 MB of uploads and writes its results.
 MIN_FREE_MB = 1024
 
 
@@ -59,16 +51,11 @@ app = FastAPI(
     title="Scorecard Platform",
     description="Weekly GFS and All Providers scorecards, as a dashboard.",
     lifespan=lifespan,
-    # Off on the server - see config.py.
     docs_url="/docs" if settings.api_docs else None,
     redoc_url="/redoc" if settings.api_docs else None,
     openapi_url="/openapi.json" if settings.api_docs else None,
 )
 
-# Only for a script or tool calling from another origin with an Authorization
-# header. The app's own page is served from the API's origin (nginx, or the
-# Vite dev server's proxy) and signs in with a SameSite=Strict cookie, which a
-# browser never sends across origins - so credentials stay disallowed here.
 if settings.cors_origins:
     app.add_middleware(
         CORSMiddleware,
@@ -79,9 +66,6 @@ if settings.cors_origins:
         expose_headers=["Content-Disposition", "X-Row-Count"],
     )
 
-# What every response tells the browser. API answers carry client figures and
-# account details, so no browser or proxy may keep a copy (no-store); none of
-# them is a page to be framed or a file to be sniffed into something else.
 _HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -90,11 +74,6 @@ _HEADERS = {
 }
 
 
-# The one address that takes files, and the most any OTHER request may carry.
-# Everything else the app is sent is a few fields of JSON; without a ceiling,
-# a gigabyte posted at the sign-in form was read into memory before anything
-# looked at it. nginx sets the same two limits (deploy/nginx-scorecard.conf);
-# these hold wherever the app is reached without it.
 UPLOADS = re.compile(r"^/api/weeks/[^/]+/uploads/?$")
 MAX_BODY = 1024 * 1024
 
@@ -119,17 +98,12 @@ def _local(request: Request) -> bool:
 async def security_headers(request: Request, call_next):
     https = request.url.scheme == "https"
     if settings.require_https and not https and not _local(request):
-        # DEPLOY.md says HTTPS is required before real use; this is what
-        # makes it so. Without it a server set up but not yet given a
-        # certificate took passwords over the network in the clear.
         response = JSONResponse(
             {"detail": "This server only accepts HTTPS. Open the https:// "
                        "address; if there is none yet, the certificate has "
                        "not been set up (see DEPLOY.md, 'HTTPS')."},
             status_code=400)
     elif request.method == "POST" and UPLOADS.match(request.url.path):
-        # Who is sending, asked BEFORE the files are taken in - see
-        # deps.refuse_upload. On a thread: it reads the database.
         refused = await run_in_threadpool(refuse_upload, request)
         if refused:
             response = JSONResponse({"detail": refused[1]}, status_code=refused[0])
@@ -144,7 +118,6 @@ async def security_headers(request: Request, call_next):
     for k, v in _HEADERS.items():
         response.headers.setdefault(k, v)
     if https:
-        # And having come once over HTTPS, the browser never tries HTTP again.
         response.headers.setdefault("Strict-Transport-Security",
                                     "max-age=31536000")
     return response
@@ -163,8 +136,13 @@ def root() -> dict:
 
 @app.exception_handler(audit.AuditUnavailable)
 async def audit_unavailable(request: Request, exc: audit.AuditUnavailable):
-    """No record, no action - see service/audit.py. 503, not 500: nothing is
-    wrong with what was asked, and asking again later is the right response."""
+    """503 when the activity log cannot be written, so the action is refused."""
+    return JSONResponse({"detail": str(exc)}, status_code=503)
+
+
+@app.exception_handler(mail.MailUnavailable)
+async def mail_unavailable(request: Request, exc: mail.MailUnavailable):
+    """A link that could not be mailed."""
     return JSONResponse({"detail": str(exc)}, status_code=503)
 
 
@@ -196,8 +174,6 @@ def _disk_ok() -> bool:
         return False
 
 
-# The checks touch the database and the disk, and anyone can ask. Answered
-# from memory for a few seconds, a thousand requests cost one set of checks.
 HEALTH_TTL = 5.0
 _health: dict = {}
 _health_lock = threading.Lock()
@@ -215,21 +191,7 @@ def _checks() -> dict:
 
 @app.get("/api/health")
 def health(request: Request, response: Response) -> dict:
-    """Is the app able to do its job - not merely answering.
-
-    It answered `ok` as long as the process was up, which is the one thing a
-    reply already proves. What can actually stop it working is checked: the
-    database (reachable, and migrated to this code's schema), the data folders
-    (writable), the disk (room for a build) and the build worker (alive).
-    Anything failing makes it a 503, so `curl -f`, systemd or a load balancer
-    sees the fault without reading the body.
-
-    Public on purpose. A health check that needs credentials is not a health
-    check - whatever is watching the service has to be able to ask without an
-    account. But a stranger is told only whether it is healthy; WHICH part is
-    failing - "the disk is full", "the database is down" - is said only to
-    someone asking from the server itself (curl http://127.0.0.1/api/health).
-    """
+    """Is the app able to do its job - not merely answering."""
     state = _checks()
     ok = all(state["checks"].values())
     if not ok:

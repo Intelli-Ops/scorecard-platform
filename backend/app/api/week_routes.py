@@ -1,14 +1,6 @@
-"""Weeks: what each report needs, the files uploaded for a week, and the
-month's working days.
-
-Admins only - uploading and deleting are the workspace's jobs. Deliberately
-thin: every endpoint is a few lines over the service layer (service/ingest.py
-and service/runner.py), so the rules about which file is which live in one
-place.
-"""
+"""Weeks: uploading files and setting a month's working days."""
 from __future__ import annotations
 import calendar
-import datetime as dt
 import re
 import tempfile
 from pathlib import Path
@@ -18,6 +10,7 @@ from fastapi import (APIRouter, Depends, File, Form, HTTPException, Request,
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from ..clock import utcnow
 from ..config import settings
 from ..db.models import MonthSetting, Run, Upload
 from ..db.session import session
@@ -27,8 +20,6 @@ from ..service.ingest import ingest, too_long, week_status
 from ..storage.files import FileStore
 from .deps import current_user, require_admin, valid_week as _week
 
-# Applied to the whole router rather than route by route: a rule you have to
-# remember to add is a rule that gets forgotten on the one route that mattered.
 router = APIRouter(prefix="/api", dependencies=[Depends(current_user)])
 
 
@@ -68,17 +59,7 @@ def get_week(week: str) -> dict:
 @router.delete("/weeks/{week}")
 def delete_week(week: str, request: Request,
                 user=Depends(require_admin)) -> dict:
-    """Delete a week: its builds, and every file uploaded for it.
-
-    Deleting builds one at a time cannot get you back to a clean slate. Uploads
-    outlive runs on purpose - they belong to the week, not to one build - so a
-    week whose builds are all gone keeps its files and still offers a Build
-    button with nothing behind it. This is how you actually remove a week you
-    uploaded by mistake, or a test week you no longer want.
-
-    It cannot be undone: the files would have to be uploaded again, which is
-    why only an admin can do it.
-    """
+    """Delete a week: its builds, and every file uploaded for it."""
     _week(week)
     with session() as s:
         known = s.execute(select(Upload.id).where(Upload.week == week)
@@ -109,22 +90,12 @@ def _save_upload(f: UploadFile, dest: Path, limit: int) -> None:
             out.write(chunk)
 
 
-# A plain def, not async: FastAPI runs it on a worker thread. Everything in it
-# blocks - copying, hashing, the database - and in an async def that stalled
-# the whole server, every other request included, for as long as a 385 MB
-# upload took.
 @router.post("/weeks/{week}/uploads")
 def upload(week: str, request: Request,
            files: list[UploadFile] = File(...),
            for_report: str | None = Form(None),
            user=Depends(require_admin)) -> dict:
-    """Receive this week's files.
-
-    for_report is needed only for the two Case AR files. Anything that is not
-    one of the nine inputs is reported back rather than stored - the week
-    folder always contained delivered workbooks alongside the sources, and
-    reading one of those by mistake would be worse than refusing it.
-    """
+    """Receive this week's files."""
     _week(week)
     if for_report and for_report not in REPORTS:
         raise HTTPException(400, f"unknown report {for_report!r}")
@@ -133,19 +104,10 @@ def upload(week: str, request: Request,
         landed: list[Path] = []
         refused: list[tuple[str, str]] = []
         for i, f in enumerate(files):
-            # Streamed to disk in chunks: a 240 MB upload is never held whole
-            # in the server's memory. One folder per file, so two files that
-            # share a name cannot overwrite each other before they are read.
-            # The name is cut at either kind of slash: a browser on Windows
-            # may send "C:\\...\\file.xlsx", which Path on Linux would take
-            # as one long filename.
             name = re.split(r"[\\/]", f.filename or "")[-1].strip()
             if name in ("", ".", ".."):
                 name = "unnamed"
             if too_long(name):
-                # Said plainly, before the name reaches the disk: a name the
-                # file system cannot hold failed the whole upload with a
-                # server error, the other files with it.
                 refused.append((name[:60] + "...", too_long(name)))
                 continue
             dest = Path(tmp) / str(i) / name
@@ -181,7 +143,7 @@ def upload(week: str, request: Request,
 def remove_upload(week: str, upload_id: int, request: Request,
                   user=Depends(require_admin)) -> dict:
     """Take back one uploaded file - the wrong one, sent by mistake - without
-    deleting the week. Refused if a build has already read it."""
+    deleting the week."""
     _week(week)
     with session() as s:
         row = s.get(Upload, upload_id)
@@ -207,8 +169,6 @@ def _month_info(s, week: str) -> dict:
     row = s.get(MonthSetting, period.key)
     if row is not None:
         period = runner.month_of(week, {**rules, "working_days": {period.key: row.working_days}})
-    # The working days gone by the end of this week: what the pace divides
-    # the month-to-date by (never more than the month's working days).
     n = period.weeks_so_far
     return {"month": period.key, "label": period.label,
             "calendar_days": period.calendar_days,
@@ -223,7 +183,7 @@ def _month_info(s, week: str) -> dict:
 
 def _rules() -> dict:
     """The holidays both reports' rules agree on - what the calendar count
-    leaves out. The two rules files keep the same list."""
+    leaves out."""
     return load_rules("gfs")
 
 
@@ -238,9 +198,8 @@ def week_month(week: str) -> dict:
 @router.put("/weeks/{week}/month")
 def set_working_days(week: str, body: WorkingDays, request: Request,
                      user=Depends(require_admin)) -> dict:
-    """Set the working days of the month `week` belongs to - for every build
-    in that month from now on. Builds already made keep the number they were
-    paced on (it is recorded on each run); build again to use the new one."""
+    """Set the working days of the month `week` belongs to - for every build in
+    that month from now on."""
     _week(week)
     with session() as s:
         info = _month_info(s, week)
@@ -259,7 +218,7 @@ def set_working_days(week: str, body: WorkingDays, request: Request,
                 s.add(row)
             row.working_days = body.working_days
             row.set_by = user.email
-            row.set_at = dt.datetime.now(dt.timezone.utc)
+            row.set_at = utcnow()
         s.flush()
         out = _month_info(s, week)
         audit.record("month.working_days", db=s, request=request, user=user,

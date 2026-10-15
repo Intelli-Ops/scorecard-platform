@@ -1,28 +1,10 @@
-"""KPI High-Level - steps doc Phase 8 (SQL-Doc) and Phase 9 (litigation numbers).
-
-Two differences from the GFS pipeline, both of them "widen it":
-
-  * SQL-Doc is NOT filtered on Type. GFS keeps only Type = GFS; this report wants
-    every provider, so both GFS and Other Client rows are counted.
-  * The numbers file stacks three blocks - GFS Client, Russman Client, Others
-    Client. GFS reads only the first. This report reads all three.
-
-What is the same, and matters just as much: the group written on the sheet comes
-from the Supporting File's Provider Group, looked up on ProviderID = BUSINESSREGID,
-NOT from SQL-Doc's own Provider_GROUP column. The two disagree - SQL-Doc reports
-Inland Empire Healthcare as its own group where the Supporting File files it under
-A Miles - and following SQL-Doc silently loses those documents from the A Miles row.
-
-The KPI sheet's own shape is read from the template (read_kpi_layout below) rather
-than typed into config: it carries nine blocks and up to thirty-one rows each, and
-those rows change whenever a provider is taken on.
-"""
+"""All Providers: KPI High-Level (steps doc phases 8-9)."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 
 import polars as pl
 
-from ...common import find_row as _find_row, norm
+from ...common import find_row as _find_row, norm, number
 
 
 @dataclass
@@ -53,14 +35,7 @@ TOTAL_LABELS = {"total", "grand total"}
 
 
 def read_kpi_layout(sheet, rules: dict) -> dict[str, KpiBlock]:
-    """Find the sheet's blocks by reading column B.
-
-    Column B is a stack of runs separated by blank rows. The first row of each run
-    names the block; the rest are its rows, ending at a Total if it has one. Doing
-    it by runs rather than by "is this row empty of numbers" matters, because a
-    provider with nothing to report this year - MH Express in the SBR block - looks
-    exactly like a block header otherwise.
-    """
+    """Find the sheet's blocks by reading column B."""
     k = rules["kpi"]
     start = k["period_row"] + 1
     labels = {r: str(v).strip() for (r, c), v in sheet.cells.items()
@@ -104,15 +79,7 @@ def _group_dim(provider_list: pl.DataFrame, k: dict) -> pl.DataFrame:
 
 def _row_key_map(block: KpiBlock, provider_to_group: dict[str, str],
                  row_aliases: dict[str, str] | None = None) -> dict[str, str]:
-    """Normalised group name -> the sheet row label that should carry it.
-
-    Three ways a row label can name a group, in order:
-      * it IS the group ("Medvantage")
-      * it is a provider inside the group - the Enforcement Of Agreement block says
-        "Andrew Miles" where the Provider List says "A Miles"
-      * config spells it out, for the ones that are simply typed differently
-        ("Support Claim West" for the SUPPORT CLAIMS WEST group)
-    """
+    """Normalised group name -> the sheet row label that should carry it."""
     out: dict[str, str] = {}
     aliases = {norm(a): norm(b) for a, b in (row_aliases or {}).items()}
     for label in block.rows:
@@ -130,12 +97,7 @@ def _lay_on_rows(block: KpiBlock, by_group: dict[str, float],
                  provider_to_group: dict[str, str], rep: KpiReport,
                  row_aliases: dict[str, str] | None = None,
                  names: dict[str, str] | None = None) -> dict[str, float]:
-    """Spread a {group: value} map across the block's rows.
-
-    Anything left over is a group the sheet has no row for. Those are reported by
-    their real Provider Group name - not the normalised key - because the run uses
-    that name to add the missing row to the sheet.
-    """
+    """Spread a {group: value} map across the block's rows."""
     keys = _row_key_map(block, provider_to_group, row_aliases)
     vals = {label: 0.0 for label in block.rows}
     for g, v in by_group.items():
@@ -149,12 +111,7 @@ def _lay_on_rows(block: KpiBlock, by_group: dict[str, float],
 
 
 def _split_groups(block: KpiBlock, provider_to_group: dict[str, str]) -> set[str]:
-    """Groups this block lists provider by provider rather than as one group row.
-
-    A block does that when one of its rows is named after a provider whose group has
-    a different name - the DOR and NTP blocks carry "BVHS", a provider of the
-    Dr Dorian group. Those groups must not be summed into one row.
-    """
+    """Groups this block lists provider by provider rather than as one group row."""
     out: set[str] = set()
     for label in block.rows:
         g = provider_to_group.get(norm(label))
@@ -167,17 +124,7 @@ def _lay_providers(block: KpiBlock,
                    items: list[tuple[str, str, str, float]],
                    provider_to_group: dict[str, str], rep: KpiReport,
                    row_aliases: dict[str, str] | None = None) -> dict[str, float]:
-    """Spread KPI-numbers figures, one per PROVIDER, across the block's rows.
-
-    `items` is (name as written in the numbers file, its Provider List key, its group,
-    value). Each figure goes to, in order:
-      * a row named after that provider ("BVHS", "Mesa care", "Support Claim West")
-      * the group's row ("A Miles" takes Andrew Miles and Inland Empire Healthcare) -
-        unless the block lists that group provider by provider (see _split_groups)
-      * otherwise a NEW row, named exactly as the numbers file names the provider.
-        That is how the sheet is kept by hand: Dorian Chiropractic and Dorian
-        Chiropractic 2 each get their own row next to BVHS.
-    """
+    """Spread KPI-numbers figures, one per PROVIDER, across the block's rows."""
     rows = {norm(label): label for label in block.rows}
     aliases = {norm(a): norm(b) for a, b in (row_aliases or {}).items()}
     groups = dict(rows)
@@ -211,12 +158,7 @@ def build_kpi_sql(sql_doc: pl.DataFrame,
                   month: int,
                   rep: KpiReport | None = None
                   ) -> tuple[dict[str, dict[str, float]], KpiReport]:
-    """Phase 8: SQL-Doc -> {block name: {sheet row label: value}}.
-
-    The steps doc describes a pivot - Rows(Provider_Group), Columns(Document_Type),
-    Values(Cases). The group-by below is that pivot; the row map read off the sheet
-    is the VLOOKUP that follows it.
-    """
+    """Phase 8: the SQL-Doc KPI counts per group."""
     k = rules["kpi"]
     rep = rep or KpiReport()
     rep.month = f"{year}-{month:02d}"
@@ -230,9 +172,6 @@ def build_kpi_sql(sql_doc: pl.DataFrame,
         pl.col(cols["document_type"]).cast(pl.Utf8).alias("doc_type"),
         pl.col(cols["cases"]).cast(pl.Float64, strict=False).alias("cases"))
 
-    # No Type filter for this report - see the module docstring. The month filter
-    # stays: today's export holds one month, but a wider pull must not silently add
-    # other months into the cells.
     want_type = k.get("filter_type")
     if want_type:
         d = d.filter(pl.col("type").str.strip_chars().str.to_uppercase()
@@ -288,24 +227,7 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
                         blocks: dict[str, KpiBlock],
                         rules: dict,
                         rep: KpiReport) -> dict[str, dict[str, float]]:
-    """Phase 9: the litigation / scorecard numbers table pasted from email.
-
-    The sheet stacks three blocks - GFS, Russman, Others - each with its own header
-    row and Total. All three belong on this report, so each is located by its own
-    markers and the rows between them are read; the Total rows themselves are not,
-    or every figure would be counted twice.
-
-    The first column of that table names a PROVIDER, not a group. The group comes
-    from the Supporting File's PROVIDER ID column, which is what folds Andrew Miles
-    and Inland Empire Healthcare into A Miles, MHE Pharmacy and MHE Assets into
-    MH Express, and DIMG and FMR into Russman. A provider the sheet has its own row
-    for, or has no row for at all, is kept apart - see _lay_providers.
-
-    Two shapes of destination:
-      `metrics` columns spread across a block whose rows are provider groups.
-      `totals`  columns land in ONE cell, because the Med Legal block's rows are
-                metric names rather than groups.
-    """
+    """Phase 9: the litigation / scorecard numbers table pasted from email."""
     k = rules["kpi"]
     sc = k.get("scorecard") or {}
     wanted = list((sc.get("metrics") or {}).values()) + \
@@ -338,10 +260,6 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
     lookup = _provider_to_group(provider_list, rules)
     aliases = {norm(a): norm(b) for a, b in (sc.get("provider_aliases") or {}).items()}
 
-    # The exact name wins; an alias is only tried when the name itself is not in the
-    # Provider List. The other way round, an alias written for an old spelling hides
-    # the provider once the Supporting File is corrected - which is how Support Claim
-    # West's DOR filings went missing in September 2026.
     groups: list[str | None] = []
     keys: list[str] = []
     for _head, r in body:
@@ -354,12 +272,6 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
             rep.unknown_providers_named.append(str(r[0]))
         groups.append(g)
         keys.append(key)
-
-    def number(v) -> float:
-        try:
-            return float(str(v).replace(",", "").strip())
-        except (TypeError, ValueError):
-            return 0.0
 
     def column(head: list[str], name: str) -> int | None:
         n = norm(name)
@@ -420,6 +332,5 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
 
 
 def head_marker(head: list[str], row: list) -> tuple[list[str], list]:
-    """Keep each source row next to the header it was read under - the three blocks
-    repeat their own header, and nothing guarantees the columns line up."""
+    """Tag each source row with the header it was read under."""
     return head, row

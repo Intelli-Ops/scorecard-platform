@@ -1,10 +1,4 @@
-"""The HTTP surface, exercised end to end on stand-in files.
-
-No real spreadsheets here - these check the behaviour around a build: what the
-upload endpoint accepts and refuses, that a week which is not ready cannot be
-built, and that approving is a separate act from finishing. The arithmetic is
-not tested here: a person checks the figures of a real week before approving.
-"""
+"""API tests, end to end, on stand-in files."""
 from __future__ import annotations
 
 import pytest
@@ -17,13 +11,7 @@ from tests.accounts import account
 
 @pytest.fixture
 def client(tmp_path):
-    """A signed-in client.
-
-    Every data route requires an account, so the fixture makes one and
-    attaches its token - the same thing the browser does after sign-in. An
-    admin, because deleting runs and weeks, which much of this file is about,
-    is an admin's job; test_a_user_cannot_delete checks the other side.
-    """
+    """A signed-in client."""
     settings.use(tmp_path / "data")
     db_session.reset()
     from app.db.session import create_all
@@ -122,15 +110,8 @@ def test_missing_run_is_a_404(client):
     assert client.get("/api/runs/999/tables/raw_data/csv").status_code == 404
 
 
-# --------------------------------------------------- unapprove, and deleting
-
 def _finished_run(week="2026-W35", report="gfs", status="review"):
-    """A run recorded straight into the database.
-
-    The endpoints under test are about a run's LIFE after it was built - being
-    approved, un-approved and deleted - and none of that needs real
-    spreadsheets to have been read.
-    """
+    """A run recorded straight into the database."""
     from app.db.models import Run, RunFigure, RunNote, RunTable
     from app.db.session import session
     with session() as s:
@@ -161,8 +142,7 @@ def test_approving_can_be_taken_back(client):
 
 
 def test_withdrawing_an_approval_is_recorded(client):
-    """Who un-approved, and who had approved it. Otherwise a run that was
-    signed off on Tuesday and is unsigned on Wednesday has no explanation."""
+    """Who un-approved, and who had approved it."""
     run_id = _finished_run()
     client.post(f"/api/runs/{run_id}/approve")
     client.post(f"/api/runs/{run_id}/unapprove")
@@ -253,8 +233,7 @@ def test_deleting_the_last_run_removes_the_files_it_read(client):
 
 
 def test_deleting_one_run_keeps_files_the_other_report_still_reads(client):
-    """The seven shared files feed BOTH reports. Deleting the GFS run must
-    never cost All Providers its inputs."""
+    """The seven shared files feed both reports."""
     from app.config import settings
     from app.storage.files import FileStore
 
@@ -291,7 +270,7 @@ def test_deleting_a_run_leaves_uploads_no_run_ever_read(client):
 
 def test_deleting_keeps_bytes_a_second_upload_row_shares(client):
     """Thursday's Case AR is often byte-for-byte Tuesday's, so two Upload rows
-    share one stored blob. The blob goes only with the last row naming it."""
+    share one stored blob."""
     from sqlalchemy import select
     from app.config import settings
     from app.db.models import Upload
@@ -327,7 +306,7 @@ def test_deleting_keeps_bytes_a_second_upload_row_shares(client):
 
 def test_deleting_a_week_removes_its_files_and_its_builds(client):
     """Deleting builds one by one cannot reach the uploads - they outlive runs
-    by design. Asking for the week itself is what clears it."""
+    by design."""
     from app.config import settings
     from app.storage.files import FileStore
 
@@ -358,8 +337,7 @@ def test_a_deleted_week_stops_being_listed(client):
 
 
 def test_deleting_a_week_leaves_another_weeks_identical_file(client):
-    """Two weeks can upload byte-identical files, which are stored once. The
-    blob must survive until the last week naming it goes."""
+    """Two weeks can upload byte-identical files, which are stored once."""
     from app.config import settings
     from app.storage.files import FileStore
     from sqlalchemy import select
@@ -408,8 +386,7 @@ def test_deleting_a_run_that_is_not_there_is_a_404(client):
 
 def test_deleting_keeps_a_result_another_run_still_points_at(client):
     """Results are addressed by the hash of their bytes, so two identical
-    builds share one file. Removing the blob with the first run would leave
-    the second one pointing at nothing."""
+    builds share one file."""
     from app.config import settings
     from app.storage.files import FileStore
 
@@ -442,7 +419,7 @@ def test_run_history_carries_the_report_and_is_bounded_by_weeks(client):
 
 
 def test_the_current_scorecard_is_the_latest_approved_one(client):
-    """What a reader sees: the newest APPROVED week, who approved it, and a
+    """What a reader sees: the newest approved week, who approved it, and a
     note when a newer week is built but still waiting."""
     old = _finished_run(week="2026-W35", status="approved")
     _finished_run(week="2026-W36", status="review")
@@ -461,7 +438,7 @@ def test_the_current_scorecard_is_the_latest_approved_one(client):
 
 def test_a_table_is_read_a_page_at_a_time_and_exported_whole(client, tmp_path):
     """Only the page on screen is read from the parquet; the row count and
-    column types come with it. The CSV is the whole table, defused for Excel."""
+    column types come with it."""
     import polars as pl
     from app.db.models import Run, RunTable
     from app.db.session import session

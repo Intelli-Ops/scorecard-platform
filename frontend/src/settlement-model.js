@@ -1,16 +1,6 @@
-/* The Settlement sheet's arithmetic, with no React in it.
-
-   Kept apart from the rendering so it can be run and checked on its own - the
-   totals here are the numbers a client reads off a scorecard, and "it looked
-   right on screen" is not a way to know they are correct. */
-
+// Settlement High-Level arithmetic, without React.
 export const TOTAL = "Total";
 
-/* Buckets are the pipeline's own: "M5" is the May total, "W2" is week 2 of
-   the current month. Months run first in calendar order, then this month's
-   weeks - which is exactly the order the columns go in. */
-/* The blocks in the order the sheet prints them: In House, then Board, then
-   anything else alphabetically. */
 const BLOCK_ORDER = ["in house", "board"];
 export function sortBlocks(names) {
   const rank = (n) => {
@@ -31,17 +21,7 @@ export function splitBuckets(rows) {
   };
 }
 
-/* One row per provider group, one cell per bucket, plus the two totals.
-
-   `_month` is the current month: the sum of its weeks, not a bucket of its own
-   - the pipeline never emits one, because the sheet builds it by adding the
-   week columns up. `_total` is the year.
-
-   The Total row's Settlement % is NOT the sum of the group percentages, and
-   not their average either - it is the whole block's settled-plus-paid over
-   its billed, which the pipeline works out separately. The amounts are summed
-   here; the per cents come from settlement_totals, so nobody can total a
-   column and get a different answer from the sheet. */
+// One row per provider group, one cell per bucket, plus the two totals.
 export function pivot(rows, totals, block) {
   const inBlock = rows.filter((r) => r.block === block);
   const { months, weeks } = splitBuckets(inBlock);
@@ -71,10 +51,7 @@ export function pivot(rows, totals, block) {
   return { months, weeks, rows: [...body, total] };
 }
 
-/* The Pace block: one row per group, one cell per week of the current month.
-
-   Ordered by where the month is heading, which is the question the block is on
-   screen to answer. */
+// The Pace block: one row per group, one cell per week of the current month.
 export function pivotPace(pace, block) {
   const mine = (pace ?? []).filter((r) => r.block === block);
   if (!mine.length) return { weeks: [], rows: [] };
@@ -91,10 +68,7 @@ export function pivotPace(pace, block) {
   return { weeks, rows: [...body, total] };
 }
 
-/* Where the month is heading, per block, for the tiles.
-
-   Read off the LAST week only. Each week's pace already carries the whole
-   month to date, so summing the weeks would count the same money four times. */
+// Where the month is heading, per block, for the tiles.
 export function paceTotals(pace) {
   const latest = {};
   for (const r of pace ?? []) {
@@ -109,8 +83,7 @@ export function paceTotals(pace) {
   return out;
 }
 
-/* This month's settled amount per block: the current month is the weeks, so
-   the tiles add those and nothing else. */
+// This month's settled amount per block.
 export function monthToDate(settlement) {
   const out = {};
   for (const r of settlement ?? []) {

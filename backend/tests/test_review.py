@@ -1,10 +1,4 @@
-"""The review payload: what a run says, and what changed since last week.
-
-The point of Step 7. A printed sentence can be read once. A note with a code
-and its numbers can be compared against the same note last week, which is the
-difference between "112,960 AR rows dropped" and "112,960 AR rows dropped -
-up from 900 last week".
-"""
+"""Tests for the review screen data."""
 from __future__ import annotations
 
 import pytest
@@ -128,8 +122,8 @@ def test_history_lists_runs_newest_first_with_their_counts(db):
 
 
 def test_history_says_which_scorecard_each_row_is(db):
-    """Both reports share one list, so a row that does not name itself is a
-    row you cannot tell from the other report's run of the same week."""
+    """Both reports share one list, so a row that does not name itself is a row
+    you cannot tell from the other report's run of the same week."""
     add_run(db, "2026-W35", report="gfs")
     row = history(db, "gfs")[0]
     assert row["report_key"] == "gfs"
@@ -137,12 +131,7 @@ def test_history_says_which_scorecard_each_row_is(db):
 
 
 def test_history_is_bounded_by_weeks_and_not_by_rows(db):
-    """A rebuilt week must not push an older week off the list.
-
-    This is why the bound is weeks. Fifteen weeks exist and Week 35 was built
-    four times; a row limit would have spent those four rows out of its budget
-    and cut the history short by three weeks.
-    """
+    """A rebuilt week must not push an older week off the list."""
     for n in range(21, 36):
         add_run(db, f"2026-W{n}")
     for _ in range(3):
@@ -152,7 +141,6 @@ def test_history_is_bounded_by_weeks_and_not_by_rows(db):
     weeks = sorted({r["week"] for r in rows}, reverse=True)
     assert len(weeks) == 12
     assert weeks[0] == "2026-W35" and weeks[-1] == "2026-W24"
-    # All four builds of the newest week are kept - the cut is between weeks.
     assert sum(1 for r in rows if r["week"] == "2026-W35") == 4
 
 

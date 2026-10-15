@@ -1,20 +1,4 @@
-"""Turn the ten located All-Providers source files into tables.
-
-The same reads as scripts/run_week.py in the All-Providers .bat pipeline, with
-the printing removed and no folder layout assumed - see the GFS reader for the
-reasoning, which is identical.
-
-Where it differs from GFS, it differs because the two pipelines genuinely read
-different things:
-
-  * no GFS Cases sheet. GFS filters to a list of cases that count as GFS; All
-    Providers reports on every provider in the Provider List, so there is
-    nothing to filter against.
-  * four columns out of Combined Custom Case AR rather than five - no
-    Lien Filed.
-  * a tenth file, last week's delivered workbook, because the KPI blocks are
-    read out of its sheet rather than declared in rules.yml.
-"""
+"""All Providers: reads the uploaded source files into tables."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 
@@ -110,7 +94,6 @@ def read_all_providers(sources: SourceSet, rules: dict,
                           lambda: fastexcel.read_excel(str(sc_path)).load_sheet(
                               sc_cfg.get("sheet", 0), header_row=None).to_polars())
 
-    # Last week's workbook. Read as a zip of XML - nothing opens Excel.
     from .workbook import read_sheets
     tpl_path = sources.path("template")
     kpi_sheet_name = rules["template"]["kpi_sheet"]

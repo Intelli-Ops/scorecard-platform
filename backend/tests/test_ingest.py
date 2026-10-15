@@ -1,11 +1,4 @@
-"""Storage and the week tables, tested on stand-in files.
-
-Nothing here reads a real spreadsheet - it checks the rules around the files:
-that they are classified the way the .bat pipeline classified them, that
-identical bytes are stored once, that a corrected re-upload wins without
-destroying what came before, and above all that Tuesday's Case AR and
-Thursday's cannot reach the wrong report.
-"""
+"""Tests for file storage and upload classification."""
 from __future__ import annotations
 from pathlib import Path
 
@@ -168,8 +161,7 @@ def test_stored_bytes_can_be_proved_unchanged(store, tmp_path):
 
 def test_the_tuesday_comments_copies_are_not_taken_for_the_delta_data(tmp_path):
     """"Delta WC 09.28.2026 - comments.xlsb" holds every fragment of the Delta
-    WC match. Taken for it, every settlement figure would be built from the
-    litigation team's copy."""
+    WC match."""
     cases = {
         "Master Settlement & Collection Delta WC 09.28.2026.xlsb": "delta_wc",
         "Master Settlement & Collection Delta WC 09.28.2026 - comments.xlsb":

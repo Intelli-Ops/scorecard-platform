@@ -1,3 +1,4 @@
+// The Delta Comparison tab.
 import { useMemo, useState } from "react";
 import { count } from "./api";
 import { col, total } from "./columns";
@@ -6,22 +7,7 @@ import { TableCard } from "./ui";
 import { ALL, applyFilters, filterOptions, pivotDelta, TOTAL } from "./delta-model";
 import { Button } from "./buttons";
 
-/* Delta Comparison, the way it was actually made.
-
-   By hand it was: paste the delta rows into a sheet, drop a pivot beside them,
-   set the filters at the top, read the grid. So that is what this is - the
-   filters, then the pivot they drive. The rows themselves are the next tab
-   along, because they are the evidence rather than the answer, and 666 of them
-   under the grid would bury it.
-
-   The pivot is built in the browser from the rows, not asked of the server, so
-   changing a filter is instant and the numbers can never disagree with the tab
-   beside them - they are the same rows.
-
-   No tiles on this tab. The figure that matters here changes with every filter,
-   and a headline that restates one cell of the grid under it is not a headline.
-   What the filters are doing is said in the bar itself - how many rows of how
-   many - which is the only number the grid does not already show. */
+// Delta Comparison, the way it was actually made.
 
 export default function Delta({ rows }) {
   const [chosen, setChosen] = useState({});
@@ -30,8 +16,6 @@ export default function Delta({ rows }) {
   const filtered = useMemo(() => applyFilters(rows, chosen), [rows, chosen]);
   const grid = useMemo(() => pivotDelta(filtered), [filtered]);
 
-  /* "Set" means narrowing something - (All) and unset are the same thing, and
-     neither should light the control up. */
   const isSet = (v) => Boolean(v) && v !== ALL;
   const active = Object.entries(chosen).filter(([, v]) => isSet(v));
   const set = (key, value) => setChosen((c) => ({ ...c, [key]: value }));
@@ -59,8 +43,6 @@ export default function Delta({ rows }) {
             ? <><strong>{count(filtered.length)}</strong> of {count(all)} rows</>
             : <>all <strong>{count(all)}</strong> rows</>}
         </span>
-        {/* Each filter has its own ×; this is only the shortcut for undoing
-            several at once. */}
         {active.length > 1 && (
           <Button tone="quiet" size="sm" onClick={() => setChosen({})}>
             Clear all {active.length}

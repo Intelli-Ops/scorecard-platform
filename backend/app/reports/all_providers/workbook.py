@@ -1,17 +1,4 @@
-"""Reading cells out of an .xlsx without opening Excel.
-
-All Providers reads its KPI blocks out of last week's delivered workbook (see
-TEMPLATE_SOURCE in reports/__init__.py): that sheet's provider rows change
-when a provider is taken on, so any row map typed into config would be wrong
-within a fortnight, and wrong quietly.
-
-An .xlsx is a zip of XML, and the rows needed are near the top, so this reads
-the sheet's XML directly - a few milliseconds even against a 38 MB workbook -
-and never parses the 250 MB Raw Data sheet beside it.
-
-    sheet = read_sheets(path, {"KPI High-Level"})["KPI High-Level"]
-    sheet.cells[(9, 2)]     # row 9, column B -> "A Miles"
-"""
+"""Reads cells from an .xlsx file without Excel."""
 from __future__ import annotations
 from html import unescape
 from pathlib import Path
@@ -40,11 +27,7 @@ class Sheet:
 
 def read_sheets(path: Path, wanted: set[str], max_row: int = 400,
                 max_col: int = 80) -> dict[str, Sheet]:
-    """Pull the named worksheets out of an .xlsx as {sheet name: Sheet}.
-
-    Only the top-left corner of each sheet is read (400 x 80 by default), which is
-    all the layout lives in and keeps the 250 MB Raw Data sheet from being parsed.
-    """
+    """The named worksheets of an .xlsx, as {sheet name: rows}."""
     out: dict[str, Sheet] = {}
     with zipfile.ZipFile(path) as z:            # closed, or Windows keeps the file locked
         sst: list[str] = []
@@ -99,6 +82,3 @@ def _cells(xml: str, sst: list[str], max_row: int, max_col: int
             elif v:
                 out[(r, c)] = v.group(1)
     return out
-
-
-# ---------------------------------------------------------------------------

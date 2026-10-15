@@ -1,18 +1,15 @@
+// Your profile: name, password, sessions and recent activity.
 import { useState } from "react";
 import { api, device, stamp, when } from "../api";
 import { useAuth } from "../auth";
 import { useLoad } from "../hooks";
 import { reportShort } from "../reports";
-import { Card, DataTable, ErrorBox, Loading, Outcome, PasswordInput } from "../components";
+import { Card, DataTable, ErrorBox, Loading, NewPasswordFields, Outcome,
+         PasswordInput } from "../components";
 import { Button } from "../buttons";
 import { LeaveIcon } from "../icons";
 
-/* Your own account: who you are, your password, where you are signed in, and
-   what you have done recently.
-
-   The last two are the security half. A session you do not recognise, or a
-   sign-in you did not make, is how most people find out someone else knows
-   their password - so both are on your own page, not only an admin's. */
+// Your own account: who you are, your password, where you are signed in, and what you have done recently.
 
 export function PasswordForm({ onDone, temporary = false }) {
   const [current, setCurrent] = useState("");
@@ -51,19 +48,8 @@ export function PasswordForm({ onDone, temporary = false }) {
                autoComplete="current-password" value={current}
                onChange={(e) => setCurrent(e.target.value)} />
       </div>
-      <div className="field">
-        <label htmlFor="pw-new">New password</label>
-        <PasswordInput id="pw-new" required minLength={8}
-               autoComplete="new-password" value={next}
-               onChange={(e) => setNext(e.target.value)} />
-        <div className="hint">At least 8 characters</div>
-      </div>
-      <div className="field">
-        <label htmlFor="pw-again">New password again</label>
-        <PasswordInput id="pw-again" required
-               autoComplete="new-password" value={again}
-               onChange={(e) => setAgain(e.target.value)} />
-      </div>
+      <NewPasswordFields value={next} onChange={setNext}
+                         again={again} onAgain={setAgain} />
       <Button tone="primary" type="submit" busy={busy} busyLabel="Saving…">
         Change password
       </Button>

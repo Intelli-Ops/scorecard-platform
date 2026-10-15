@@ -1,17 +1,4 @@
-"""Bringing a database up to date, and keeping the log untouchable.
-
-The schema is versioned with Alembic. Every change is a numbered file in
-migrations/versions/, the database records which ones it has had (in its
-alembic_version table), and upgrade() applies the rest in order. That covers
-what adding columns alone could not: a constraint, an index, a rename, a
-change of type, rows that have to be rewritten along the way.
-
-add_missing_columns is what came before, and is kept for one job only: a
-database made BEFORE migrations were versioned has no record of what it has
-had, so upgrade() first brings it to the frozen baseline (db/baseline.py) the
-old way, marks it as being there, and from then on it is migrated like any
-other. It only ever ADDS - it never drops, renames or retypes anything.
-"""
+"""Applying migrations, and the trigger that stops activity log rows being edited."""
 from __future__ import annotations
 import logging
 from functools import lru_cache
@@ -42,7 +29,6 @@ def upgrade(engine: Engine) -> None:
     cfg = _config(engine)
     tables = set(inspect(engine).get_table_names())
     if "alembic_version" not in tables and tables & set(baseline.metadata.tables):
-        # From before versioned migrations - see the module docstring.
         baseline.metadata.create_all(engine)
         add_missing_columns(engine, baseline.metadata)
         upgrade_roles(engine)
@@ -78,8 +64,7 @@ def _default_sql(column: Column) -> str | None:
 
 
 def add_missing_columns(engine: Engine, metadata: MetaData) -> list[str]:
-    """ALTER TABLE ... ADD COLUMN for every column a model has and its table
-    lacks. Returns what was added, as "table.column"."""
+    """ALTER table ..."""
     have = inspect(engine)
     added: list[str] = []
     with engine.begin() as conn:
@@ -97,14 +82,10 @@ def add_missing_columns(engine: Engine, metadata: MetaData) -> list[str]:
                 default = _default_sql(column)
                 if default is not None:
                     ddl += f" DEFAULT {default}"
-                # NOT NULL only with a default to fill the rows already there;
-                # otherwise the ALTER fails on any table that is not empty.
                 if not column.nullable and default is not None:
                     ddl += " NOT NULL"
                 conn.execute(text(ddl))
                 added.append(f"{table.name}.{column.name}")
-        # Accounts from before there were roles at all could do everything;
-        # mark them as the old "user" so upgrade_roles treats them like one.
         if "user_account.role" in added:
             conn.execute(text("UPDATE user_account SET role = 'user'"))
     if added:
@@ -113,13 +94,7 @@ def add_missing_columns(engine: Engine, metadata: MetaData) -> list[str]:
 
 
 def upgrade_roles(engine: Engine) -> int:
-    """Accounts from before there were viewers.
-
-    The old "user" could read every scorecard, so it becomes a viewer of every
-    report - nobody loses what they could see. Uploading, building and
-    approving now belong to admins, so it does lose those; an admin can make
-    them an admin again. Returns how many accounts changed.
-    """
+    """Accounts from before there were viewers."""
     from ..reports import REPORTS
     with engine.begin() as conn:
         if not inspect(engine).has_table("user_account"):
@@ -133,12 +108,6 @@ def upgrade_roles(engine: Engine) -> int:
     return n
 
 
-# ------------------------------------------------------------ no rewriting the log
-
-# Rows of the activity log can be DELETED - by a system admin, from the
-# Activity screen, and every deletion is itself logged (see audit.delete) -
-# but never EDITED. A row either says what happened or is gone, and its going
-# is on record; nobody can make one say something else.
 _MESSAGE = "activity_log rows cannot be changed"
 
 _SQLITE = [
@@ -153,21 +122,12 @@ _MYSQL = {
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '{_MESSAGE}'""",
 }
 
-# The guard that used to refuse deletes too. Dropped wherever it is found.
 _RETIRED = "activity_log_no_delete"
 
 
 def protect_activity_log(engine: Engine) -> bool:
     """Make the database itself refuse any UPDATE on activity_log, and let
-    DELETE through (the app allows it to system admins only, and logs it).
-
-    Returns True when the guard is in place. On MySQL, creating or dropping a
-    trigger needs the TRIGGER privilege, and with binary logging on (the
-    default) it needs more still - so the deployment's setup script does it as
-    the database admin, and the app only checks. If something is off, the app
-    keeps running but says so loudly on every start: a server that refuses to
-    come up is worse than one that tells you what it is missing.
-    """
+    DELETE through (the app allows it to system admins only, and logs it)."""
     name = engine.dialect.name
     with engine.begin() as conn:
         if name == "sqlite":

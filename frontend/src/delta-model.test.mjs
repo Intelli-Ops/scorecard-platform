@@ -1,11 +1,4 @@
-/* The Delta pivot and its filters.
- *
- *   node --test src/delta-model.test.mjs
- *
- * This pivot is the one place in the app where the numbers on screen depend on
- * a control the reader is holding, so the filters get as much attention as the
- * arithmetic: a filter that quietly drops rows is worse than no filter.
- */
+// Tests for delta-model.js.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -27,17 +20,12 @@ const rows = [
         Case_Validity: "Invalid" }),
 ];
 
-
-/* ------------------------------------------------------------- the pivot */
-
 test("aging columns are in scale order, not alphabetical", () => {
-  // Sorting these as text puts "90+" between "31-60" and "61-90".
   const g = pivotDelta(rows);
   assert.deepEqual(g.buckets, ["1-30", "31-60", "90+"]);
 });
 
 test("only the buckets actually present get a column", () => {
-  // Filtering to 90+ should leave one column, not four with three empty.
   const g = pivotDelta(rows.filter((r) => r.Aging === "90+"));
   assert.deepEqual(g.buckets, ["90+"]);
 });
@@ -78,10 +66,7 @@ test("no rows means no table, not a lone Grand Total", () => {
   assert.deepEqual(pivotDelta(undefined).rows, []);
 });
 
-/* ---------------------------------------------------------------- filters */
-
 test("a column with one value is not offered as a filter", () => {
-  // Type is GFS for every row here: a filter that cannot change anything.
   const keys = filterOptions(rows).map((f) => f.key);
   assert.ok(!keys.includes("Type"));
   assert.ok(keys.includes("Group"));
@@ -116,7 +101,6 @@ test("filtering then pivoting gives the pivot of exactly those rows", () => {
 });
 
 test("a filter matching nothing gives an empty pivot, not everything", () => {
-  // The failure that matters: a filter silently falling back to all rows.
   const got = pivotDelta(applyFilters(rows, { Location: "Nowhere" }));
   assert.deepEqual(got.rows, []);
 });

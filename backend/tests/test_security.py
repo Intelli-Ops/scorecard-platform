@@ -1,10 +1,4 @@
-"""The security layer: the activity log, the account protections, the admin
-screens, and the bugs the audit found.
-
-Each test is one promise made to whoever reviews this app's security - that a
-failed sign-in is recorded, that the record cannot be edited, that a locked
-account stays locked - checked against the API the way the browser uses it.
-"""
+"""Tests for the activity log, account protections and password resets."""
 from __future__ import annotations
 import datetime as dt
 
@@ -14,7 +8,9 @@ from sqlalchemy import select, text
 
 from app.config import settings
 from app.db import session as db_session
-from tests.accounts import PASSWORD, account, make_account, sign_in
+from tests.accounts import (PASSWORD, account, age_codes, confirm_email,
+                            last_mail, mailed_code, make_account, sign_in,
+                            token_of)
 
 ADMIN = "boss@appedology.com"
 USER = "worker@appedology.com"
@@ -55,8 +51,6 @@ def login(client, email, password):
     return client.post("/api/auth/login", json={"email": email, "password": password})
 
 
-# ------------------------------------------------------------ the activity log
-
 def test_sign_ins_and_failures_are_logged_with_where_from(client):
     make_account(USER, "APD-0002")
     login(client, USER, PASSWORD)
@@ -72,8 +66,7 @@ def test_sign_ins_and_failures_are_logged_with_where_from(client):
 
 
 def test_a_log_row_cannot_be_edited(client):
-    """Enforced by the database, not by the app choosing not to. A row can be
-    deleted (by a system admin, and that is logged) but never rewritten."""
+    """Enforced by the database, not by the app choosing not to."""
     make_account(USER, "APD-0002")
     login(client, USER, PASSWORD)
     from app.db.session import engine
@@ -113,15 +106,12 @@ def _run(week="2026-W35", status="review", report="gfs"):
         return run.id
 
 
-# ------------------------------------------------------------ account safety
-
 def test_five_wrong_passwords_lock_the_account(client):
     make_account(USER, "APD-0002")
     for _ in range(4):
         assert "do not match" in login(client, USER, "nope nope").json()["detail"]
     r = login(client, USER, "nope nope")
     assert "locked" in r.json()["detail"]
-    # Even the right password is refused while it is locked.
     r = login(client, USER, PASSWORD)
     assert r.status_code == 401 and "locked" in r.json()["detail"]
     assert len(log("auth.locked")) == 1
@@ -137,7 +127,7 @@ def test_an_admin_can_unlock(client, admin):
 
 def test_session_tokens_are_stored_hashed(client):
     make_account(USER, "APD-0002")
-    token = login(client, USER, PASSWORD).json()["token"]
+    token = token_of(login(client, USER, PASSWORD))
     from app.db.models import Session
     from app.db.session import session
     with session() as s:
@@ -184,8 +174,6 @@ def test_profile_name_can_be_changed(client, user):
     assert r.json()["name"] == "Ali Asghar"
 
 
-# ------------------------------------------------------------ admin
-
 def test_admin_screens_refuse_other_people_and_log_the_attempt(client, user):
     for method, path in [("get", "/api/admin/users"),
                          ("get", "/api/admin/activity"),
@@ -206,6 +194,7 @@ def test_approving_a_new_account(client, admin):
     client.post("/api/auth/signup", json={"email": "new@appedology.com",
                                           "apd_id": "APD-0003",
                                           "password": PASSWORD})
+    confirm_email(client, "new@appedology.com")
     users = client.get("/api/admin/users", headers=admin).json()
     new = users[0]                                   # waiting ones come first
     assert new["email"] == "new@appedology.com" and new["status"] == "pending"
@@ -214,23 +203,170 @@ def test_approving_a_new_account(client, admin):
     assert log("admin.approve_user")[0].target == "new@appedology.com"
 
 
-def test_a_password_reset_must_be_changed_before_anything_else(client, admin):
-    uid = make_account(USER, "APD-0002")
-    old = sign_in(client, USER)
-    temp = client.post(f"/api/admin/users/{uid}/reset-password",
-                       headers=admin).json()["temporary_password"]
+def forgot(client, email=USER):
+    return client.post("/api/auth/password/forgot", json={"email": email})
 
+
+def enter_code(client, code, email=USER):
+    return client.post("/api/auth/password/verify-code",
+                       json={"email": email, "code": code})
+
+
+def new_password(client, ticket, password="my own password now"):
+    return client.post("/api/auth/password/reset",
+                       json={"ticket": ticket, "password": password})
+
+
+def test_forgot_password_end_to_end(client):
+    """Forgot password? -> a code by email -> the code -> a new password."""
+    make_account(USER, "APD-0002")
+    old = sign_in(client, USER)
+    assert forgot(client).status_code == 200
+    r = enter_code(client, mailed_code(USER))
+    assert r.status_code == 200
+    assert new_password(client, r.json()["ticket"]).status_code == 200
+
+    assert login(client, USER, PASSWORD).status_code == 401        # old one: gone
+    assert login(client, USER, "my own password now").status_code == 200
     assert client.get("/api/auth/me", headers=old).status_code == 401  # signed out
-    headers = sign_in(client, USER, temp)
+    assert last_mail(USER)["Subject"] == "Your Scorecard password was changed"
+    assert {e.action for e in log()} >= {"auth.password_forgot", "auth.reset_code",
+                                         "auth.password_reset"}
+
+
+def test_forgot_password_says_the_same_whoever_asks(client):
+    from app.service import mail
+    make_account(USER, "APD-0002")
+    before = len(mail.outbox)
+    real, made_up = forgot(client), forgot(client, "nobody@appedology.com")
+    assert real.status_code == made_up.status_code == 200
+    assert real.json() == made_up.json()
+    assert len(mail.outbox) == before + 1             # only the real one is sent
+
+
+def test_asking_for_a_reset_does_not_change_the_password(client):
+    """Anyone can type a colleague's email into "Forgot password?" - that alone
+    must not lock them out."""
+    make_account(USER, "APD-0002")
+    forgot(client)
+    assert login(client, USER, PASSWORD).status_code == 200
+
+
+def test_a_reset_code_expires_after_five_minutes(client):
+    make_account(USER, "APD-0002")
+    forgot(client)
+    code = mailed_code(USER)
+    age_codes(minutes=5, seconds=1)
+    assert enter_code(client, code).status_code == 400
+
+
+def test_five_wrong_reset_codes_spend_it(client):
+    from app.service import codes
+    make_account(USER, "APD-0002")
+    forgot(client)
+    code = mailed_code(USER)
+    wrong = "000000" if code != "000000" else "111111"
+    for _ in range(codes.CODE_TRIES):
+        assert enter_code(client, wrong).status_code == 400
+    assert enter_code(client, code).status_code == 400
+    assert log("auth.reset_code")[-1].outcome == "failure"
+
+
+def test_a_reset_code_and_its_ticket_work_once(client):
+    make_account(USER, "APD-0002")
+    forgot(client)
+    code = mailed_code(USER)
+    ticket = enter_code(client, code).json()["ticket"]
+    assert enter_code(client, code).status_code == 400              # code: spent
+    assert new_password(client, ticket).status_code == 200
+    assert new_password(client, ticket, "yet another password").status_code == 400
+    assert new_password(client, "1.made-up").status_code == 400
+    assert new_password(client, "nonsense").status_code == 400
+
+
+def test_only_the_newest_reset_code_works(client):
+    make_account(USER, "APD-0002")
+    forgot(client)
+    first = mailed_code(USER)
+    age_codes(seconds=61)
+    forgot(client)
+    second = mailed_code(USER)
+    if first != second:
+        assert enter_code(client, first).status_code == 400
+    assert enter_code(client, second).status_code == 200
+
+
+def test_reset_codes_are_not_sent_back_to_back(client):
+    from app.service import mail
+    make_account(USER, "APD-0002")
+    forgot(client)
+    before = len(mail.outbox)
+    assert forgot(client).status_code == 200           # same answer...
+    assert len(mail.outbox) == before                  # ...but nothing sent
+
+
+def test_a_disabled_account_gets_no_reset_code(client, admin):
+    from app.service import mail
+    uid = make_account(USER, "APD-0002")
+    client.post(f"/api/admin/users/{uid}/active", headers=admin, json={"active": False})
+    before = len(mail.outbox)
+    assert forgot(client).status_code == 200
+    assert len(mail.outbox) == before
+
+
+def test_an_admin_forced_reset_shuts_the_old_password_out(client, admin):
+    """For a stolen laptop or a leaked password: the admin sees and chooses
+    nothing; the owner is mailed, and gets back in with Forgot password?."""
+    uid = make_account(USER, "APD-0002")
+    theirs = sign_in(client, USER)
+    r = client.post(f"/api/admin/users/{uid}/reset-password", headers=admin)
+    assert r.status_code == 200 and r.json()["notified"] == USER
+    assert not {"temporary_password", "code", "ticket"} & set(r.json())
+    assert client.get("/api/auth/me", headers=theirs).status_code == 401
+    assert login(client, USER, PASSWORD).status_code == 401
+    assert last_mail(USER)["Subject"] == "Choose a new Scorecard password"
+
+    forgot(client)
+    ticket = enter_code(client, mailed_code(USER)).json()["ticket"]
+    new_password(client, ticket)
+    assert login(client, USER, "my own password now").status_code == 200
+
+
+def test_the_server_command_shows_a_code_for_when_mail_is_down(client, capsys):
+    """The printed code replaces a mailed one and works on the code screen."""
+    from app import manage
+    make_account(USER, "APD-0002")
+    forgot(client)
+    mailed = mailed_code(USER)
+    manage.main(["reset-password", USER])
+    out = capsys.readouterr().out
+    code = out.split(f"Reset code for {USER}: ")[1].split()[0]
+    if code != mailed:
+        assert enter_code(client, mailed).status_code == 400
+    ticket = enter_code(client, code).json()["ticket"]
+    assert new_password(client, ticket).status_code == 200
+
+
+def test_an_old_temporary_password_expires(client):
+    """Handed out on Teams before resets were mailed links; one still sitting
+    in a chat must not open the account for ever."""
+    from app.db.models import User
+    from app.db.session import session
+    from app.service import auth
+    make_account(USER, "APD-0002")
+    with session() as s:
+        u = s.query(User).filter_by(email=USER).one()
+        u.must_change_password = True
+        u.password_changed_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)
+    headers = sign_in(client, USER)                      # an hour old: still fine
     r = client.get("/api/scorecards/current", headers=headers)
-    assert r.status_code == 403
     assert r.json()["detail"]["code"] == "password_change_required"
 
-    client.post("/api/me/password", headers=headers,
-                json={"current": temp, "new": "my own password now"})
-    assert client.get("/api/scorecards/current", headers=headers).status_code == 200
-    # The log says it was reset, never what to.
-    assert temp not in str([r.detail for r in log()])
+    with session() as s:
+        u = s.query(User).filter_by(email=USER).one()
+        u.password_changed_at -= auth.TEMPORARY_TTL
+    r = login(client, USER, PASSWORD)
+    assert r.status_code == 401 and "expired" in r.json()["detail"]
 
 
 def test_disabling_an_account_signs_it_out(client, admin):
@@ -279,8 +415,6 @@ def test_activity_can_be_searched_paged_and_exported(client, admin):
     assert log("admin.activity_export")
 
 
-# ------------------------------------------------------------ detection
-
 def _alerts(client, admin):
     return {a["code"]: a for a in
             client.get("/api/admin/alerts?days=1", headers=admin).json()["alerts"]}
@@ -323,8 +457,6 @@ def test_a_new_address_is_flagged_but_a_first_sign_in_is_not(client, admin):
            .json()["alerts"] if a["code"] == "new_address"]
     assert [a["ip"] for a in new] == ["203.0.113.9"]
 
-
-# ------------------------------------------------------------ audit fixes
 
 @pytest.mark.parametrize("week", ["2026-W5", "2026-W54", "2026W35", "2026-W35x",
                                   "2027-W53"])
@@ -407,8 +539,6 @@ def test_times_come_back_in_utc(client, user):
     assert me["created_at"].endswith(("+00:00", "Z"))
 
 
-# ------------------------------------------------------------ the database
-
 def test_an_older_database_gains_the_new_columns(tmp_path):
     """The laptop's existing database, created before roles and the rest."""
     from sqlalchemy import create_engine
@@ -429,8 +559,62 @@ def test_an_older_database_gains_the_new_columns(tmp_path):
     with e.connect() as c:
         row = c.execute(text("SELECT role, report_access, pending, failed_logins "
                              "FROM user_account")).one()
-    # It could see everything before; as a viewer it still can.
     assert tuple(row) == ("viewer", "gfs,all_providers", 0, 0)
+
+
+def test_migrations_run_as_the_migration_account(tmp_path, monkeypatch):
+    """create_all uses the migration account; the app only checks the schema."""
+    from sqlalchemy import create_engine
+    from app.db import migrate
+    from app.db.session import SchemaOutOfDate, check_schema, create_all
+    settings.use(tmp_path / "data")
+    db_session.reset()
+    with pytest.raises(SchemaOutOfDate, match="scorecard-manage upgrade"):
+        check_schema()                      # an empty database: refuses to start
+
+    elsewhere = f"sqlite:///{(tmp_path / 'other.db').as_posix()}"
+    monkeypatch.setattr(settings, "migrate_database_url", elsewhere)
+    create_all()
+    assert migrate.revision(create_engine(elsewhere)) == migrate.head()
+    with pytest.raises(SchemaOutOfDate):
+        check_schema()                      # the app's database was not touched
+
+    monkeypatch.setattr(settings, "migrate_database_url", settings.database_url)
+    create_all()
+    check_schema()                          # now it is current, and starts
+
+
+def test_the_upgrade_does_not_shut_out_people_already_using_the_app(tmp_path):
+    """Accounts an admin approved before email confirmation existed count as
+    confirmed; ones still waiting must confirm."""
+    from alembic import command
+    from sqlalchemy import create_engine
+    from app.db import migrate
+    e = create_engine(f"sqlite:///{(tmp_path / 'old.db').as_posix()}")
+    command.upgrade(migrate._config(e), "0002")
+    with e.begin() as c:
+        for i, pending in ((1, 0), (2, 1)):
+            c.execute(text(
+                "INSERT INTO user_account (id, email, apd_id, password_hash, created_at, "
+                "is_active, role, report_access, pending, must_change_password, "
+                "failed_logins) VALUES (:i, :e, :a, 'x', '2026-09-01 10:00:00', 1, "
+                "'viewer', '', :p, 0, 0)"),
+                {"i": i, "e": f"u{i}@appedology.com", "a": f"APD-000{i}", "p": pending})
+    migrate.upgrade(e)
+    with e.connect() as c:
+        rows = dict(c.execute(text("SELECT id, email_verified_at FROM user_account")).all())
+    assert rows[1] is not None and rows[2] is None
+
+
+def test_a_migration_account_address_is_read_from_the_environment(monkeypatch):
+    from app.config import Settings
+    monkeypatch.setenv("SCORECARD_MIGRATE_DB", "mysql://m:p@db/scorecard")
+    monkeypatch.setenv("SCORECARD_AUTO_MIGRATE", "0")
+    s = Settings()
+    assert s.migrate_database_url == "mysql+pymysql://m:p@db/scorecard?charset=utf8mb4"
+    assert s.auto_migrate is False
+    monkeypatch.delenv("SCORECARD_MIGRATE_DB")
+    assert Settings().migrate_database_url is None
 
 
 def test_every_table_is_valid_mysql():
@@ -457,9 +641,7 @@ def test_a_plain_mysql_address_gets_the_driver_and_charset():
 
 
 def test_copying_an_old_database_into_a_new_one(tmp_path, capsys):
-    """The move from the laptop's SQLite file to the server's MySQL, rehearsed
-    SQLite to SQLite: an old database, from before the activity log, copies
-    across whole - and a target that already has rows is refused."""
+    """An old SQLite database copies into a new one; a non-empty target is refused."""
     from sqlalchemy import create_engine
     from app import manage
     old = tmp_path / "old.db"
@@ -501,13 +683,9 @@ def test_sessions_from_before_hashing_are_closed(client):
     assert len(client.get("/api/me/sessions", headers=live).json()) == 1
 
 
-# ------------------------------------------------------------ second audit
-
 @pytest.fixture
 def small_limits(monkeypatch):
-    """The real budgets are sized for a whole office behind one address;
-    spending a hundred password hashes per test to reach them proves nothing
-    a handful does not."""
+    """Lower rate limits, so a test reaches them in a few tries."""
     from app.service import ratelimit
     monkeypatch.setattr(ratelimit, "LOGIN_FAILURES", (6, 15 * 60))
 
@@ -543,8 +721,7 @@ def test_guessing_the_current_password_from_an_open_session_is_limited(client, u
 
 
 def test_a_new_password_that_is_refused_is_not_a_wrong_password(client, user):
-    """Too short, or the same as the old one: the person knew their password.
-    These were counted as guesses at it, and ten shut the form."""
+    """Too short, or the same as the old one: the person knew their password."""
     from app.service import ratelimit
     limit, _ = ratelimit.PASSWORD_FAILURES
     for _ in range(limit):
@@ -585,14 +762,12 @@ def test_an_upload_is_not_taken_in_from_a_viewer(client, user, admin, received):
     assert r.status_code == 403 and received["bytes"] == 0
     assert [e.target for e in log("admin.denied")] == [
         "POST /api/weeks/2026-W35/uploads"]
-    # An admin's still is.
     r = client.post("/api/weeks/2026-W35/uploads", headers=admin, files=files)
     assert r.status_code == 200 and received["bytes"] == 200_000
 
 
 def test_nothing_but_an_upload_may_be_large(client):
-    """A megabyte is far more than any form here sends. Without a ceiling the
-    whole of it was read into memory before the route looked at it."""
+    """A megabyte is far more than any form here sends."""
     r = client.post("/api/auth/login", content=b"x" * (1024 * 1024 + 1),
                     headers={"Content-Type": "application/json"})
     assert r.status_code == 413
@@ -663,9 +838,10 @@ def test_an_older_weaker_password_hash_is_upgraded_at_sign_in(client, user):
     from app.db.session import session
     from app.service import auth
     salt = secrets.token_bytes(16)
-    old = "pbkdf2_sha256$240000${}${}".format(
-        auth._b64(salt),
-        auth._b64(hashlib.pbkdf2_hmac("sha256", PASSWORD.encode(), salt, 240_000)))
+    weaker = auth.ITERATIONS // 2
+    old = "pbkdf2_sha256${}${}${}".format(
+        weaker, auth._b64(salt),
+        auth._b64(hashlib.pbkdf2_hmac("sha256", PASSWORD.encode(), salt, weaker)))
     with session() as s:
         s.execute(select(User).where(User.email == USER)).scalar_one().password_hash = old
     assert login(client, USER, PASSWORD).status_code == 200
@@ -674,8 +850,6 @@ def test_an_older_weaker_password_hash_is_upgraded_at_sign_in(client, user):
     assert now.split("$")[1] == str(auth.ITERATIONS)
     assert auth.verify_password(PASSWORD, now)
 
-
-# ------------------------------------------------------------ deleting activity
 
 SYSADMIN = "owner@appedology.com"
 

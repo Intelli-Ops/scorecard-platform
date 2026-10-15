@@ -1,31 +1,11 @@
+// The KPI High-Level tab.
 import { useMemo } from "react";
 import { count } from "./api";
 import { assemble, col, total } from "./columns";
 import { TableCard } from "./ui";
 
-/* KPI High-Level, one table per category.
-
-   No tiles on this tab. A tile is for a figure the whole page is about, and
-   this page is about eight categories at once - a headline over them would
-   have to pick one, or add them together, and the sum of an SBR count and a
-   DDE count is not a number that means anything.
-
-   The sheet runs a column per MONTH across each block, January to the month
-   being reported, with a Grand Total at the end. That is the shape here, built
-   from whatever months the run actually carries: today the pipeline computes
-   the current month only, because the SQL document log it reads holds one
-   month, so one column is what there is. When the earlier months become
-   available the columns appear beside it and nothing here changes.
-
-   There is no Share column. It was taking most of the width to say something
-   the counts beside it already said, and a month is a better use of that
-   space than a bar. */
-
 const TOTAL = "Total";
 
-/* The order management reads the blocks in. A block is matched by name
-   ignoring case, and DDEL by the "(DDEL)" in "10635 (DDEL)"; anything not
-   listed goes last, alphabetically. */
 const ORDER = ["sbr", "pmr", "ddel", "ntp", "medical index", "dor",
                "med legal", "enforcement of agreement", "dde"];
 function rank(name) {
@@ -34,8 +14,7 @@ function rank(name) {
   return i < 0 ? ORDER.length : i;
 }
 
-/* A run's KPI figures may carry a month; the ones built before they did are
-   simply the run's own month. Either way a block is grouped into columns. */
+// A run's KPI figures may carry a month.
 function monthsOf(rows, fallback) {
   const named = [...new Set(rows.map((r) => r.month).filter((m) => m != null))];
   if (!named.length) return [{ key: "value", label: fallback ?? "Value" }];
@@ -54,9 +33,6 @@ export default function Kpi({ kpi, monthLabel }) {
     return Object.entries(by).map(([name, values]) => {
       const months = monthsOf(values, monthLabel);
 
-      /* One row per group, one cell per month, ordered by the total across
-         the row - which is the order the sheet prints and the order that puts
-         the groups worth reading at the top. */
       const byGroup = {};
       for (const v of values) {
         const g = (byGroup[v.group] ??= { group: v.group, _total: 0 });
@@ -84,7 +60,6 @@ export default function Kpi({ kpi, monthLabel }) {
   return (
     <div className="stack">
       {blocks.map((b) => {
-        /* A single month needs no Grand Total column repeating it. */
         const parts = b.months.map((m) => ({
           spanLabel: m.label, column: col.count(m.key, m.label, { width: 120 }),
         }));

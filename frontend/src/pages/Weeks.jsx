@@ -1,3 +1,4 @@
+// Uploading a week's files and starting builds.
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, bytes, when } from "../api";
@@ -9,13 +10,7 @@ import { Button, DeleteButton } from "../buttons";
 import { REPORT_OPTIONS } from "../reports";
 import { useLoad } from "../hooks";
 
-/* Uploading a week.
-
-   Shaped like the actual working week: seven files are shared and go up once,
-   and each report brings its own Case ARs on the day it is mailed - GFS on
-   Tuesday, All Providers on Thursday. The page asks which report a Case AR is
-   for rather than guessing, because guessing wrong attaches Thursday's case
-   activity to Tuesday's report and nothing in the file would ever show it. */
+// Uploading a week.
 
 function isoWeek(d = new Date()) {
   const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -25,8 +20,6 @@ function isoWeek(d = new Date()) {
   return `${t.getUTCFullYear()}-W${String(n).padStart(2, "0")}`;
 }
 
-/* The server refuses anything else; checking here too means a half-typed
-   "2026-W3" waits quietly instead of flashing an error on every keystroke. */
 const WEEK_RE = /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/;
 
 export default function Weeks() {
@@ -40,18 +33,12 @@ export default function Weeks() {
   const fileInput = useRef();
   const validWeek = WEEK_RE.test(week);
 
-  /* The weeks with uploads, for the "earlier weeks" list - fetched once and
-     again after an upload or a deletion changes it - and the chosen week's
-     files, fetched whenever the week changes. */
   const weeksLoad = useLoad(api.weeks, []);
   const statusLoad = useLoad(
     () => (validWeek ? api.week(week) : Promise.resolve(null)), [week]);
   const weeks = weeksLoad.data ?? [];
   const status = statusLoad.data;
 
-  /* What the last upload received, and the last thing that went wrong. Each
-     is kept with the week it happened in, so choosing another week clears
-     them without a reset of its own. */
   const [result, setResult] = useState(null);
   const [failure, setFailure] = useState(null);
   const setError = (e) => setFailure(e ? { week, error: e } : null);
@@ -73,8 +60,6 @@ export default function Weeks() {
     finally { setProgress(null); }
   }
 
-  /* One press, one build: the button is held until the server answers. If
-     the week is already building, go to that build rather than show an error. */
   async function build(reportKey) {
     setBuilding(reportKey);
     try {
@@ -86,8 +71,6 @@ export default function Weeks() {
     } finally { setBuilding(null); }
   }
 
-  // Every row held for the week, which is what deleting it would remove - not
-  // the deduplicated list the two cards show.
   const uploaded = status?.files ?? 0;
 
   async function removeWeek() {
@@ -95,13 +78,10 @@ export default function Weeks() {
       setError(null);
       await api.deleteWeek(week);
       setResult(null);
-      // Now an empty week, not a stale one.
       await Promise.all([weeksLoad.reload(), statusLoad.reload()]);
     } catch (e) { setError(e); }
   }
 
-  /* One wrong file, without deleting the week. Nothing takes its place - the
-     server sends back the week as it now is, with that input empty. */
   async function removeFile(id) {
     try {
       setError(null);
@@ -169,7 +149,6 @@ export default function Weeks() {
           <input ref={fileInput} type="file" multiple hidden
                  onChange={(e) => {
                    send([...e.target.files]);
-                   // Cleared, so choosing the same file again still counts.
                    e.target.value = "";
                  }} />
           {progress == null ? (
@@ -197,8 +176,6 @@ export default function Weeks() {
           </div>
         )}
 
-        {/* The month's working days, set along with the week's files: the
-            pace figures of every build this month are projected on it. */}
         {validWeek && <WorkingDays key={week} week={week} />}
       </Card>
 
@@ -238,8 +215,6 @@ export default function Weeks() {
                                 busy={building === key} busyLabel="Starting…">
                           Build
                         </Button>
-                      /* Not a button when there is nothing to press: a greyed-out
-                         primary still reads as the thing to click. */
                       : <span className="pill">{r.missing.length} still needed</span>
                   }>
               <DataTable
@@ -249,8 +224,6 @@ export default function Weeks() {
                     render: (h) => when(h.uploaded_at) },
                   { key: "size_bytes", label: "Size", num: true,
                     render: (h) => bytes(h.size_bytes) },
-                  /* A file a build has read stays: that build's record of
-                     what it was made from has to remain true. */
                   { key: "id", label: "",
                     render: (h) => (h.read_by_a_build
                       ? <span className="small muted"

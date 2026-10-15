@@ -1,4 +1,4 @@
-"""The filtered Case AR tab: the pivot rebuilt from Raw Data, with a Grand Total."""
+"""Tests for the filtered Case AR pivot."""
 import polars as pl
 import pytest
 import yaml
@@ -14,7 +14,6 @@ def rules():
 
 def raw():
     rows = [
-        # CASEID, REGID, Group, Closing Order, Validity, FileStatus, FileStatus2, money
         (1, 10, "Artheon", "CIC Pending", "Valid", "ACTIVE", "Open", 100.25, 10.10),
         (2, 10, "Artheon", "CIC Pending", "Invalid", "Closed", "Closed", 50.50, 0.0),
         (3, 20, "Med-Legal", "CIC Pending", "Valid", "ACTIVE", "Open", 20.01, 5.05),

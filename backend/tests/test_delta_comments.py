@@ -1,10 +1,4 @@
-"""Tuesday's Ongoing DOR Status and Details, looked up by Case ID.
-
-Ported from gfs-automation (commit 675c221). Each Delta Comparison row takes
-its comment from its OWN sheet of the "- comments" copy; IMR is never looked
-up; a case listed twice takes its first row; without the files both columns
-are there and blank.
-"""
+"""Tests for the Ongoing DOR columns looked up from the comments files."""
 from __future__ import annotations
 
 import polars as pl

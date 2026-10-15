@@ -1,17 +1,4 @@
-"""Accounts: signing up, signing in, and staying signed in.
-
-The two company rules live here, not in the browser. A form can be bypassed by
-anyone who opens the developer console; the API cannot.
-
-  * the email must end @appedology.com
-  * the APD id is APD- followed by exactly four digits
-
-Passwords are never stored. What is stored is a PBKDF2-HMAC-SHA256 hash with a
-fresh 16-byte random salt per user, at 600,000 iterations (OWASP's figure for
-PBKDF2-SHA256) - deliberately slow,
-so that guessing at scale costs real time. Standard library only; no dependency
-to keep patched.
-"""
+"""Accounts: passwords, sessions, and what admins may do to whom."""
 from __future__ import annotations
 import base64
 import datetime as dt
@@ -23,8 +10,10 @@ import secrets
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from ..db.models import ROLE_LABELS, ROLES, Session, User
-from . import ratelimit
+from ..clock import utcnow
+from ..config import settings
+from ..db.models import ROLE_LABELS, ROLES, OneTimeCode, Session, User
+from . import emails, mail, ratelimit
 
 EMAIL_DOMAIN = "@appedology.com"
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@appedology\.com$", re.IGNORECASE)
@@ -33,26 +22,11 @@ APD_RE = re.compile(r"^APD-\d{4}$")
 MIN_PASSWORD = 8
 ITERATIONS = 600_000
 
-# A session ends after an hour with nothing done in it, and after twelve
-# hours whatever was done - so a browser left open on a shared desk, or a
-# token that got out, is good for an hour at most, not for two weeks. Every
-# request pushes the hour back (see touch), so nobody at work is signed out
-# in the middle of it.
 SESSION_IDLE = dt.timedelta(hours=1)
 SESSION_MAX = dt.timedelta(hours=12)
 
-# Five wrong passwords within fifteen minutes lock the account - FROM THE
-# ADDRESS THEY CAME FROM, for fifteen minutes. Enough for a person who
-# mistypes; far too slow for a program guessing - at most 480 guesses a day
-# from one address, each of which is logged.
-#
-# The lock used to be on the account, whoever was guessing. That handed
-# anyone who knew a colleague's email a way to keep them out all day: five
-# wrong passwords every fifteen minutes, with no sign-in of their own needed.
-# Now the guesser locks only themselves out, and the account's owner, signing
-# in from their own address, never notices. Someone guessing from many
-# addresses gets five tries from each - which the per-address sign-in limit
-# and the password-guessing alert (service/detect.py) are there for.
+TEMPORARY_TTL = dt.timedelta(hours=24)
+
 LOCK_AFTER = 5
 LOCK_MINUTES = 15
 LOCK = (LOCK_AFTER, LOCK_MINUTES * 60)
@@ -61,9 +35,6 @@ LOCK = (LOCK_AFTER, LOCK_MINUTES * 60)
 def _lock_key(user: User, ip: str | None) -> str:
     return f"lock:{user.id}:{ip or '?'}"
 
-# A session's "last seen" - and with it the hour it has left - is written at
-# most this often. Writing it on every request would turn every page load
-# into a database write.
 SEEN_EVERY = dt.timedelta(minutes=1)
 
 WRONG = "That email and password do not match."
@@ -89,12 +60,6 @@ class LoginRefused(AuthError):
         self.reason, self.locked_now = reason, locked_now
 
 
-def _now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
-
-
-# ------------------------------------------------------------------ validation
-
 def clean_email(raw: str) -> str:
     email = (raw or "").strip().lower()
     if not email:
@@ -105,12 +70,7 @@ def clean_email(raw: str) -> str:
 
 
 def clean_apd(raw: str) -> str:
-    """APD-1234. Upper-cased, and a bare 1234 is accepted and completed.
-
-    People type what is on their badge, and half of them will leave the prefix
-    off. Rejecting that teaches nothing; completing it is unambiguous, because
-    four digits can only mean one thing here.
-    """
+    """APD-1234."""
     apd = (raw or "").strip().upper().replace(" ", "")
     if re.fullmatch(r"\d{4}", apd):
         apd = f"APD-{apd}"
@@ -123,8 +83,6 @@ def check_password(password: str) -> str:
     if len(password or "") < MIN_PASSWORD:
         raise AuthError(f"Use a password of at least {MIN_PASSWORD} characters.")
     if len(password) > 256:
-        # PBKDF2 hashes the whole thing on every sign-in; an unbounded password
-        # is a way to make the server burn CPU.
         raise AuthError("Use a password of at most 256 characters.")
     return password
 
@@ -135,8 +93,6 @@ def clean_name(raw: str | None) -> str | None:
         raise AuthError("Keep the name to 120 characters.")
     return name or None
 
-
-# ------------------------------------------------------------------ hashing
 
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
@@ -154,13 +110,12 @@ def verify_password(password: str, stored: str) -> bool:
         expected = _unb64(hash_b64)
     except (ValueError, TypeError):      # binascii.Error is a ValueError
         return False
-    # Constant-time: a comparison that returns early leaks how much matched.
     return hmac.compare_digest(dk, expected)
 
 
 def needs_rehash(stored: str) -> bool:
-    """True for a hash made with fewer iterations than ITERATIONS - one
-    stored before the count was raised."""
+    """True for a hash made with fewer iterations than iterations - one stored
+    before the count was raised."""
     try:
         return int(stored.split("$")[1]) < ITERATIONS
     except (IndexError, ValueError):
@@ -178,30 +133,17 @@ def _unb64(s: str) -> bytes:
 _dummy: str | None = None
 
 
-def _burn_time(password: str) -> None:
-    """Spend as long as checking a real password takes.
-
-    Without this, a sign-in for an address with no account answers at once and
-    one for a real account takes a quarter of a second - and the difference
-    tells someone guessing which addresses exist, whatever the message says.
-    """
+def burn_time(password: str) -> None:
+    """Spend as long as checking a real password takes."""
     global _dummy
     if _dummy is None:
         _dummy = hash_password(secrets.token_hex(8))
     verify_password(password, _dummy)
 
 
-# ------------------------------------------------------------------ accounts
-
 def sign_up(db: DbSession, email: str, apd_id: str, password: str,
             pending: bool = True) -> User:
-    """Create an account - waiting for an admin to approve it, by default.
-
-    The email rule proves only that someone can TYPE an Appedology address,
-    not that it is theirs: nothing is mailed to it. So a new account cannot
-    sign in until an admin has looked at it and approved it. `pending=False`
-    is for accounts an admin creates themselves (see app/manage.py).
-    """
+    """Create an account - waiting, by default, for two things."""
     email = clean_email(email)
     apd_id = clean_apd(apd_id)
     check_password(password)
@@ -212,8 +154,9 @@ def sign_up(db: DbSession, email: str, apd_id: str, password: str,
         raise AuthError(f"{apd_id} is already registered to another account.")
 
     user = User(email=email, apd_id=apd_id, password_hash=hash_password(password),
-                password_changed_at=_now(), pending=pending,
-                is_active=not pending, role="viewer")
+                password_changed_at=utcnow(), pending=pending,
+                is_active=not pending, role="viewer",
+                email_verified_at=None if pending else utcnow())
     db.add(user)
     db.flush()
     return user
@@ -222,28 +165,15 @@ def sign_up(db: DbSession, email: str, apd_id: str, password: str,
 def sign_in(db: DbSession, email: str, password: str, *,
             ip: str | None = None, user_agent: str | None = None
             ) -> tuple[User, str]:
-    """Returns the user and a session token, or raises LoginRefused.
-
-    One message for a wrong email and a wrong password alike. Saying which was
-    wrong tells someone who is guessing which addresses have accounts. Only
-    once the password is RIGHT does it say anything specific about the account
-    - pending, disabled - since by then the person has proved who they are.
-
-    The caller must commit even when this raises: the count of wrong passwords
-    and the lock are changes that have to stick.
-    """
+    """Returns the user and a session token, or raises LoginRefused."""
     lookup = (email or "").strip().lower()
     user = db.execute(select(User).where(User.email == lookup)).scalar_one_or_none()
-    now = _now()
+    now = utcnow()
 
     if user is None:
-        _burn_time(password or "")
+        burn_time(password or "")
         raise LoginRefused(WRONG, email=lookup, reason="no_account")
 
-    # The lock is on this account FROM THIS ADDRESS (see LOCK). The counting
-    # is the rate limiter's, in transactions of its own - so each of these
-    # calls comes BEFORE this session writes anything: SQLite allows one
-    # writer, and a second connection would wait on the first for ever.
     lock = _lock_key(user, ip)
     wait = ratelimit.blocked(lock, LOCK)
     if wait:
@@ -257,8 +187,6 @@ def sign_in(db: DbSession, email: str, password: str, *,
     if not verify_password(password or "", user.password_hash):
         ratelimit.hit(lock, LOCK)
         if ratelimit.blocked(lock, LOCK):
-            # For the Users screen, which shows the account as locked and
-            # offers Unlock. It no longer decides anything here.
             user.locked_until = now + dt.timedelta(minutes=LOCK_MINUTES)
             db.flush()
             raise LoginRefused(
@@ -267,17 +195,23 @@ def sign_in(db: DbSession, email: str, password: str, *,
                 locked_now=True)
         raise LoginRefused(WRONG, email=lookup, user=user)
 
+    if user.pending and not user.email_verified_at:
+        raise LoginRefused(f"Confirm your email address first: open the link "
+                           f"we sent to {user.email}.",
+                           email=lookup, user=user, reason="unverified")
     if user.pending:
         raise LoginRefused("Your account is waiting for an admin to approve it.",
                            email=lookup, user=user, reason="pending")
     if not user.is_active:
         raise LoginRefused("This account has been disabled.",
                            email=lookup, user=user, reason="disabled")
+    if temporary_expired(user, now):
+        raise LoginRefused("This temporary password has expired. Ask an admin "
+                           "to reset your password again.",
+                           email=lookup, user=user, reason="temporary_expired")
 
     ratelimit.clear(lock)       # the right password: this address starts afresh
     user.last_login_at = now
-    # An older, weaker hash is replaced the next time its owner signs in -
-    # the only moment the password itself is in hand.
     if needs_rehash(user.password_hash):
         user.password_hash = hash_password(password)
     return user, start_session(db, user, ip=ip, user_agent=user_agent)
@@ -291,34 +225,37 @@ def update_profile(db: DbSession, user: User, display_name: str | None) -> User:
 
 def change_password(db: DbSession, user: User, current: str, new: str,
                     keep_session: int | None = None) -> int:
-    """Change your own password. Returns how many other sessions were ended.
-
-    Every OTHER session is signed out: if the reason for changing it is that
-    someone else knew it, their session must not outlive the old password.
-    """
+    """Change your own password."""
     if not verify_password(current or "", user.password_hash):
         raise WrongPassword("Your current password is not right.")
     check_password(new)
     if new == current:
         raise AuthError("Choose a password different from the current one.")
     user.password_hash = hash_password(new)
-    user.password_changed_at = _now()
+    user.password_changed_at = utcnow()
     user.must_change_password = False
     db.flush()
     return revoke_sessions(db, user.id, keep=keep_session)
 
 
-# ------------------------------------------------------------------ sessions
+def temporary_expired(user: User, now: dt.datetime | None = None) -> bool:
+    """A temporary password more than TEMPORARY_TTL old."""
+    return bool(user.must_change_password and user.password_changed_at
+                and user.password_changed_at + TEMPORARY_TTL < (now or utcnow()))
+
+
+UNUSABLE = "!reset"
+
 
 def digest(token: str) -> str:
-    """What is stored for a token. See Session in models.py."""
+    """What is stored for a token."""
     return hashlib.sha256(token.encode()).hexdigest()
 
 
 def start_session(db: DbSession, user: User, *, ip: str | None = None,
                   user_agent: str | None = None) -> str:
     token = secrets.token_urlsafe(32)
-    now = _now()
+    now = utcnow()
     db.add(Session(token=digest(token), user_id=user.id, ip=ip,
                    user_agent=(user_agent or "")[:400] or None,
                    created_at=now, last_seen_at=now,
@@ -333,7 +270,7 @@ def session_for_token(db: DbSession, token: str | None) -> Session | None:
         return None
     row = db.execute(select(Session).where(Session.token == digest(token))
                      ).scalar_one_or_none()
-    if row is None or row.revoked or row.expires_at < _now():
+    if row is None or row.revoked or row.expires_at < utcnow():
         return None
     user = row.user
     if user is None or not user.is_active or user.pending:
@@ -344,7 +281,7 @@ def session_for_token(db: DbSession, token: str | None) -> Session | None:
 def touch(db: DbSession, row: Session, ip: str | None) -> None:
     """Note that the session is still in use - now and then, not every time -
     and give it another hour, up to SESSION_MAX from when it was opened."""
-    now = _now()
+    now = utcnow()
     if row.last_seen_at is None or now - row.last_seen_at > SEEN_EVERY:
         row.last_seen_at = now
         row.expires_at = min(now + SESSION_IDLE, row.created_at + SESSION_MAX)
@@ -354,7 +291,7 @@ def touch(db: DbSession, row: Session, ip: str | None) -> None:
 
 
 def sign_out(db: DbSession, token: str | None) -> User | None:
-    """End the session this token opens. Returns whose it was."""
+    """End the session this token opens."""
     if not token:
         return None
     row = db.execute(select(Session).where(Session.token == digest(token))
@@ -370,12 +307,12 @@ def active_sessions(db: DbSession, user_id: int) -> list[Session]:
     return list(db.execute(
         select(Session).where(Session.user_id == user_id,
                               Session.revoked.is_(False),
-                              Session.expires_at > _now())
+                              Session.expires_at > utcnow())
         .order_by(Session.last_seen_at.desc(), Session.id.desc())).scalars())
 
 
 def revoke_sessions(db: DbSession, user_id: int, keep: int | None = None) -> int:
-    """End every live session of one account, except `keep`. Returns how many."""
+    """End every live session of one account, except `keep`."""
     n = 0
     for row in active_sessions(db, user_id):
         if row.id != keep:
@@ -386,7 +323,7 @@ def revoke_sessions(db: DbSession, user_id: int, keep: int | None = None) -> int
 
 
 def revoke_session(db: DbSession, user_id: int, session_id: int) -> bool:
-    """End one of your OWN sessions. Someone else's id is treated as missing."""
+    """End one of your own sessions."""
     row = db.get(Session, session_id)
     if row is None or row.user_id != user_id or row.revoked:
         return False
@@ -396,10 +333,8 @@ def revoke_session(db: DbSession, user_id: int, session_id: int) -> bool:
 
 
 def purge_expired_sessions(db: DbSession, older_than_days: int = 30) -> int:
-    """Delete sessions long past use. The activity log keeps the sign-ins and
-    sign-outs themselves; these rows are only the keys, and dead keys are
-    clutter."""
-    cutoff = _now() - dt.timedelta(days=older_than_days)
+    """Delete sessions long past use."""
+    cutoff = utcnow() - dt.timedelta(days=older_than_days)
     rows = db.execute(select(Session).where(Session.expires_at < cutoff)).scalars().all()
     for row in rows:
         db.delete(row)
@@ -408,14 +343,7 @@ def purge_expired_sessions(db: DbSession, older_than_days: int = 30) -> int:
 
 
 def retire_unhashed_sessions(db: DbSession) -> int:
-    """Close sessions made before tokens were stored hashed.
-
-    Their `token` column holds the raw token, which no longer matches anything
-    presented to the API, so they can never be used - but they still counted
-    as live and showed up as "Unknown device" on the profile screen. They are
-    the only sessions without a last-seen time, since every session started
-    since has one from the moment it opens.
-    """
+    """Close sessions made before tokens were stored hashed."""
     rows = db.execute(select(Session).where(Session.last_seen_at.is_(None),
                                             Session.revoked.is_(False))).scalars().all()
     for row in rows:
@@ -431,8 +359,6 @@ def session_dict(row: Session, current_id: int | None = None) -> dict:
             "current": row.id == current_id}
 
 
-# ------------------------------------------------------------------ admin
-
 class AdminError(AuthError):
     """An admin action refused because of what it would do."""
 
@@ -441,20 +367,8 @@ class Forbidden(AdminError):
     """An admin action this admin is not allowed to take."""
 
 
-# Who may manage whom. Three rules, and every account action below follows
-# them:
-#
-#   * a viewer is managed by any admin
-#   * an admin is managed only by a system admin
-#   * a system admin is managed by nobody else - not even another system admin
-#
-# and nobody manages their own account from the Users screen (a slip of the
-# mouse must not end your own access) - except that a system admin may delete
-# their own account, as long as another system admin remains. Since nobody
-# can touch a system admin but themselves, and the last one cannot leave,
-# there is always one.
-
 def manages(actor: User, target: User) -> bool:
+    """Every action: role, access, approval, deletion and the emergency ones."""
     if actor.id == target.id or target.is_system_admin:
         return False
     if target.role == "admin":
@@ -462,10 +376,30 @@ def manages(actor: User, target: User) -> bool:
     return actor.is_admin
 
 
-def _other_system_admins(db: DbSession, user: User) -> int:
-    return len(db.execute(select(User.id).where(
+def intervenes(actor: User, target: User) -> bool:
+    """The emergency actions only: disable, enable, unlock, reset, sign out."""
+    if manages(actor, target):
+        return True
+    return (actor.id != target.id and actor.is_system_admin
+            and target.is_system_admin)
+
+
+def _other_system_admins(db: DbSession, user: User, lock: bool = False) -> int:
+    """Active system admins other than `user`."""
+    stmt = select(User.id).where(
         User.role == "system_admin", User.is_active.is_(True),
-        User.pending.is_(False), User.id != user.id)).all())
+        User.pending.is_(False), User.id != user.id)
+    if lock:
+        stmt = stmt.with_for_update()
+    return len(db.execute(stmt).all())
+
+
+def keep_a_system_admin(db: DbSession, target: User, doing: str) -> None:
+    """Refuse to leave no active system admin."""
+    if (target.is_system_admin and target.is_active and not target.pending
+            and _other_system_admins(db, target, lock=True) == 0):
+        raise Forbidden(f"{target.email} is the only active system admin. "
+                        f"Make someone else a system admin before {doing}.")
 
 
 def can_delete(db: DbSession, actor: User, target: User) -> bool:
@@ -478,16 +412,17 @@ def permissions(db: DbSession, actor: User, target: User) -> dict:
     """What `actor` may do to `target` - sent with each row of the Users
     screen, so it offers exactly the buttons the server will accept."""
     m = manages(actor, target)
-    locked = bool(target.locked_until and target.locked_until > _now())
+    i = intervenes(actor, target)
+    locked = bool(target.locked_until and target.locked_until > utcnow())
     return {
-        "approve": m and target.pending,
+        "approve": m and target.pending and bool(target.email_verified_at),
         "access": m and target.role == "viewer",
         "roles": list(ROLES) if m and actor.is_system_admin else [],
-        "disable": m and target.is_active and not target.pending,
-        "enable": m and not target.is_active and not target.pending,
-        "unlock": m and locked,
-        "reset_password": m and not target.pending,
-        "sign_out": m and not target.pending,
+        "disable": i and target.is_active and not target.pending,
+        "enable": i and not target.is_active and not target.pending,
+        "unlock": i and locked,
+        "reset_password": i and not target.pending,
+        "sign_out": i and not target.pending,
         "delete": can_delete(db, actor, target),
     }
 
@@ -502,10 +437,20 @@ def _manage(actor: User, target: User) -> None:
         raise Forbidden("You cannot change your own account here. Use your "
                         "profile, or ask another admin.")
     if target.is_system_admin:
-        raise Forbidden("A system admin's account can only be changed by "
-                        "that person.")
+        raise Forbidden("Another system admin can disable, reset or sign out "
+                        "a system admin, but not change their role or remove "
+                        "them.")
     _require(manages(actor, target),
              "Only a system admin can change an admin's account.")
+
+
+def _intervene(actor: User, target: User) -> None:
+    """For the emergency actions - see `intervenes`."""
+    if target.is_system_admin and actor.id != target.id:
+        _require(actor.is_system_admin,
+                 "Only another system admin can change a system admin's account.")
+        return
+    _manage(actor, target)
 
 
 def clean_reports(keys) -> str:
@@ -522,6 +467,8 @@ def set_role(db: DbSession, actor: User, target: User, role: str) -> User:
         raise AdminError(f"Unknown role {role!r}.")
     _manage(actor, target)
     _require(actor.is_system_admin, "Only a system admin can change roles.")
+    if role != "system_admin":
+        keep_a_system_admin(db, target, "changing their role")
     target.role = role
     db.flush()
     return target
@@ -541,6 +488,9 @@ def approve(db: DbSession, actor: User, target: User, reports=None) -> User:
     _manage(actor, target)
     if not target.pending:
         raise AdminError(f"{target.email} is not waiting for approval.")
+    if not target.email_verified_at:
+        raise AdminError(f"{target.email} has not confirmed their email address "
+                         f"yet, so it is not known to be theirs.")
     target.pending = False
     target.is_active = True
     if reports is not None:
@@ -550,10 +500,10 @@ def approve(db: DbSession, actor: User, target: User, reports=None) -> User:
 
 
 def set_active(db: DbSession, actor: User, target: User, active: bool) -> User:
-    """Disable or re-enable. Disabling ends every session at once - a disabled
-    account that stays signed in for two more weeks is not disabled."""
-    _manage(actor, target)
+    """Disable or re-enable."""
+    _intervene(actor, target)
     if not active:
+        keep_a_system_admin(db, target, "disabling them")
         revoke_sessions(db, target.id)
     target.is_active = active
     target.pending = False
@@ -563,57 +513,50 @@ def set_active(db: DbSession, actor: User, target: User, active: bool) -> User:
 
 def unlock(db: DbSession, actor: User, target: User) -> User:
     """Lift the account's locks, from every address they were set for."""
-    _manage(actor, target)
+    _intervene(actor, target)
     ratelimit.clear_prefix(f"lock:{target.id}:")    # before this session writes
     target.locked_until = None
     db.flush()
     return target
 
 
-def reset_password(db: DbSession, target: User, actor: User | None = None) -> str:
-    """Give the account a temporary password, returned once and never stored.
-
-    There is no email server to send a reset link through, so an admin hands
-    this over in person or on Teams. It works for exactly one thing: the next
-    sign-in asks for a new password before anything else. Every session is
-    ended, and the lock is lifted - the usual reason for a reset is someone
-    who locked themselves out.
-
-    `actor` is None only from the server's command line (app/manage.py), which
-    is how a locked-out system admin gets back in.
-    """
-    if actor is not None:
-        _manage(actor, target)
+def force_reset(db: DbSession, actor: User, target: User) -> None:
+    """Admin's emergency reset: kill the password, end every session, email the
+    owner."""
+    _intervene(actor, target)
     ratelimit.clear_prefix(f"lock:{target.id}:")    # before this session writes
-    temporary = secrets.token_urlsafe(9)          # 12 characters
-    target.password_hash = hash_password(temporary)
-    target.password_changed_at = _now()
-    target.must_change_password = True
+    target.password_hash = UNUSABLE
+    target.password_changed_at = utcnow()
+    target.must_change_password = False
     target.locked_until = None
+    for row in db.execute(select(OneTimeCode).where(
+            OneTimeCode.user_id == target.id, OneTimeCode.used_at.is_(None))).scalars():
+        row.used_at = utcnow()
     db.flush()
     revoke_sessions(db, target.id)
-    return temporary
+    m = emails.forced_reset(target.email, settings.public_url)
+    mail.send_later(target.email, m.subject, m.text, m.html)
 
 
 def sign_out_everywhere(db: DbSession, actor: User, target: User) -> int:
-    _manage(actor, target)
+    _intervene(actor, target)
     return revoke_sessions(db, target.id)
 
 
 def delete_user(db: DbSession, actor: User, target: User) -> dict:
-    """Remove an account for good. What it did stays in the activity log,
-    which holds the email as it was and does not depend on this row."""
+    """Remove an account for good."""
     if actor.id == target.id:
         _require(actor.is_system_admin,
                  "Ask an admin to remove your account.")
-        _require(_other_system_admins(db, actor) > 0,
+        _require(_other_system_admins(db, actor, lock=True) > 0,
                  "You are the only system admin. Make someone else a system "
                  "admin before removing your own account.")
     else:
         _manage(actor, target)
     gone = {"email": target.email, "role": target.role}
-    for row in db.execute(select(Session).where(Session.user_id == target.id)).scalars():
-        db.delete(row)
+    for model in (Session, OneTimeCode):
+        for row in db.execute(select(model).where(model.user_id == target.id)).scalars():
+            db.delete(row)
     db.flush()
     db.delete(target)
     db.flush()
@@ -628,6 +571,7 @@ def as_dict(user: User) -> dict:
             "reports": user.reports,
             "status": user.status,
             "must_change_password": bool(user.must_change_password),
+            "email_verified": bool(user.email_verified_at),
             "created_at": user.created_at, "last_login_at": user.last_login_at,
             "password_changed_at": user.password_changed_at,
             "locked_until": user.locked_until}

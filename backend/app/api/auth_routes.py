@@ -1,14 +1,4 @@
-"""Sign up, sign in, sign out - and your own profile.
-
-The /api/auth routes are open: they are how someone gets a token in the first
-place. The /api/me routes need a session but NOT a password of your own, since
-changing a temporary password is done from there.
-
-Every outcome is written to the activity log, failures above all. What
-succeeded is logged in the same transaction as the change itself. A failed
-sign-in is recorded AFTER its database session has committed, so the count of
-wrong passwords sticks even though the request ends in an error.
-"""
+"""Sign-up, sign-in, one-time codes and your own profile."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -16,16 +6,13 @@ from pydantic import BaseModel, Field
 
 from ..db.models import User
 from ..db.session import session
-from ..service import audit, auth, ratelimit
+from ..service import audit, auth, codes, ratelimit
 from .deps import (_token, clear_session_cookie, set_session_cookie, signed_in)
 
 router = APIRouter(prefix="/api/auth")
 me_router = APIRouter(prefix="/api/me")
 
 
-# Bounded before anything reads them. The email of a failed sign-in is stored
-# in the activity log as typed; longer than its column, MySQL refuses the row
-# and the failure goes unrecorded. The rest keep a request body a request body.
 Email = Field(max_length=320)
 Password = Field(max_length=256)
 
@@ -38,6 +25,20 @@ class SignUp(BaseModel):
 
 class SignIn(BaseModel):
     email: str = Email
+    password: str = Password
+
+
+class CodeEntry(BaseModel):
+    email: str = Email
+    code: str = Field(max_length=20)
+
+
+class Forgot(BaseModel):
+    email: str = Email
+
+
+class NewPassword(BaseModel):
+    ticket: str = Field(max_length=100)
     password: str = Password
 
 
@@ -72,29 +73,127 @@ def rules() -> dict:
 
 @router.post("/signup")
 def signup(body: SignUp, request: Request) -> dict:
-    """Create an account. It waits for an admin before it can sign in, so no
-    token comes back - see auth.sign_up for why."""
+    """Create an account and mail the 6-digit code that confirms the address."""
     ip = audit.client_of(request)[0] or "?"
     _too_many(f"signup:{ip}", ratelimit.SIGNUPS, "new accounts from this address")
     ratelimit.hit(f"signup:{ip}", ratelimit.SIGNUPS)
     with session() as s:
         try:
             user = auth.sign_up(s, body.email, body.apd_id, body.password)
-            out = {"pending": True, "user": auth.as_dict(user),
-                   "message": "Account created. An admin has to approve it "
-                              "before you can sign in."}
         except auth.AuthError as e:
             raise HTTPException(400, str(e))
+        codes.send_verification(s, user, first=True)
+        out = {"pending": True, "email": user.email, "user": auth.as_dict(user),
+               "minutes": codes.ttl_minutes(codes.CODE_TTL),
+               "message": f"We have emailed a 6-digit code to {user.email}. "
+                          f"Enter it to confirm the address is yours."}
         audit.record("auth.signup", db=s, request=request, user=user,
                      detail={"apd_id": user.apd_id})
     return out
 
 
+def _wrong_code(request: Request, action: str, email: str) -> HTTPException:
+    """Count a wrong code against the address it came from, and log it."""
+    ip = audit.client_of(request)[0] or "?"
+    ratelimit.hit(f"code:{ip}", ratelimit.CODE_FAILURES)
+    audit.record(action, request=request, email=email.strip().lower(),
+                 outcome="failure", detail={"reason": "wrong_code"})
+    return HTTPException(400, codes.WRONG_CODE)
+
+
+def _guard_codes(request: Request) -> None:
+    ip = audit.client_of(request)[0] or "?"
+    _too_many(f"code:{ip}", ratelimit.CODE_FAILURES, "wrong codes from this address")
+
+
+def _guard_requests(request: Request, what: str) -> None:
+    ip = audit.client_of(request)[0] or "?"
+    _too_many(f"codereq:{ip}", ratelimit.CODE_REQUESTS, what)
+    ratelimit.hit(f"codereq:{ip}", ratelimit.CODE_REQUESTS)
+
+
+@router.post("/verify-email")
+def verify_email(body: CodeEntry, request: Request) -> dict:
+    """Confirm a new account's email with the code mailed to it."""
+    _guard_codes(request)
+    wrong = False
+    with session() as s:
+        try:
+            user = codes.verify_email(s, body.email, body.code)
+        except codes.WrongCode:
+            wrong = True                # let the session commit the count
+        else:
+            audit.record("auth.email_verify", db=s, request=request, user=user)
+    if wrong:
+        raise _wrong_code(request, "auth.email_verify", body.email)
+    return {"ok": True,
+            "message": "Email confirmed. An admin will now approve your "
+                       "account; you can sign in once they have."}
+
+
+@router.post("/verify-email/resend")
+def resend_verification(body: SignIn, request: Request) -> dict:
+    """Mail the confirmation code again."""
+    _guard_requests(request, "requests from this address")
+    with session() as s:
+        try:
+            user = codes.resend_verification(s, body.email, body.password)
+        except codes.TooSoon as e:
+            raise HTTPException(429, str(e), headers={"Retry-After": str(e.seconds)})
+        if user is not None:
+            audit.record("auth.verify_resend", db=s, request=request, user=user)
+    return {"ok": True,
+            "message": "If that account is waiting for its email to be "
+                       "confirmed, a new code is on its way."}
+
+
+@router.post("/password/forgot")
+def forgot_password(body: Forgot, request: Request) -> dict:
+    """"Forgot password?" - mail a reset code."""
+    _guard_requests(request, "password reset requests from this address")
+    with session() as s:
+        user = codes.request_reset(s, body.email)
+        if user is not None:
+            audit.record("auth.password_forgot", db=s, request=request, user=user)
+    return {"ok": True, "minutes": codes.ttl_minutes(codes.CODE_TTL),
+            "message": "If an account uses that email, we have sent it a "
+                       "6-digit code."}
+
+
+@router.post("/password/verify-code")
+def check_reset_code(body: CodeEntry, request: Request) -> dict:
+    """A right reset code, exchanged for the ticket the next screen uses to set
+    the password - see codes.check_reset_code."""
+    _guard_codes(request)
+    wrong = False
+    with session() as s:
+        try:
+            user, ticket = codes.check_reset_code(s, body.email, body.code)
+        except codes.WrongCode:
+            wrong = True                # let the session commit the count
+        else:
+            audit.record("auth.reset_code", db=s, request=request, user=user)
+    if wrong:
+        raise _wrong_code(request, "auth.reset_code", body.email)
+    return {"ok": True, "ticket": ticket,
+            "minutes": codes.ttl_minutes(codes.TICKET_TTL)}
+
+
+@router.post("/password/reset")
+def reset_password(body: NewPassword, request: Request) -> dict:
+    """Set the new password."""
+    with session() as s:
+        try:
+            user = codes.complete_reset(s, body.ticket, body.password)
+        except auth.AuthError as e:
+            raise HTTPException(400, str(e))
+        audit.record("auth.password_reset", db=s, request=request, user=user)
+    return {"ok": True, "message": "Password changed. Sign in with it now."}
+
+
 @router.post("/login")
 def login(body: SignIn, request: Request, response: Response) -> dict:
-    """Sign in. The session travels in a cookie the page's scripts cannot
-    read (see deps.py); the token in the answer is for scripts and tests,
-    and the app itself does not keep it."""
+    """Sign in."""
     ip, ua = audit.client_of(request)
     _too_many(f"login:{ip}", ratelimit.LOGIN_FAILURES,
               "failed sign-ins from this address")
@@ -103,11 +202,10 @@ def login(body: SignIn, request: Request, response: Response) -> dict:
         try:
             user, token = auth.sign_in(s, body.email, body.password,
                                        ip=ip, user_agent=ua)
-            out = {"token": token, "user": auth.as_dict(user)}
+            out = {"user": auth.as_dict(user)}
         except auth.LoginRefused as e:
             refused = e                 # let the session commit the counters
         else:
-            # With the session it opens: nobody is signed in unrecorded.
             audit.record("auth.login", db=s, request=request, user=user)
 
     if refused is not None:
@@ -118,6 +216,9 @@ def login(body: SignIn, request: Request, response: Response) -> dict:
         if refused.locked_now:
             audit.record("auth.locked", request=request, user=refused.user,
                          detail={"minutes": auth.LOCK_MINUTES})
+        if refused.reason == "unverified":
+            raise HTTPException(401, {"code": "email_unverified",
+                                      "message": str(refused)})
         raise HTTPException(401, str(refused))
     set_session_cookie(request, response, token)
     return out
@@ -137,8 +238,6 @@ def logout(request: Request, response: Response) -> dict:
 def me(user: User = Depends(signed_in)) -> dict:
     return auth.as_dict(user)
 
-
-# ------------------------------------------------------------------ profile
 
 @me_router.get("")
 def my_profile(user: User = Depends(signed_in)) -> dict:
@@ -165,11 +264,7 @@ def update_profile(body: Profile, request: Request,
 @me_router.post("/password")
 def change_password(body: PasswordChange, request: Request,
                     user: User = Depends(signed_in)) -> dict:
-    """Change your own password. Your other sessions are signed out; this one
-    stays, so changing it does not throw you back to the sign-in page.
-
-    Wrong current passwords are limited per account: a session left open on
-    someone else's screen must not be a way to guess the password itself."""
+    """Change your own password."""
     key = f"password:{user.id}"
     _too_many(key, ratelimit.PASSWORD_FAILURES, "wrong passwords")
     failed: str | None = None
@@ -182,9 +277,6 @@ def change_password(body: PasswordChange, request: Request,
             out = {"ok": True, "other_sessions_ended": ended,
                    "user": auth.as_dict(row)}
         except auth.AuthError as e:
-            # Only a wrong CURRENT password is a guess. A new one that is too
-            # short, or the same as the old, used to be counted too - and ten
-            # of those shut the form with "too many wrong passwords".
             failed, guess = str(e), isinstance(e, auth.WrongPassword)
         else:
             audit.record("auth.password_change", db=s, request=request, user=user,
@@ -201,7 +293,7 @@ def change_password(body: PasswordChange, request: Request,
 
 @me_router.get("/sessions")
 def my_sessions(request: Request, user: User = Depends(signed_in)) -> list[dict]:
-    """Where you are signed in. The one you are using is marked."""
+    """Where you are signed in."""
     with session() as s:
         return [auth.session_dict(r, request.state.session_id)
                 for r in auth.active_sessions(s, user.id)]
@@ -231,7 +323,6 @@ def end_other_sessions(request: Request,
 
 @me_router.get("/activity")
 def my_activity(user: User = Depends(signed_in)) -> list[dict]:
-    """Your own recent activity. Seeing a sign-in you did not make is how most
-    people find out their password is known to someone else."""
+    """Your own recent activity."""
     with session() as s:
         return audit.for_user(s, user.id, limit=25)

@@ -1,27 +1,9 @@
+// The Settlement High-Level tab.
 import { useMemo } from "react";
 import { bucketLabel, money } from "./api";
 import { TOTAL, amountPctPair, assemble, col } from "./columns";
 import { Stat, Stats, TableCard } from "./ui";
 import { monthToDate, paceTotals, pivot, pivotPace, sortBlocks } from "./settlement-model";
-
-/* The Settlement High-Level sheet, as the workbook prints it.
-
-   The workbook's shape is not decoration - it is the reading order the people
-   who use this have in front of them every Tuesday:
-
-     * one column PAIR per month, Settlement Amount beside Settlement %,
-     * the CURRENT month opened out into its weeks rather than summed, because
-       the month is still running and the weeks are the news,
-     * then two totals: this month, and the year.
-
-   The Pace block under each table answers the other question the sheet is read
-   for - "if the rest of the month goes like the part we have seen, where does
-   it land" - and only ever concerns the current month, because there is
-   nothing to project about a month that has closed.
-
-   Every column here comes from the shared builders in columns.js, so a dollar
-   figure on this screen is drawn exactly like a dollar figure anywhere else in
-   the app, and a change to how money reads is one edit rather than five. */
 
 const GROUP = col.label("group", "Group", { width: 186, className: "sticky" });
 
@@ -34,9 +16,6 @@ function Block({ title, sub, rows, totals, block, monthLabel, pace }) {
       ...p.months.map((m) => amountPctPair(m, bucketLabel(m))),
       ...p.weeks.map((w) => amountPctPair(w, bucketLabel(w), { current: true })),
     ];
-    /* The two totals. Amounts only - the workbook gives neither one a per
-       cent, because a per cent across a span of weeks is not the sum of
-       theirs. */
     if (p.weeks.length) {
       parts.push({
         spanLabel: monthLabel ?? "This month", spanClass: "current",
@@ -110,12 +89,7 @@ export default function Settlement({ settlement, totals, pace, cp, monthLabel })
   );
 }
 
-/* The tiles: this month, because that is the month being reported on. A
-   year-to-date headline answers a question nobody is asking on the Tuesday the
-   scorecard goes out.
-
-   None of them names a tone - Stats walks the palette so no two tiles in a row
-   share one, which hand-picking kept getting wrong. */
+// The tiles: this month, because that is the month being reported on.
 export function SettlementTiles({ settlement, pace, cp, monthLabel, currentMonth }) {
   const thisMonth = useMemo(() => monthToDate(settlement), [settlement]);
   const paceTo = useMemo(() => paceTotals(pace), [pace]);

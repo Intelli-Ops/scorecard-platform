@@ -1,13 +1,4 @@
-"""What the code review asked for: that nothing here depends on luck.
-
-Each test is one way the app used to be able to end up inconsistent - a file
-gone but its row still there, a build that read files nobody asked it to, an
-action with no record of who took it, a rule that only held while there was
-exactly one server process - and checks that it no longer can.
-
-No real spreadsheets: the calculation is replaced by a stand-in, because
-these are about what happens AROUND a build.
-"""
+"""Tests for data integrity: transactions, files, queue and sessions."""
 from __future__ import annotations
 import datetime as dt
 import time
@@ -20,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.db import session as db_session
-from tests.accounts import PASSWORD, account, make_account
+from tests.accounts import PASSWORD, account, make_account, token_of
 
 WEEK = "2026-W38"
 
@@ -47,8 +38,7 @@ def upload(client, name, body=b"stand-in", for_report=None, week=WEEK):
 
 
 def upload_everything(client, report="gfs", week=WEEK) -> dict[str, str]:
-    """Every file `report` needs, each with bytes of its own. Returns the
-    hash stored for each source."""
+    """Every file `report` needs, each with bytes of its own."""
     from app.reports import CASE_AR_KEYS, REPORTS
     return {spec.key: upload(client, " ".join(spec.fragments) + spec.exts[0],
                              body=f"first {spec.key}".encode(), week=week,
@@ -71,8 +61,8 @@ class _Result:
 
 @pytest.fixture
 def stand_in_pipeline(monkeypatch):
-    """A build that calculates nothing, and remembers which files it was
-    handed - {source_key: the stored file's name, which is its hash}."""
+    """A build that calculates nothing, and remembers which files it was handed
+    - {source_key: the stored file's name, which is its hash}."""
     from app.service import runner
     seen: dict[str, str] = {}
 
@@ -126,8 +116,6 @@ def log(action=None):
         return s.execute(stmt).scalars().all()
 
 
-# ------------------------------------------------- a build reads what it was promised
-
 def test_a_build_runs_from_the_queue_and_records_what_it_read(client, stand_in_pipeline):
     hashes = upload_everything(client)
     r = client.post(f"/api/runs?report=gfs&week={WEEK}")
@@ -163,7 +151,6 @@ def test_a_queued_build_reads_the_files_it_was_queued_with(client, stand_in_pipe
     assert _status(run_id) == "review"
     assert stand_in_pipeline["supporting"] == hashes["supporting"]
 
-    # ...and the next build, queued after the correction, reads the new one.
     with session() as s:
         again = runner.queue(s, "gfs", WEEK)
         s.flush()
@@ -182,11 +169,9 @@ def test_files_a_queued_build_will_read_cannot_be_deleted_under_it(client):
     assert len(list(settings.object_dir.rglob("*.xlsx"))) == 7
 
 
-# ------------------------------------------------- the queue is the database
-
 def test_a_waiting_build_survives_a_restart(client, stand_in_pipeline):
-    """The queue was a list in the server's memory; start-up used to mark
-    every waiting build failed, because it had nothing left to run them from."""
+    """The queue was a list in the server's memory; start-up used to mark every
+    waiting build failed, because it had nothing left to run them from."""
     from app.jobs import worker
     worker.stop()
     upload_everything(client)
@@ -197,8 +182,8 @@ def test_a_waiting_build_survives_a_restart(client, stand_in_pipeline):
 
 
 def test_only_a_build_whose_process_died_is_closed_off(client):
-    """Start-up failed every unfinished build - including, with a second
-    server process, the one the other process was in the middle of."""
+    """Start-up failed every unfinished build - including, with a second server
+    process, the one the other process was in the middle of."""
     from app.jobs import worker
     worker.stop()
     now = dt.datetime.now(dt.timezone.utc)
@@ -222,8 +207,7 @@ def test_a_build_is_taken_by_exactly_one_worker(client):
 
 
 def test_the_database_itself_refuses_a_second_build_of_a_week(client):
-    """A lock in one process stopped two presses in that process. This holds
-    in any process, because it is the database saying no."""
+    """A lock in one process stopped two presses in that process."""
     from app.db.models import Run
     from app.db.session import session
     _run("pending")
@@ -256,7 +240,7 @@ def test_two_presses_at_once_get_one_build_and_one_refusal(client, monkeypatch):
 
 def test_a_clash_that_is_not_a_second_build_does_not_say_it_is(client, monkeypatch):
     """A file replaced in the moment Build was pressed is refused by the
-    database too. It used to be reported as "already being built"."""
+    database too."""
     from app.jobs import worker
     from app.service import runner
     worker.stop()
@@ -272,11 +256,8 @@ def test_a_clash_that_is_not_a_second_build_does_not_say_it_is(client, monkeypat
     assert log("run.start") == []
 
 
-# ------------------------------------------------- files and rows stay in step
-
 def test_a_delete_that_does_not_commit_removes_no_file(client):
-    """The files went first, inside the transaction. When the commit then
-    failed the rows came back - pointing at files that were gone."""
+    """The files went first, inside the transaction."""
     from app.db.models import Run, RunInput, RunTable, Upload
     from app.db.session import session
     from app.service import runner
@@ -325,8 +306,7 @@ def test_an_upload_that_is_not_saved_leaves_no_file_behind(client):
 
 
 def test_a_failed_save_does_not_take_a_file_another_row_names(client):
-    """Identical bytes are stored once. Rolling back the second upload of
-    them must not remove the file the first upload's row points at."""
+    """Identical bytes are stored once."""
     from app.db.session import session
     from app.service.ingest import ingest
     from app.storage.files import FileStore
@@ -360,8 +340,7 @@ def test_a_build_that_cannot_be_recorded_leaves_no_result_behind(client, stand_i
 
 
 def test_files_nothing_names_can_be_found_and_removed(client, capsys):
-    """What a killed process can still leave: a file written, its row never
-    saved. Nothing in the database knows to look for it."""
+    """What a killed process can still leave: a file written, its row never saved."""
     import os
     from app import manage
     from app.storage.files import FileStore
@@ -384,8 +363,6 @@ def test_files_nothing_names_can_be_found_and_removed(client, capsys):
     assert new.exists()              # too recent to be sure of
 
 
-# ------------------------------------------------- no record, no action
-
 @pytest.fixture
 def broken_log(client):
     """The activity log refuses every new row, as a full disk or a lost
@@ -397,8 +374,8 @@ def broken_log(client):
 
 
 def test_an_action_that_cannot_be_logged_does_not_happen(client, broken_log):
-    """The log used to fail open: the approval went through and the missing
-    row was only mentioned in the server's own output."""
+    """The log used to fail open: the approval went through and the missing row
+    was only mentioned in the server's own output."""
     run_id = _run("review")
     r = client.post(f"/api/runs/{run_id}/approve")
     assert r.status_code == 503 and "activity log" in r.json()["detail"]
@@ -437,8 +414,7 @@ def test_an_export_that_cannot_be_logged_hands_over_nothing(client, broken_log, 
 
 
 def test_the_change_and_its_log_row_are_saved_together(client, monkeypatch):
-    """They were two commits: the change, then the row. Here the change fails
-    AFTER the row was written, and the row goes with it."""
+    """They were two commits: the change, then the row."""
     import app.api.run_routes as routes
     run_id = _run("review")
 
@@ -453,8 +429,6 @@ def test_the_change_and_its_log_row_are_saved_together(client, monkeypatch):
         client.post(f"/api/runs/{run_id}/approve")
     assert _status(run_id) == "review" and log("run.approve") == []
 
-
-# ------------------------------------------------- limits that survive a restart
 
 def test_the_sign_in_limit_is_not_reset_by_a_restart(client, monkeypatch):
     """The counts were a dict in the server's memory, so a restart - or a
@@ -491,8 +465,6 @@ def test_old_attempts_stop_counting(client):
     with session() as s:        # and the spent ones were cleared on the way
         assert len(s.execute(select(RateHit)).scalars().all()) == limit
 
-
-# ------------------------------------------------- a health check that checks
 
 @pytest.fixture
 def on_the_server(client, monkeypatch):
@@ -535,7 +507,7 @@ def test_health_fails_on_a_database_this_code_has_not_migrated(on_the_server):
 
 def test_health_tells_a_stranger_only_whether_it_is_healthy(client, on_the_server,
                                                           monkeypatch):
-    """Anyone can ask. Only someone on the server is told WHAT is wrong."""
+    """Anyone can ask."""
     import app.main as main
     assert client.get("/api/health").json() == {"ok": True}
     monkeypatch.setattr(main, "MIN_FREE_MB", 10 ** 12)
@@ -554,14 +526,11 @@ def test_health_is_not_worked_out_afresh_for_every_caller(client, monkeypatch):
     assert len(calls) <= 1
 
 
-# ------------------------------------------------- the second audit
-
 def test_a_crash_inside_the_calculation_does_not_kill_the_worker(client,
                                                                 stand_in_pipeline,
                                                                 monkeypatch):
-    """A damaged spreadsheet can make the reader PANIC, which is not an
-    ordinary error. It went past the worker's `except`, ended its thread, and
-    left the run `running` and every later build waiting for ever."""
+    """A damaged spreadsheet can make the reader panic, which is not an
+    ordinary error."""
     import polars.exceptions
     from app.jobs import worker
     from app.service import runner
@@ -601,7 +570,7 @@ def _run_with_table(rows: int, tmp_path) -> int:
 def test_a_table_is_exported_in_pieces_and_arrives_whole(client, tmp_path,
                                                         monkeypatch):
     """The whole table, and then the whole CSV, used to sit in the server's
-    memory for every export. Now only a piece at a time does."""
+    memory for every export."""
     from app.service import runner
     monkeypatch.setattr(runner, "TABLE_CHUNK", 100)
     run_id = _run_with_table(250, tmp_path)
@@ -620,8 +589,7 @@ def test_a_table_is_exported_in_pieces_and_arrives_whole(client, tmp_path,
 
 
 def test_only_so_many_case_ar_pivots_run_at_once(client, tmp_path, monkeypatch):
-    """Each one holds all of Raw Data in memory. Past the limit a request
-    waits its turn, and is told to try again rather than joining the pile."""
+    """Each one holds all of Raw Data in memory."""
     import app.api.run_routes as routes
     run_id = _run_with_table(10, tmp_path)
     monkeypatch.setattr(routes, "HEAVY_WAIT", 0.05)
@@ -633,8 +601,6 @@ def test_only_so_many_case_ar_pivots_run_at_once(client, tmp_path, monkeypatch):
     finally:
         for _ in range(2):
             routes._heavy.release()
-    # ...and a turn taken is always handed back, even by a request that fails
-    # (this stand-in table has none of the columns a real pivot needs).
     try:
         client.get(f"/api/runs/{run_id}/case-ar", params={"group": "A"})
     except Exception:
@@ -660,9 +626,8 @@ def test_a_build_is_dated_where_the_business_is(monkeypatch):
 
 
 def test_a_wrong_file_can_be_taken_back(client):
-    """Before this, a file uploaded by mistake stayed until the whole week
-    was deleted. Nothing comes back in its place: the copy it replaced went
-    when it was replaced."""
+    """Before this, a file uploaded by mistake stayed until the whole week was
+    deleted."""
     earlier = upload(client, "Supporting File.xlsx", body=b"the first copy")
     wrong = upload(client, "Supporting File.xlsx", body=b"sent by mistake")
     assert not list(settings.object_dir.rglob(f"{earlier}*"))   # replaced, gone
@@ -722,7 +687,6 @@ def test_the_session_is_a_cookie_the_page_cannot_read(client):
     assert "httponly" in cookie and "samesite=strict" in cookie
     assert "path=/api" in cookie and "secure" not in cookie      # plain http here
 
-    # No header, no stored token: the cookie alone is the sign-in.
     assert browser.get("/api/auth/me").json()["email"] == "someone@appedology.com"
     assert browser.post("/api/auth/logout").status_code == 200
     assert browser.get("/api/auth/me").status_code == 401
@@ -735,8 +699,7 @@ def test_the_session_is_a_cookie_the_page_cannot_read(client):
 
 
 def test_wrong_passwords_lock_out_the_guesser_not_the_owner(client):
-    """The lock was on the account: anyone who knew a colleague's email could
-    keep them out all day with five wrong passwords every fifteen minutes."""
+    """Wrong passwords lock out the address they came from, not the account."""
     uid = make_account("someone@appedology.com", "APD-0002")
     guesser = TestClient(client.app, client=("203.0.113.9", 50000))
     owner = TestClient(client.app, client=("198.51.100.7", 50000))
@@ -747,14 +710,11 @@ def test_wrong_passwords_lock_out_the_guesser_not_the_owner(client):
     for _ in range(4):
         assert "do not match" in sign_in(guesser, "a wrong guess").json()["detail"]
     assert "locked" in sign_in(guesser, "a wrong guess").json()["detail"]
-    # Even the right password is refused from the address that was guessing...
     r = sign_in(guesser, PASSWORD)
     assert r.status_code == 401 and "locked" in r.json()["detail"]
-    # ...while the owner, from their own, signs in as if nothing had happened.
     assert sign_in(owner, PASSWORD).status_code == 200
     assert len(log("auth.locked")) == 1
 
-    # The Users screen still shows it and an admin can still lift it.
     users = {u["id"]: u for u in client.get("/api/admin/users").json()}
     assert users[uid]["status"] == "locked" and users[uid]["can"]["unlock"]
     client.post(f"/api/admin/users/{uid}/unlock")
@@ -776,15 +736,15 @@ def test_the_right_password_clears_the_count_for_that_address(client):
 
 
 def test_a_session_ends_after_an_hour_of_nothing(client):
-    """Two weeks, however long it sat unused, is a long time for a browser
-    left open on someone else's desk."""
+    """Two weeks, however long it sat unused, is a long time for a browser left
+    open on someone else's desk."""
     from app.db.models import Session
     from app.db.session import session
     from app.service import auth
     make_account("someone@appedology.com", "APD-0002")
     r = client.post("/api/auth/login", json={"email": "someone@appedology.com",
                                              "password": PASSWORD})
-    me = {"Authorization": f"Bearer {r.json()['token']}"}
+    me = {"Authorization": f"Bearer {token_of(r)}"}
     now = dt.datetime.now(dt.timezone.utc)
 
     def row(s):
@@ -811,8 +771,7 @@ def test_a_session_ends_after_an_hour_of_nothing(client):
 
 
 def test_a_server_that_requires_https_refuses_plain_http(client, monkeypatch):
-    """HTTPS was a step in the instructions. Skipped, the server still took
-    passwords - over the network, unencrypted."""
+    """HTTPS was a step in the instructions."""
     monkeypatch.setattr(settings, "require_https", True)
     r = client.post("/api/auth/login", json={"email": "tester@appedology.com",
                                              "password": PASSWORD})
@@ -822,12 +781,9 @@ def test_a_server_that_requires_https_refuses_plain_http(client, monkeypatch):
     over_https = TestClient(client.app, base_url="https://testserver")
     assert over_https.post("/api/auth/login", json={
         "email": "tester@appedology.com", "password": PASSWORD}).status_code == 200
-    # The installer and a monitor, asking from the server itself, still can.
     local = TestClient(client.app, client=("127.0.0.1", 50000))
     assert local.get("/api/health").status_code == 200
 
-
-# ------------------------------------------------- versioned migrations
 
 def _engine(path):
     from sqlalchemy import create_engine
@@ -880,6 +836,5 @@ def test_a_database_from_before_migrations_is_brought_into_them(tmp_path):
     with e.connect() as c:
         assert c.execute(text("SELECT role, report_access FROM user_account")
                          ).one() == ("viewer", "gfs,all_providers")
-        # Queued by the old code, with nothing recorded to build it from.
         assert dict(c.execute(text("SELECT id, status FROM run")).all()) == {
             1: "failed", 2: "approved"}

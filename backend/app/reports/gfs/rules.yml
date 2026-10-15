@@ -1,18 +1,8 @@
 # Business rules for the GFS Weekly Scorecard.
-#
-# These live here, not in code, so a rule change (new owner, new closing order,
-# a provider going inactive) is a one-line edit rather than a code change.
-#
-# Every rule below was verified against week 2026-W35 real data:
-#   filter -> 414,413 (Supporting 'GFS Cases')
-#   join   -> 301,447 (GFS Formate sheet)
-#   pivot  -> 278,930 (Raw Data)  and all 54 Case AR cells matched to the cent.
 
 case_ar:
 
   # PHASE 1 - which rows of Combined Owner Case AR are in scope.
-  # Confirmed by the user's Excel formula: INDEX(data,,6)=OWNER NAME, INDEX(data,,9)=CASETYPE.
-  # NOTE: the steps doc calls OWNER NAME the "Provider" column. It is not the PROVIDER column.
   owner_names:
     - GFS
     - GFS-SPV
@@ -26,35 +16,27 @@ case_ar:
   # PHASE 1 - columns pasted into Supporting File 'GFS Cases'
   gfs_cases_columns: [CASEID, PATIENTNAME, MRN, BUSINESSREGID, PROVIDER]
 
-  # PHASE 2 - rows whose BUSINESSREGID is not in the Provider List get dropped
-  # ("In Group column, filter out all the NA values delete all data")
+  # PHASE 2 - rows whose BUSINESSREGID is not in the Provider List get dropped ("In Group column, filter out all the NA values delete all data")
   drop_rows_without_group: true
 
-  # PHASE 2 - rows with no match in Custom Case AR get dropped
-  # ("In status columns if any NA value is coming we delete whole row data for it")
-  # Implemented as an inner join on CASEID.
+  # PHASE 2 - rows with no match in Custom Case AR get dropped ("In status columns if any NA value is coming we delete whole row data for it") Implemented as an inner join on CASEID.
   drop_rows_without_status: true
 
   # PHASE 2 - Case_Validity cleanup.
-  # "Valid-Stay" and blank (Excel shows a VLOOKUP blank as 0) both become "Valid".
   validity_map:
     Valid-Stay: Valid
   validity_blank_becomes: Valid
 
   # PHASE 2 - Closing Order.
-  # Source values carry a "CLOSING ORDER: " prefix which is stripped
-  # ("Find and replace ClosingOrder in Closing_Order column").
   closing_order_strip_prefix: 'CLOSING ORDER:'
-  # Only these three survive; EXACT match. Everything else -> CIC Pending.
-  # This matters: "FINDING & AWARD" and "ORDER OF DISMISSAL OF CASE" contain the words
-  # AWARD / DISMISSAL but are NOT kept. Verified - a "contains" rule would be wrong.
+  # Only these three survive; exact match.
   closing_order_keep:
     - C & R (GRANTED)
     - AWARD ON STIPULATED FINDS AND AWARD (GRANTED)
     - DISMISSAL OF CLAIM
   closing_order_default: CIC Pending
 
-  # PHASE 3 - FileStatus2. Verified: 165,300 Closed + 113,630 Open = 278,930.
+  # PHASE 3 - FileStatus2.
   file_status_closed_value: Closed
   file_status_open_value: Open
 
@@ -72,14 +54,11 @@ case_ar:
     - AWARD ON STIPULATED FINDS AND AWARD (GRANTED)
     - DISMISSAL OF CLAIM
 
-# ---------------------------------------------------------------------------
+# -
 delta:   # Phases 4 and 6 -> the Delta Comparison sheet
-  # Verified against week 2026-W35: 666 rows, and every value matches except
-  # 11 rows of "FINDING & AWARD" that the manual W35 file left uncollapsed
-  # (week 34 collapsed them correctly, as does the Case AR path).
+  # Verified against week 2026-W35.
 
-  # PHASE 4 - the 15 combine columns. Source names differ per sheet, and the
-  # positions in the steps doc (wcColsNums etc) are now stale, so map BY NAME.
+  # PHASE 4 - the 15 combine columns.
   sources:
     - sheet: WC Delta
       workbook: wc               # Master Settlement & Collection Delta WC
@@ -139,17 +118,7 @@ delta:   # Phases 4 and 6 -> the Delta Comparison sheet
         File_Status: New File Status
         Settlement_Type: Settlement Type
 
-  # TUESDAY - the "- comments" copies of the two Delta workbooks carry the litigation
-  # team's Ongoing DOR Status and Ongoing DOR Details in their last two columns. They
-  # are looked up onto the Delta Comparison rows BY CASE ID, each sheet only from its
-  # own sheet of the comments copy: WC Delta rows from the WC workbook's WC Delta,
-  # Med-Legal rows from the MLCR workbook's Med-Legal Delta. IMR IS NOT LOOKED UP -
-  # the comments copy's IMR Delta sheet does not carry the two columns. A case id
-  # listed twice takes its first row, as the VLOOKUP did.
-  #
-  # Uploaded as "Delta WC ... - comments" and "Delta MLCR ... - comments" (see
-  # COMMENT_SOURCES in reports/__init__.py). Without them the two columns are left
-  # BLANK and the review says so; they are never carried over from last week.
+  # tuesday - the "- comments" copies of the two Delta workbooks carry the litigation team's Ongoing DOR Status and Ongoing DOR Details in their last two columns.
   comments:
     key: Case Id
     columns: [Ongoing DOR Status, Ongoing DOR Details]
@@ -157,15 +126,7 @@ delta:   # Phases 4 and 6 -> the Delta Comparison sheet
       WC Delta:        [wc, WC Delta]
       Med-Legal Delta: [mlcr, Med-Legal Delta]
 
-  # PHASE 4 - which Settlement Type values count, per source sheet. A sheet not listed
-  # counts every type. Applied right after the three sheets are combined, so it holds
-  # for EVERYTHING built from the Delta data: the Delta Comparison sheet and the
-  # Settlement High-Level 2026 grids.
-  #   MED-LEGAL: ONLY "F&F" (FNF) SETTLEMENTS COUNT. Its "Payments" and "Check" rows are
-  #   left out - the manual process keeps F&F only wherever the Delta data goes
-  #   (confirmed by the user). Verified on the Settlement grids against the week-37
-  #   manual file (380/380 cells). WC and IMR count every type - applying the same
-  #   filter to them breaks Artheon, Medvantage and POS.
+  # PHASE 4 - which Settlement Type values count, per source sheet.
   keep_settlement_types:
     Med-Legal Delta: [F&F]
 
@@ -174,10 +135,9 @@ delta:   # Phases 4 and 6 -> the Delta Comparison sheet
   other_type_value: Other
   drop_na_group: true                 # "inactive" == Group lookup returns NA
   drop_non_gfs_type: true
-  # Values are inconsistent across sheets: Closed / CLOSED / Closed After Payment /
-  # Closed WO Payment / Closed after payment. Match on the keyword, case-insensitive.
+  # Values are inconsistent across sheets.
   closed_keyword: closed
-  # Partial Paid rows: Settlement Amount is REPLACED by Remaining Payment (not added to).
+  # Partial Paid rows: Settlement Amount is replaced by Remaining Payment (not added to).
   partial_paid_keyword: partial
   partial_paid_uses: Remaining_Payment
 
@@ -191,18 +151,7 @@ delta:   # Phases 4 and 6 -> the Delta Comparison sheet
   # Same cleanup as the Case AR path - see case_ar section for why exact match matters
   reuse_case_ar_closing_order_rules: true
 
-# ---------------------------------------------------------------------------
-# Weeks, months and pacing
-#
-# A Mon-Fri week belongs to the month that holds most of its weekdays - the month its
-# Wednesday falls in. So Mon 31 Aug - Fri 4 Sep is September's week 1 (1-4 Sep; 31 Aug
-# is counted in August's month total), and Mon 28 Sep - Fri 2 Oct is September's week 5
-# (28-30 Sep; 1-2 Oct are added to October's week 1, which then runs 1-9 Oct).
-#
-# Pacing = month-to-date / working days elapsed * working days in the month, where a
-# working day is a weekday that is not listed below. Source: Holidays.png (night shift).
-# 4 Jul 2026 is a Saturday, so its observed Friday, 3 Jul, is the day off.
-# Add each new year's dates here.
+# Weeks, months and pacing a mon-fri week belongs to the month that holds most of its weekdays - the month its wednesday falls in. so mon 31 aug - fri 4 sep is september's week 1 (1-4 sep; 31 aug is counted in august's month total), and mon 28 sep - fri 2 oct is september's week 5 (28-30 sep; 1-2 oct are added to october's week 1, which then runs 1-9 oct). pacing = month-to-date / working days elapsed * working days in the month, where a working day is a weekday that is not listed below. source: holidays.png (night shift). 4 jul 2026 is a saturday, so its observed friday, 3 jul, is the day off. add each new year's dates here.
 holidays:
   - 2026-01-01   # New Year
   - 2026-02-16   # Presidents' Day (U.S.)
@@ -214,21 +163,17 @@ holidays:
   - 2026-11-26   # Thanksgiving Day (U.S.)
   - 2026-12-25   # Christmas Day
 
-# ---------------------------------------------------------------------------
+# -
 collections:   # Phase 7 -> the Collection High-Level 2026 sheet
-  # Verified against week 2026-W35: 196/196 grid cells, 45/45 pace cells,
-  # 4/4 footer totals - all matching the delivered workbook to the cent.
+  # Verified against week 2026-W35.
   sheet: "  Detail Payment Report"     # note the two leading spaces
   drop_case_types: [PI]
   gfs_type_value: gfs
   other_type_value: other client
-  # "make board reps & in house rep, settlement" = fold them INTO settlement
+  # "make board reps & in house rep, settlement" = fold them into settlement
   fold_into_settlement: [BOARD REPS, IN HOUSE REPS, SETTLEMENT]
   payment_type_order: [BILLING, REBILLING, APPEAL, SETTLEMENT]
-  # Sheet layout: 9 group rows, then a Total row; each week is 4 payment-type
-  # columns plus a week-total column. The week columns are NOT listed here: they move
-  # one column right every month (a month-total column is added in front of them), so
-  # they are found each run from the BILLING headings on `header_row`.
+  # Sheet layout: 9 group rows, then a Total row.
   header_row: 9
   group_rows:
     Med-Legal: 10
@@ -237,7 +182,7 @@ collections:   # Phase 7 -> the Collection High-Level 2026 sheet
     MH Express: 13
     POS: 14
     United: 15
-    BayCo: 16                 # note: spelled BayCo here, Bayco on the Settlement sheet
+    BayCo: 16
     A Miles: 17
     Southern California: 18
   group_aliases:
@@ -257,19 +202,12 @@ collections:   # Phase 7 -> the Collection High-Level 2026 sheet
   footer_rows: {BILLING: 36, REBILLING: 37, APPEAL: 38, SETTLEMENT: 39}
   footer_col: 4                            # column D
 
-# ---------------------------------------------------------------------------
-# KPI High-Level - steps doc Phase 8 (SQL-Doc) and Phase 9 (scorecard numbers).
-#
-# The sheet is a stack of small blocks, each one a list of provider-group rows and
-# usually a Total row. Only ONE column is written each week: the one whose 'Period
-# Start' date (row 2) falls in the month being reported. Everything else is history
-# and is left exactly as the template had it.
-# ---------------------------------------------------------------------------
+# Kpi high-level - steps doc phase 8 (sql-doc) and phase 9 (scorecard numbers). the sheet is a stack of small blocks, each one a list of provider-group rows and usually a total row. only one column is written each week: the one whose 'period start' date (row 2) falls in the month being reported. everything else is history and is left exactly as the template had it. ---------------------------------------------------------------------------
 kpi:
   sheet: "KPI High-Level"
   period_row: 2               # 'Period Start'; Excel serial dates
   first_col: 3                # C
-  last_col: 40                # scan this far right; 'Grand Total' text is skipped
+  last_col: 40
 
   gfs_type_value: GFS         # SQL-Doc 'Type' filter
   provider_id_column: BUSINESSREGID     # in the Supporting File 'Provider List'
@@ -284,15 +222,6 @@ kpi:
     cases: "#ofcases"
 
   # Phase 9 - the KPI-numbers table pasted from email.
-  #
-  # The sheet holds three stacked blocks - GFS, Russman, Others - each with its own
-  # header row and its own Total. Only the GFS block belongs on this report, so the
-  # rows between `block_start` and `block_end` are the only ones read.
-  #
-  # Its first column names a provider, not a group, and matches the Supporting File's
-  # PROVIDER ID column. The group comes from there, which is what folds Andrew Miles +
-  # Inland Empire Healthcare into A Miles, MHE Pharmacy + MHE Assets into MH Express,
-  # and Eagle Eye + Novatech + Progressive Orthopedic into POS.
   scorecard:
     file_match: [kpi, number]
     sheet: Sheet1
@@ -305,16 +234,13 @@ kpi:
       NTP Filing: NTP
       EOA Filing: Enforcement Of Agreement
       Medical Index: Medical Index
-    totals:                         # source column -> [block, single row] (not by group)
+    totals:
       NOI TO CP:       [Med Legal, NOI (COST)]
       NOI for Payment: [Med Legal, NOI For Payment]
       CP:              [Med Legal, Cost Petition]
       CP DOR:          [Med Legal, Cost Petition (DOR)]
 
-  # Row numbers below are a FALLBACK. Each run reads the real rows from column B of the
-  # template (sync_kpi_rows), because a provider row added one week moves everything
-  # under it in the next week's template. A provider with a figure and no row gets a
-  # new row, named as the KPI-numbers file (or the Supporting File group) names it.
+  # Row numbers below are a fallback.
   blocks:
     SBR:
       source: sql_doc

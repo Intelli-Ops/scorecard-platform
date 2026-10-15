@@ -1,7 +1,4 @@
-/* Small line icons for buttons, drawn on one 14px grid with one stroke, so a
-   row of them reads as a set. Drawn rather than typed: crisp at any zoom, and
-   no font has to have the character. */
-
+// Small line icons.
 const S = { fill: "none", stroke: "currentColor", strokeWidth: 1.5,
             strokeLinecap: "round", strokeLinejoin: "round" };
 
@@ -19,7 +16,7 @@ export const CrossIcon = () => (
   <Icon><path d="M4 4l6 6M10 4l-6 6" {...S} /></Icon>
 );
 
-/* A key - a new password. */
+// A key - a new password.
 export const KeyIcon = () => (
   <Icon>
     <circle cx="4.8" cy="9.2" r="2.4" {...S} />
@@ -27,7 +24,7 @@ export const KeyIcon = () => (
   </Icon>
 );
 
-/* An arrow leaving a door - signed out. */
+// An arrow leaving a door - signed out.
 export const LeaveIcon = () => (
   <Icon>
     <path d="M5.5 2.5H3.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h2" {...S} />
@@ -35,7 +32,7 @@ export const LeaveIcon = () => (
   </Icon>
 );
 
-/* A circle with a bar - switched off, not gone. */
+// A circle with a bar - switched off, not gone.
 export const PauseIcon = () => (
   <Icon>
     <circle cx="7" cy="7" r="4.7" {...S} />
@@ -43,7 +40,7 @@ export const PauseIcon = () => (
   </Icon>
 );
 
-/* A circle with a play mark - on again. */
+// A circle with a play mark - on again.
 export const PlayIcon = () => (
   <Icon>
     <circle cx="7" cy="7" r="4.7" {...S} />
@@ -57,7 +54,7 @@ export const TrashIcon = () => (
   </Icon>
 );
 
-/* An open padlock. */
+// An open padlock.
 export const UnlockIcon = () => (
   <Icon>
     <rect x="3" y="6.3" width="8" height="5.2" rx="1.2" {...S} />
@@ -65,7 +62,7 @@ export const UnlockIcon = () => (
   </Icon>
 );
 
-/* An open eye - show the password. */
+// An open eye - show the password.
 export const EyeIcon = () => (
   <Icon>
     <path d="M1.5 7S3.6 3 7 3s5.5 4 5.5 4-2.1 4-5.5 4S1.5 7 1.5 7Z" {...S} />
@@ -73,7 +70,7 @@ export const EyeIcon = () => (
   </Icon>
 );
 
-/* The eye struck through - hide it again. */
+// The eye struck through - hide it again.
 export const EyeOffIcon = () => (
   <Icon>
     <path d="M1.5 7S3.6 3 7 3s5.5 4 5.5 4-2.1 4-5.5 4S1.5 7 1.5 7Z" {...S} />
@@ -82,7 +79,7 @@ export const EyeOffIcon = () => (
   </Icon>
 );
 
-/* An arrow up over a bar - Caps Lock. */
+// An arrow up over a bar - Caps Lock.
 export const CapsIcon = () => (
   <Icon>
     <path d="M7 2.5 11 7H8.8v2.2H5.2V7H3Z" {...S} />
@@ -90,20 +87,13 @@ export const CapsIcon = () => (
   </Icon>
 );
 
-/* An arrow into a tray - saving a file. */
+// An arrow into a tray - saving a file.
 export const DownloadIcon = () => (
   <Icon>
     <path d="M7 2.5v6.2M4.6 6.5 7 8.9l2.4-2.4" {...S} />
     <path d="M2.8 9.8v1a.9.9 0 0 0 .9.9h6.6a.9.9 0 0 0 .9-.9v-1" {...S} />
   </Icon>
 );
-
-/* ------------------------------------------------------------ the menu
-
-   The sidebar's icons: a size larger than the button icons above, on a 16px
-   grid. The menu button is drawn differently from every menu ITEM, so it
-   cannot be mistaken for one the way two identical "three lines" glyphs
-   were. */
 
 const NAV = { fill: "none", stroke: "currentColor", strokeWidth: 1.6,
               strokeLinecap: "round", strokeLinejoin: "round" };
@@ -118,7 +108,7 @@ export function MenuIcon() {
   );
 }
 
-/* An arrow going up out of a tray - uploading. */
+// An arrow going up out of a tray - uploading.
 export const NavUploadIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
     <path d="M8 10.5V2.5M4.8 5.7 8 2.5l3.2 3.2" {...NAV} />
@@ -126,7 +116,7 @@ export const NavUploadIcon = () => (
   </svg>
 );
 
-/* Stacked rows with a clock hand - a list of past builds. */
+// Stacked rows with a clock hand - a list of past builds.
 export const NavHistoryIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
     <path d="M2.5 4h11M2.5 8h6M2.5 12h6" {...NAV} />
@@ -135,7 +125,7 @@ export const NavHistoryIcon = () => (
   </svg>
 );
 
-/* Two people - everyone's accounts. */
+// Two people - everyone's accounts.
 export const NavPeopleIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
     <circle cx="6" cy="5.8" r="2.4" {...NAV} />
@@ -144,7 +134,7 @@ export const NavPeopleIcon = () => (
   </svg>
 );
 
-/* A head and shoulders - your own account. */
+// A head and shoulders - your own account.
 export const NavPersonIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
     <circle cx="8" cy="5.5" r="2.8" {...NAV} />
@@ -152,7 +142,7 @@ export const NavPersonIcon = () => (
   </svg>
 );
 
-/* A shield with a pulse line - the security record. */
+// A shield with a pulse line - the security record.
 export const NavShieldIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
     <path d="M8 1.8 13.2 3.8v3.9c0 3.1-2.2 5.6-5.2 6.6-3-1-5.2-3.5-5.2-6.6V3.8Z" {...NAV} />
@@ -160,7 +150,7 @@ export const NavShieldIcon = () => (
   </svg>
 );
 
-/* Three bars on a baseline - the scorecard itself. */
+// Three bars on a baseline - the scorecard itself.
 export const NavChartIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
     <path d="M2.5 13.5h11" {...NAV} />
@@ -168,7 +158,7 @@ export const NavChartIcon = () => (
   </svg>
 );
 
-/* A door with an arrow leaving it - signing out. */
+// A door with an arrow leaving it - signing out.
 export const NavSignOutIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
     <path d="M6.5 2.5h-3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3" {...NAV} />

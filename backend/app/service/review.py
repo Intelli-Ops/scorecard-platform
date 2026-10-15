@@ -1,14 +1,4 @@
-"""What the review screen needs, assembled from what a run recorded.
-
-This is the STEP 4 look, turned from console output into something a person
-can actually work with. The .bat pipeline could tell you "112,960 AR rows
-dropped". It could not tell you that last week it was 112,900, because last
-week's message no longer existed anywhere.
-
-Everything here is derived from rows the run already wrote. Nothing is
-recalculated, so opening the review of a run from three months ago costs a
-couple of queries and does not need the source files to still exist.
-"""
+"""The review screen: a build's notes and tables compared with last week."""
 from __future__ import annotations
 
 from sqlalchemy import select
@@ -20,12 +10,7 @@ from ..reports.notes import ACTION, WARNING, INFO, SEVERITY_ORDER
 
 
 def previous_run(session: Session, run: Run) -> Run | None:
-    """The last run of the same report for an EARLIER week.
-
-    Week labels sort correctly as text (2026-W35 < 2026-W36 < 2027-W01), so
-    this is an ordering, not a date calculation. Failed runs are skipped -
-    comparing against a run that stopped half way would invent differences.
-    """
+    """The last run of the same report for an earlier week."""
     stmt = (select(Run)
             .where(Run.report_key == run.report_key,
                    Run.week < run.week,
@@ -35,14 +20,10 @@ def previous_run(session: Session, run: Run) -> Run | None:
     return session.execute(stmt).scalar_one_or_none()
 
 
-# Routine notes older runs stored. The filters that produce them run every
-# week and are doing their job; on the review they only buried the checks that
-# matter. Newer runs do not record them at all (see reports/review_notes.py).
 HIDDEN = {"ar_rows_dropped_no_group", "ar_rows_dropped_no_status",
           "case_validity_corrected", "delta_partial_paid_rewritten",
           "supporting_file_contents"}
 
-# Which part of the review a note belongs to.
 SECTIONS = {
     "kpi_new_provider": "providers", "kpi_group_not_in_layout": "providers",
     "new_group": "providers", "kpi_rows_dropped_unknown_provider": "providers",
@@ -72,11 +53,7 @@ def _note_rows(run: Run) -> list[dict]:
 
 
 def _compare_notes(run: Run, prev: Run | None) -> list[dict]:
-    """Which checks are new, which have gone, and which counts moved.
-
-    A check that appears every week is background. One that is NEW this week,
-    or whose count has jumped, is the thing worth a person's attention.
-    """
+    """Which checks are new, which have gone, and which counts moved."""
     if prev is None:
         return [dict(n, change="no previous run") for n in _note_rows(run)]
 
@@ -162,22 +139,13 @@ def review(session: Session, run: Run) -> dict:
 
 
 def history(session: Session, report_key: str, weeks: int = 12) -> list[dict]:
-    """Runs of one report for the last `weeks` weeks, newest first.
-
-    Bounded by WEEKS rather than by a row count. A row limit cuts in the wrong
-    place: rebuild Week 36 four times and a limit of 20 rows quietly drops
-    Week 32 off the screen even though the list still claims to be a history.
-    Twelve weeks is a quarter - far enough back to see a trend, short enough
-    that the page stays a page.
-    """
+    """Runs of one report for the last `weeks` weeks, newest first."""
     recent = [w for (w,) in session.execute(
         select(Run.week).where(Run.report_key == report_key)
         .distinct().order_by(Run.week.desc()).limit(weeks))]
     if not recent:
         return []
 
-    # Notes and tables in two more queries for all the runs, rather than two
-    # per run as each row's were first touched.
     stmt = (select(Run)
             .where(Run.report_key == report_key, Run.week.in_(recent))
             .order_by(Run.week.desc(), Run.id.desc())
@@ -189,8 +157,6 @@ def history(session: Session, report_key: str, weeks: int = 12) -> list[dict]:
         severities = [n.severity for n in _shown(r.notes)]
         out.append({
             "id": r.id, "week": r.week, "status": r.status,
-            # The history shows both reports together, so each row has to say
-            # which one it is. Without it a week is two rows that look identical.
             "report_key": r.report_key, "report": report.short,
             "report_full": report.label,
             "seconds": r.seconds, "started_at": r.started_at,
@@ -204,12 +170,7 @@ def history(session: Session, report_key: str, weeks: int = 12) -> list[dict]:
 
 def metric_over_time(session: Session, report_key: str, code: str,
                      field: str) -> list[dict]:
-    """One number from one warning, across every week that reported it.
-
-    The reason notes carry their numbers. "How many AR rows are we dropping
-    each week, and is it growing?" was unanswerable when the warning was a
-    printed sentence.
-    """
+    """One number from one warning, across every week that reported it."""
     stmt = (select(Run, RunNote)
             .join(RunNote, RunNote.run_id == Run.id)
             .where(Run.report_key == report_key, RunNote.code == code,

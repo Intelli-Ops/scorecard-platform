@@ -1,43 +1,19 @@
-"""Collections - steps doc Phase 7 (Payment Detailed Report).
-
-Same source and same shape as the GFS Collection High-Level sheet, with one rule
-removed: there is no "Type = GFS" filter. Every provider the Supporting File lists
-is reported, so the only rows that leave are payments against a provider the
-Provider List does not carry (and any case type listed in rules.yml
-`drop_case_types` - empty today: PI payments count on this report).
-
-Two things the steps doc leaves implicit, both confirmed against the delivered
-Week-34 workbook:
-
-  * "in payment type make 'board reps' & 'in house rep', 'settlement'" means BOARD
-    REPS and IN HOUSE REPS are folded INTO the SETTLEMENT bucket, not renamed
-    alongside it.
-  * The sheet's "Week 01..05" columns are Excel WEEKNUM buckets, not week-of-month.
-    For August 2026 that is weeks 32, 33, 34 - which is exactly the three week
-    blocks the Week-34 file carries, with period starts 3, 10 and 17 August.
-
-Verified: Artheon, Russman, Medvantage and Med-Legal reproduce to the cent for
-weeks 32 and 33 against the delivered workbook.
-"""
+"""All Providers: Collections (steps doc phase 7)."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 import datetime as dt
 
 import polars as pl
 
-from ...common import excel_weeknum, i64 as _i64
+from ...common import StageLog, excel_weeknum, i64 as _i64
 
 
 @dataclass
-class CollectionReport:
-    stages: list[tuple[str, int]] = field(default_factory=list)
+class CollectionReport(StageLog):
     weeks: list[int] = field(default_factory=list)
     dropped_no_group: int = 0
     unknown_regids: list[int] = field(default_factory=list)
     payment_types_seen: list[str] = field(default_factory=list)
-
-    def add(self, label: str, n: int) -> None:
-        self.stages.append((label, n))
 
 
 def build_collections(payments: pl.DataFrame,
@@ -47,11 +23,7 @@ def build_collections(payments: pl.DataFrame,
                       month: int | None = None,
                       week_expr: pl.Expr | None = None,
                       after: dt.date | None = None) -> tuple[pl.DataFrame, CollectionReport]:
-    """Payment Detailed Report -> Group x week x payment-type totals.
-
-    `month` keeps only that month's payments; `week_expr` numbers the weeks over the
-    `paid_on` column (the week of the month - see ap/period.py; Excel WEEKNUM when not
-    given); `after` keeps only payments dated later than that day."""
+    """Payment Detailed Report -> Group x week x payment-type totals."""
     r = rules["collections"]
     rep = CollectionReport()
 

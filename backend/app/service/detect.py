@@ -1,36 +1,11 @@
-"""Reading the activity log for things a person should look at.
-
-Each rule is a question a security reviewer would ask of the log, answered
-over a window of recent days. Alerts are worked out when asked for rather than
-stored: the log is the single record, and an alert is a way of reading it, so
-changing a threshold changes every alert at once, past ones included, and there
-is no second table to drift out of step with the first.
-
-The rules, and why each one:
-
-  password_guessing   many wrong passwords for one account - someone trying
-                      to get into it
-  spraying            one address failing against several accounts - someone
-                      working down a list
-  locked              an account was locked by the rule above, at the point it
-                      triggered
-  new_address         a successful sign-in from an address that account has
-                      not used before - a stolen password, or just a new
-                      laptop; worth a glance either way
-  out_of_hours        a successful sign-in outside working hours
-  bulk_export         many whole-table exports in a short time - data being
-                      copied out
-  denied              someone who is not an admin trying admin actions
-  deletions           runs, weeks or activity deleted - not wrong, but not
-                      undoable
-"""
+"""Security alerts worked out from the activity log."""
 from __future__ import annotations
 import datetime as dt
 from collections import defaultdict
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from ..config import settings
 from ..db.models import ActivityLog
@@ -63,6 +38,7 @@ def _alert(code, severity, title, text, rows, **extra) -> dict:
 
 def alerts(s: Session, since: dt.datetime) -> list[dict]:
     rows = s.execute(select(ActivityLog).where(ActivityLog.at >= since)
+                     .options(defer(ActivityLog.detail), defer(ActivityLog.user_agent))
                      .order_by(ActivityLog.id)).scalars().all()
     out: list[dict] = []
     out += _password_guessing(rows)
@@ -131,11 +107,7 @@ def _locked(rows) -> list[dict]:
 
 def _new_address(s: Session, rows) -> list[dict]:
     """A good sign-in from an address this account has not signed in from in
-    the last 90 days. An account's very first sign-in is not flagged - every
-    address is new to it.
-
-    The earlier sign-ins are read in one query for every account involved,
-    not one query per sign-in in the window."""
+    the last 90 days."""
     logins = [r for r in rows if r.action == "auth.login"
               and r.outcome == "success" and r.ip and r.user_id is not None]
     if not logins:

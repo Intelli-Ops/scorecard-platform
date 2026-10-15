@@ -1,49 +1,26 @@
-# Business rules for the ALL PROVIDERS Weekly Scorecard.
-#
-# This file belongs to the All Providers report ONLY. The GFS report has its own
-# copy under ..\config\rules.yml and the two must never be merged: they filter
-# different rows, they roll up to different sheets, and a change to one is almost
-# never a change to the other.
-#
-# The single biggest difference: the GFS report keeps only cases owned by
-# GFS / GFS-SPV / Med Legal and only "Type = GFS" settlements. This report keeps
-# EVERY provider that appears in the Supporting File's Provider List. There is no
-# owner filter and no Type filter anywhere below.
-#
-# Layout - which row a group sits on, which column a month sits in - is NOT in this
-# file. It is read from the template workbook every run (see ap/render/layout.py),
-# because the All Providers sheets grow a week column each week and re-typing that
-# here would rot within a month.
+# Business rules for the all providers Weekly Scorecard.
 
 case_ar:
 
   # PHASE 1 - which rows of Combined Owner Case AR are in scope.
-  # Steps doc: 'In "Case_Type" column only select Alternative/CopyRecord/WC/Workers
-  # Compensation'. Unlike GFS there is NO "OWNER NAME" filter - every owner counts.
   case_types:                # doc shorthand -> the real values in the file
     - Workers Compensation                      # "WC" / "Workers Compensation"
     - Copy Record (ML)                          # "CopyRecord"
     - Alternative Dispute Resolution (ADR)      # "Alternative"
     - WC MED-LEGAL                              # added Sep 2026 - All Providers only
 
-  # PHASE 2 - rows whose BUSINESSREGID is not in the Provider List get dropped
-  # ("In Group column, filter out all the NA values delete all data").
+  # PHASE 2 - rows whose BUSINESSREGID is not in the Provider List get dropped ("In Group column, filter out all the NA values delete all data").
   drop_rows_without_group: true
 
-  # PHASE 2 - rows with no match in Custom Case AR get dropped. Implemented as an
-  # inner join on CASEID.
+  # PHASE 2 - rows with no match in Custom Case AR get dropped.
   drop_rows_without_status: true
 
-  # PHASE 2 - Case_Validity cleanup. Verified: the delivered Week-34 workbook's
-  # pivot cache holds exactly two validity values, Valid and Invalid.
+  # PHASE 2 - Case_Validity cleanup.
   validity_map:
     Valid-Stay: Valid
   validity_blank_becomes: Valid
 
-  # PHASE 2 - Closing Order. Source values carry a "CLOSING ORDER: " prefix which is
-  # stripped, then only these three survive; everything else becomes CIC Pending.
-  # EXACT match matters: "FINDING & AWARD" and "ORDER OF DISMISSAL OF CASE" contain
-  # the words AWARD / DISMISSAL but must NOT be kept.
+  # PHASE 2 - Closing Order.
   closing_order_strip_prefix: 'CLOSING ORDER:'
   closing_order_keep:
     - C & R (GRANTED)
@@ -52,29 +29,17 @@ case_ar:
   closing_order_default: CIC Pending
 
   # PHASE 3 - the pivot that produces Raw Data.
-  # NOTE the column ORDER: the Case AR pivot addresses its fields by position
-  # (rowField 7 = File Status, dataFields 0, 8, 9, 10, 11, 12), so these thirteen
-  # columns must stay in this order or the pivot rebuilds against the wrong fields.
   raw_data_group_by: [CASEID, PROVIDER, BUSINESSREGID, Group, CASETYPE,
                       Closing Order, Case_Validity, FileStatus]
   raw_data_measures:  [BILLED, PAID, WRITEOFF, ADVANCE, OUTSTANDING]
-  # Header text written onto the Raw Data sheet, in the same order as the two lists
-  # above. The odd spacing is the template's own - " BILLED" really does carry a
-  # leading space - and Excel rebuilds the pivot cache field names from this row.
+  # Header text written onto the Raw Data sheet, in the same order as the two lists above.
   raw_data_headers: [CASEID, PROVIDER, BUSINESSREGID, Group, CASETYPE,
                      Closing Order, Validity, File Status,
                      " BILLED", " PAID", WRITEOFF, ADVANCE, OUTSTANDING]
 
-# ---------------------------------------------------------------------------
-delta:   # Phases 4, 5 and 6 -> Settlement grids + the Delta Comparison-2026 sheet
-  # PHASE 4 - the 15 combine columns. Source names differ per sheet and the column
-  # POSITIONS in the steps doc (wcColsNums / medColsNums / imrColsNums) are stale,
-  # so everything is matched BY NAME.
-  #
-  # Two traps, both confirmed in the data:
-  #   * the MLCR workbook also carries a "WC Delta" sheet and it is STALE - the WC
-  #     sheet must come from the WC workbook.
-  #   * the three sheets use different names for the same field (see below).
+# -
+delta:
+  # PHASE 4 - the 15 combine columns.
   sources:
     - sheet: WC Delta
       workbook: wc               # Master Settlement & Collection Delta WC
@@ -134,63 +99,33 @@ delta:   # Phases 4, 5 and 6 -> Settlement grids + the Delta Comparison-2026 she
         File_Status: New File Status
         Settlement_Type: Settlement Type
 
-  # PHASE 5/6 - the only filter is "delete all NA in Group", i.e. drop providers the
-  # Supporting File does not list. There is no Type filter and no "drop closed" here:
-  # the All Providers sheets report the whole year of settlements, not the live ones.
-  # Verified against the delivered Week-34 workbook: every January figure on both the
-  # Settlement grids and the Delta Comparison-2026 grid reproduces exactly.
+  # PHASE 5/6 - the only filter is "delete all NA in Group", i.e.
   drop_na_group: true
 
-  # Which Settlement Type values count, per source sheet - the same rule as the GFS
-  # report. A sheet not listed counts every type.
-  #   MED-LEGAL: ONLY "F&F" (FNF) SETTLEMENTS COUNT. Its "Payments" and "Check" rows are
-  #   left out. WC and IMR count every type. Applied once, before the Settlement grids
-  #   and the Delta Comparison grid are built, so the two sheets stay in step.
+  # Which Settlement Type values count, per source sheet - the same rule as the GFS report.
   keep_settlement_types:
     Med-Legal Delta: [F&F]
 
-  # PHASE 5 - Location splits the Settlement grids. Matched case-insensitively after
-  # trimming, because the data holds "In House", "In house" and "in House".
+  # PHASE 5 - Location splits the Settlement grids.
   locations:
     In House: in house
     Board: board
 
-  # PHASE 6 - Delta Comparison-2026: Group down the side, month across the top, each
-  # month split by "Settlement Payment Received". Values are Settlement Amount over
-  # ALL locations (In House + Board + NOI & CP), which is why a group's Delta figure
-  # equals its In House + Board + CP Settled figures added together.
+  # PHASE 6 - Delta Comparison-2026.
   payment_received_yes: SP - Y
   payment_received_no:  SP - N
 
-# ---------------------------------------------------------------------------
-collections:   # Phase 7 -> the Collections block of Collection High-Level-2026
+# -
+collections:
   sheet: "  Detail Payment Report"     # note the two leading spaces
-  # Case types left out of Collections. EMPTY on purpose: this report counts PI
-  # payments too - the manual file does (Week 37: Concierge and Mesa Care's PI
-  # settlements). The GFS report still drops PI. Example to drop again: [PI]
+  # Case types left out of Collections.
   drop_case_types: []
-  # "in payment type make 'board reps' & 'in house rep', 'settlement'" = fold them
-  # INTO settlement, not rename them alongside it.
+  # "in payment type make 'board reps' & 'in house rep', 'settlement'" = fold them into settlement, not rename them alongside it.
   fold_into_settlement: [BOARD REPS, IN HOUSE REPS, SETTLEMENT]
   payment_type_order: [BILLING, REBILLING, APPEAL, SETTLEMENT]
-  # The sheet's "Week 01..05" are the weeks of the month as defined under `holidays:`
-  # below (a week belongs to the month of its Wednesday), the same as the Settlement
-  # grids.
+  # The sheet's "Week 01..05" are the weeks of the month as defined under `holidays:` below (a week belongs to the month of its Wednesday), the same as the Settlement grids.
 
-# ---------------------------------------------------------------------------
-# Weeks, months and pacing - the same calendar as the GFS report.
-#
-# A Mon-Fri week belongs to the month that holds most of its weekdays - the month its
-# Wednesday falls in. So Mon 31 Aug - Fri 4 Sep is September's week 1 (1-4 Sep; 31 Aug
-# is counted in August's month total), and Mon 28 Sep - Fri 2 Oct is September's week 5
-# (28-30 Sep; 1-2 Oct are added to October's week 1, which then runs 1-9 Oct).
-# The month and week being reported come from the week folder's name.
-#
-# Pacing = month-to-date / working days elapsed * working days in the month, written
-# into the sheet as a formula (e.g. =SUM(J9,K9)/8*21). A working day is a weekday that
-# is not listed below. Source: Holidays.png (night shift) in the main project folder.
-# 4 Jul 2026 is a Saturday, so its observed Friday, 3 Jul, is the day off.
-# Add each new year's dates here.
+# Weeks, months and pacing - the same calendar as the gfs report. a mon-fri week belongs to the month that holds most of its weekdays - the month its wednesday falls in. so mon 31 aug - fri 4 sep is september's week 1 (1-4 sep; 31 aug is counted in august's month total), and mon 28 sep - fri 2 oct is september's week 5 (28-30 sep; 1-2 oct are added to october's week 1, which then runs 1-9 oct). the month and week being reported come from the week folder's name. pacing = month-to-date / working days elapsed * working days in the month, written into the sheet as a formula (e.g. =sum(j9,k9)/8*21). a working day is a weekday that is not listed below. source: holidays.png (night shift) in the main project folder. 4 jul 2026 is a saturday, so its observed friday, 3 jul, is the day off. add each new year's dates here.
 holidays:
   - 2026-01-01   # New Year
   - 2026-02-16   # Presidents' Day (U.S.)
@@ -202,8 +137,8 @@ holidays:
   - 2026-11-26   # Thanksgiving Day (U.S.)
   - 2026-12-25   # Christmas Day
 
-# ---------------------------------------------------------------------------
-kpi:   # Phase 8 (SQL-Doc) and Phase 9 (the litigation / scorecard numbers table)
+# -
+kpi:
   sheet: "KPI High-Level "          # NOTE the trailing space - it is in the template
   period_row: 2                     # 'Period Start'; Excel serial dates
   first_col: 3                      # C
@@ -220,11 +155,7 @@ kpi:   # Phase 8 (SQL-Doc) and Phase 9 (the litigation / scorecard numbers table
     document_type: DocumentType
     cases: "#ofcases"
 
-  # Unlike GFS this report does NOT filter SQL-Doc on Type - GFS and Other Client
-  # rows both belong here. The group still comes from the Supporting File, looked up
-  # on ProviderID = BUSINESSREGID, never from SQL-Doc's own Provider_GROUP column:
-  # the two disagree (SQL-Doc files Inland Empire Healthcare as its own group, the
-  # Supporting File folds it into A Miles).
+  # Unlike GFS this report does not filter SQL-Doc on Type.
   filter_type: null
 
   # Which SQL-Doc DocumentType feeds which block of the sheet.
@@ -233,8 +164,6 @@ kpi:   # Phase 8 (SQL-Doc) and Phase 9 (the litigation / scorecard numbers table
     DDE: BillingDocs
 
   # Phase 9 - the litigation / scorecard numbers table pasted from email.
-  # It stacks three blocks - GFS, Russman, Others - each with its own header row and
-  # its own Total. This report reads ALL THREE; the GFS report reads only the first.
   scorecard:
     file_match: [kpi, number]
     sheet: Sheet1
@@ -243,8 +172,7 @@ kpi:   # Phase 8 (SQL-Doc) and Phase 9 (the litigation / scorecard numbers table
       Russman Client: Russman Total
       Others Client: Others Total
     lookup_column: PROVIDER ID      # Supporting File column the provider name matches
-    # Names in the numbers file that do not spell the Provider List PROVIDER ID the
-    # same way. Left side = exactly as written in the numbers file.
+    # Names in the numbers file that do not spell the Provider List PROVIDER ID the same way.
     provider_aliases:
       Support Claim West: SUPPORT CLAIMS WEST
       BHIPM: Beverly Hills Institute for Pain Management
@@ -263,20 +191,15 @@ kpi:   # Phase 8 (SQL-Doc) and Phase 9 (the litigation / scorecard numbers table
       CP DOR:          [Med Legal, Cost Petition (DOR)]
 
   # Row labels on the KPI sheet that do not spell a Provider Group the same way.
-  # Left side = as the sheet has it, right side = the Provider Group it means.
-  # Anything not listed is matched on letters and digits alone, so "BayCo" already
-  # finds "Bayco" without an entry here.
   row_aliases:
     Support Claim West: SUPPORT CLAIMS WEST
 
-  # Blocks the sheet carries that no source feeds. Reported every run, never guessed.
+  # Blocks the sheet carries that no source feeds.
   unsourced_blocks: ["10635 (DDEL)"]
 
-# ---------------------------------------------------------------------------
+# -
 template:
-  # Sheet names in the delivered workbook. All Providers names them differently from
-  # GFS - the Settlement grids live ON the Collection sheet, and there is no separate
-  # "Settlement High-Level" sheet.
+  # Sheet names in the delivered workbook.
   grid_sheet:  "Collection High-Level-2026"
   delta_sheet: "Delta Comparison-2026"
   kpi_sheet:   "KPI High-Level "
@@ -291,18 +214,10 @@ template:
     - "KPI High-Level "
     - "Case AR"
     - "Raw Data"
-  # Add a row for any provider group that has figures this week and no row to put
-  # them on, immediately above that block's Total. The new row copies the one above
-  # it, so it arrives with the block's formatting and formulas, and every insertion
-  # is named in STEP 4.
-  #
-  # Without this, such a group is reported and then simply left out of the client's
-  # totals - which is how BHIP sat outside every figure on the report while having
-  # settlements, payments, appeals and billing documents. Set to false to go back to
-  # reporting them without changing the sheet.
+  # Add a row for any provider group that has figures this week and no row to put them on, immediately above that block's Total.
   add_missing_group_rows: true
 
-  # Block labels in column B of the grid sheet. Found by text, not by row number.
+  # Block labels in column B of the grid sheet.
   blocks:
     in_house:       "Settlements (In House)"
     in_house_pace:  "Settlements (In House - Pace)"

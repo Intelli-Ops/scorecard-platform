@@ -1,3 +1,4 @@
+// Build history.
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, when } from "../api";
@@ -8,18 +9,13 @@ import { Card, DataTable, ErrorBox, Loading, Segmented,
          Status } from "../components";
 import { Button, DeleteButton } from "../buttons";
 
-/* Run history - what dated folders on one laptop could never provide.
-   Every build of every report, who approved it, and what it warned about.
-
-   Twelve weeks, no more. A history that grows without limit stops being read;
-   a quarter is far enough back to see a trend and short enough to scan. */
+// Run history - what dated folders on one laptop could never provide.
 export default function Runs() {
   const { user } = useAuth();
   const [report, setReport] = useState("");
   const { data: runs, error, setError, reload } =
     useLoad(() => api.runs(report || undefined), [report]);
 
-  /* Do it, then show what the server now holds. */
   const act = (fn) => async (run) => {
     try { await fn(run.id); await reload(); } catch (e) { setError(e); }
   };
@@ -50,9 +46,6 @@ export default function Runs() {
       {!runs ? <Loading what="Loading runs" /> : (
         <Card flush>
           <DataTable
-            /* A week is normally two rows - GFS and All Providers - and more
-               when one is rebuilt. The gap between weeks is what stops a
-               week's pair reading as four unrelated builds. */
             groupBy={(r) => r.week}
             columns={[
               { key: "week", label: "Week", strong: true, nowrap: true,
@@ -76,9 +69,6 @@ export default function Runs() {
                       {r.approved_by.split("@")[0]}
                     </span>
                   : "-" },
-              /* The column that opens the scorecard now says so in its head.
-                 A blank header leaves the reader to work out from one row
-                 what a whole column is for. */
               { key: "open", label: "Open", width: 96,
                 render: (r) => (
                   ["review", "approved"].includes(r.status)

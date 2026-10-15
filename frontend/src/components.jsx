@@ -1,9 +1,8 @@
+// Shared components: password fields, cards, tiles, filters, tables and status labels.
 import { useLayoutEffect, useRef, useState } from "react";
 import { CapsIcon, EyeIcon, EyeOffIcon } from "./icons";
 
-/* Every password box in the app: an eye to show or hide what was typed, and
-   a note when Caps Lock is on - the two reasons a right password is refused.
-   Takes the same props as an <input>. */
+// Every password box in the app.
 export function PasswordInput({ onKeyDown, onKeyUp, onBlur, ...props }) {
   const [shown, setShown] = useState(false);
   const [caps, setCaps] = useState(false);
@@ -29,6 +28,26 @@ export function PasswordInput({ onKeyDown, onKeyUp, onBlur, ...props }) {
   );
 }
 
+// A new password, typed twice.
+export function NewPasswordFields({ value, onChange, again, onAgain }) {
+  return (
+    <>
+      <div className="field">
+        <label htmlFor="pw-new">New password</label>
+        <PasswordInput id="pw-new" required minLength={8}
+               autoComplete="new-password" value={value}
+               onChange={(e) => onChange(e.target.value)} />
+        <div className="hint">At least 8 characters</div>
+      </div>
+      <div className="field">
+        <label htmlFor="pw-again">New password again</label>
+        <PasswordInput id="pw-again" required autoComplete="new-password"
+               value={again} onChange={(e) => onAgain(e.target.value)} />
+      </div>
+    </>
+  );
+}
+
 export function Card({ title, sub, right, flush, children }) {
   if (!title && !right) return <section className="card">{children}</section>;
   return (
@@ -46,8 +65,7 @@ export function Card({ title, sub, right, flush, children }) {
   );
 }
 
-/* A headline figure. `tone` tints the accent bar; `onClick` makes the tile
-   a button, which is the only thing that should ever look pressable. */
+// A headline figure.
 export function Stat({ label, value, foot, tone, onClick, active, title }) {
   const cls = ["tile", tone ? `tone-${tone}` : "", onClick ? "clickable" : "",
                active ? "active" : ""].filter(Boolean).join(" ");
@@ -62,18 +80,8 @@ export function Stat({ label, value, foot, tone, onClick, active, title }) {
   );
 }
 
-/* The one filter control, used everywhere a filter is needed.
-
-   One thing on screen at a time: the report has six sheets, and showing all
-   six at once is what makes the workbook hard to read in the first place.
-
-   Choices are separated by a hairline rule rather than by boxes - the "|" is
-   drawn, not typed, so it never lands in a copy-paste and never wraps onto a
-   line of its own. */
+// The one filter control, used everywhere a filter is needed.
 export function Segmented({ options, value, onChange, label, onClear }) {
-  /* The highlight is one element that slides to the chosen option, rather
-     than each button switching its own background on and off - the eye
-     follows it across, so the change of view is felt as well as seen. */
   const box = useRef(null);
   const [mark, setMark] = useState(null);
   const index = options.findIndex((o) => o.value === value);
@@ -84,7 +92,6 @@ export function Segmented({ options, value, onChange, label, onClear }) {
       setMark(btn ? { left: btn.offsetLeft, width: btn.offsetWidth } : null);
     };
     measure();
-    // Labels change width when fonts load or the window resizes.
     const ro = new ResizeObserver(measure);
     if (box.current) ro.observe(box.current);
     return () => ro.disconnect();
@@ -105,24 +112,14 @@ export function Segmented({ options, value, onChange, label, onClear }) {
           </button>
         ))}
       </div>
-      {/* Passed only while the choice is narrowing something - "GFS" rather
-          than "Both" - so the × appears exactly when there is a filter. */}
       {onClear && <ClearX what={label} onClick={onClear} />}
     </div>
   );
 }
 
-/* A dropdown, dressed the same way as the segmented control so the two read
-   as one family. Used where the choices are too many to sit in a row.
-
-   `active` marks it as narrowing something. A row of filters all looking
-   identical whether or not they are set is how you end up reading a filtered
-   table as if it were the whole thing - so a set filter colours itself, and
-   its label goes dark. */
+// A dropdown, dressed the same way as the segmented control so the two read as one family.
 export function Picker({ label, value, onChange, options, placeholder, active,
                          onClear }) {
-  /* `onClear` gives a set filter its own ×, so one of several can be undone
-     without starting again from nothing. */
   const clearable = active && onClear;
   return (
     <div className={`filter${active ? " on" : ""}`}>
@@ -134,7 +131,6 @@ export function Picker({ label, value, onChange, options, placeholder, active,
           {options.map((o) =>
             typeof o === "string"
               ? <option key={o} value={o}>{o}</option>
-              /* { group, options }: a heading over related choices. */
               : o.group
                 ? <optgroup key={o.group} label={o.group}>
                     {o.options.map((i) =>
@@ -148,8 +144,7 @@ export function Picker({ label, value, onChange, options, placeholder, active,
   );
 }
 
-/* A free-text filter - an email, an address - in the same dress as a Picker,
-   with the same × once something is typed. */
+// A free-text filter - an email, an address - in the same dress as a Picker, with the same × once something is typed.
 export function TextFilter({ label, value, onChange, placeholder, size }) {
   const set = Boolean(value);
   return (
@@ -165,8 +160,7 @@ export function TextFilter({ label, value, onChange, placeholder, size }) {
   );
 }
 
-/* The × itself: small, round, and only there while there is something to
-   remove. It pops in, so the eye notices the filter is now removable. */
+// The × itself: small, round, and only there while there is something to remove.
 export function ClearX({ what, onClick, title }) {
   const text = title
     ?? `Remove ${what ? `the ${what.toLowerCase()} filter` : "this filter"}`;
@@ -181,21 +175,7 @@ export function ClearX({ what, onClick, title }) {
   );
 }
 
-/* Every table in the app is this one.
-
-   One component means one set of rules - the same ruled grid, the same header,
-   the same right-aligned numbers - so a table on the review screen and a table
-   on the dashboard cannot drift into looking like two different products.
-
-   groupBy draws a heavier rule wherever its value changes. The run history
-   holds two runs per week, and without that break a week's pair is not
-   visually distinguishable from the week above it. */
-/* How a column is drawn - shared by the heading and its cells, so the two can
-   never disagree about where a column sits.
-
-   `align` is the current way to say it ("left" | "center" | "right"); `num` is
-   the older flag and still means right, so tables written before this keep
-   working unchanged. */
+// How a column is drawn.
 function cellClass(c) {
   const align = c.align ?? (c.num ? "right" : "left");
   return [align === "right" ? "num" : `al-${align}`,
@@ -203,14 +183,7 @@ function cellClass(c) {
           c.className ?? ""].filter(Boolean).join(" ");
 }
 
-/* `spans` is an optional row of grouped headings above the column names -
-   [{ label: "August 2026", span: 2 }, ...] - so a month can sit over its own
-   Settlement Amount and Settlement % the way the workbook prints it. Without
-   it the two columns read as unrelated, and a sheet with a pair per month
-   becomes a wall of alternating headings. */
-/* `section(row)`, when it returns something, draws that row as one heading
-   across the whole table rather than as cells - a band that starts a section
-   (Case AR's Invalid and Valid). */
+// `section(row)`, when it returns something, draws that row as one heading across the whole table rather than as cells.
 export function DataTable({ columns, rows, empty = "Nothing to show",
                             isTotal, rowClass, groupBy, spans, section }) {
   if (!rows?.length) return <div className="empty">{empty}</div>;
@@ -253,8 +226,6 @@ export function DataTable({ columns, rows, empty = "Nothing to show",
                   return (
                     <td key={c.key}
                         className={cellClass(c)}
-                        /* Cells are one line and clip. The whole value is on
-                           the tooltip, so nothing is actually lost. */
                         title={typeof v === "string" ? v : undefined}>
                       {v}
                     </td>
@@ -302,7 +273,7 @@ export function Status({ value }) {
   return <span className={`pill ${tone}`}>{value}</span>;
 }
 
-/* How an event in the activity log went. A word, with the colour beside it. */
+// How an event in the activity log went.
 export function Outcome({ value }) {
   const [tone, word] = {
     success: ["", "Success"],
@@ -312,8 +283,7 @@ export function Outcome({ value }) {
   return <span className={`pill ${tone}`}>{word}</span>;
 }
 
-/* Waiting: a spinner and what it is waiting for, over shimmering bars shaped
-   like the rows about to arrive, so the page does not jump when they do. */
+// Waiting: a spinner and what it is waiting for, over shimmering bars shaped like the rows about to arrive, so the page does not jump when they do.
 export const Loading = ({ what = "Loading" }) => (
   <div className="loading" role="status" aria-live="polite">
     <div className="loading-line"><span className="spinner" />{what}…</div>

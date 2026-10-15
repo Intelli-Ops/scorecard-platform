@@ -1,28 +1,4 @@
-"""The activity log: recording what people do, and reading it back.
-
-Two rules, and record() is how both are kept:
-
-  * WHAT HAPPENED AND THE RECORD OF IT ARE ONE TRANSACTION. An action that
-    changes something passes its own session (`db=`), so the log row is
-    saved with the change or not at all. Written afterwards in a transaction
-    of its own, the change could commit and the record of it then fail -
-    an approval, a deletion or a new admin with nothing to show who did it.
-
-  * NO RECORD, NO ACTION. If the row cannot be written, record() raises and
-    the request fails (503). The log used to fail open - report the fault and
-    carry on - on the reasoning that a logging fault should not become an
-    outage. For this app it should: what it holds is client case data, and an
-    export or a deletion nobody can ever be shown to have made is worse than
-    an hour in which nobody can make one.
-
-A REFUSED or FAILED action is the one case with no `db=`: a wrong password or
-a denied request rolls its own session back, and a row written there would go
-with it - and those are the rows that matter most. They are written in a
-transaction of their own, and still raise if that fails.
-
-Nothing here updates a row - the database refuses to. Rows are deleted only
-by delete(), for a system admin, and the deletion is logged in turn.
-"""
+"""The activity log: writing entries, searching, exporting and deleting."""
 from __future__ import annotations
 import csv
 import datetime as dt
@@ -34,14 +10,13 @@ from fastapi import Request
 from sqlalchemy import and_, delete as sql_delete, func, or_, select, true
 from sqlalchemy.orm import Session
 
+from ..clock import utcnow
 from ..db.models import ActivityLog, User
 from ..db.session import session
 from .csvsafe import cell
 
 log = logging.getLogger("scorecard.audit")
 
-# Every action the app records, and how the Activity screen words it. The
-# screen's filter is built from this, so an action added here shows up there.
 ACTIONS: dict[str, str] = {
     "auth.signup":            "Signed up",
     "auth.login":             "Signed in",
@@ -50,6 +25,11 @@ ACTIONS: dict[str, str] = {
     "auth.password_change":   "Changed password",
     "auth.session_revoke":    "Ended a session",
     "auth.profile_update":    "Updated profile",
+    "auth.email_verify":      "Confirmed email address",
+    "auth.verify_resend":     "Asked for a new confirmation code",
+    "auth.password_forgot":   "Asked for a password reset code",
+    "auth.reset_code":        "Entered a password reset code",
+    "auth.password_reset":    "Reset password with an emailed code",
     "upload.files":           "Uploaded files",
     "upload.delete":          "Removed an uploaded file",
     "run.start":              "Started a build",
@@ -67,15 +47,13 @@ ACTIONS: dict[str, str] = {
     "admin.disable":          "Disabled an account",
     "admin.enable":           "Enabled an account",
     "admin.unlock":           "Unlocked an account",
-    "admin.password_reset":   "Reset a password",
+    "admin.password_reset":   "Forced a password reset",
     "admin.sign_out":         "Signed a user out",
     "admin.activity_export":  "Exported the activity log",
     "admin.activity_delete":  "Deleted activity",
     "admin.denied":           "Tried an admin action",
 }
 
-# Grouped for the filter on the Activity screen.
-# One per prefix, so "All: Builds" means exactly every run.* event.
 CATEGORIES: dict[str, str] = {
     "auth": "Sign-in & accounts", "upload": "Uploads",
     "run": "Builds & approvals", "week": "Weeks", "month": "Working days",
@@ -84,13 +62,7 @@ CATEGORIES: dict[str, str] = {
 
 
 def client_of(request: Request | None) -> tuple[str | None, str | None]:
-    """The caller's address and browser.
-
-    request.client is the real address only when uvicorn is told to trust the
-    proxy in front of it (--proxy-headers, --forwarded-allow-ips); otherwise
-    every row would read 127.0.0.1, nginx's own address. The deployment sets
-    that up.
-    """
+    """The caller's address and browser."""
     if request is None:
         return None, None
     ip = request.client.host if request.client else None
@@ -108,7 +80,7 @@ def record(action: str, *, db: Session | None = None,
            outcome: str = "success", target: str | None = None,
            detail: dict | None = None) -> None:
     """Write one row - in the caller's transaction when given `db`, in one of
-    its own otherwise. Raises if it cannot. See the module docstring."""
+    its own otherwise."""
     ip, ua = client_of(request)
     who = user.email if user else email
     row = ActivityLog(
@@ -119,7 +91,6 @@ def record(action: str, *, db: Session | None = None,
         detail=detail or {}, ip=ip, user_agent=ua)
     if db is not None:
         db.flush()      # the caller's own changes first: a fault in those
-                        # is theirs, and must not be reported as the log's
     try:
         if db is not None:
             db.add(row)
@@ -139,9 +110,8 @@ def record_once(action: str, *, db: Session, user: User, target: str,
                 request: Request,
                 within: dt.timedelta = dt.timedelta(minutes=10)) -> None:
     """record(), unless this person did the same thing to the same target a
-    moment ago. For reads: a scorecard page asks for its run several times as
-    it loads, and one visit should be one row."""
-    since = dt.datetime.now(dt.timezone.utc) - within
+    moment ago."""
+    since = utcnow() - within
     seen = db.execute(select(ActivityLog.id).where(
         ActivityLog.user_id == user.id, ActivityLog.action == action,
         ActivityLog.target == target, ActivityLog.at >= since)
@@ -149,8 +119,6 @@ def record_once(action: str, *, db: Session, user: User, target: str,
     if seen is None:
         record(action, db=db, request=request, user=user, target=target)
 
-
-# ------------------------------------------------------------------ reading
 
 @dataclass
 class Filters:
@@ -191,12 +159,7 @@ def as_dict(row: ActivityLog) -> dict:
 
 def search(s: Session, f: Filters, limit: int = 100,
            before_id: int | None = None) -> dict:
-    """Newest first, a page at a time.
-
-    Paged by id rather than by offset: the log grows while someone reads it,
-    and an offset would shift under them and show a row twice. "Everything
-    older than the last row I saw" cannot.
-    """
+    """Newest first, a page at a time."""
     stmt = select(ActivityLog).where(_where(f))
     if before_id is not None:
         stmt = stmt.where(ActivityLog.id < before_id)
@@ -208,21 +171,29 @@ def search(s: Session, f: Filters, limit: int = 100,
             "next": rows[-1].id if more and rows else None}
 
 
-def export_csv(s: Session, f: Filters) -> io.StringIO:
+EXPORT_BATCH = 2000
+
+
+def export_csv(f: Filters):
+    """The rows `f` matches as CSV text, newest first, a batch at a time."""
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["id", "at_utc", "email", "action", "label", "outcome",
                 "target", "ip", "user_agent", "detail"])
     stmt = (select(ActivityLog).where(_where(f))
             .order_by(ActivityLog.id.desc())
-            .execution_options(yield_per=2000))
-    for r in s.execute(stmt).scalars():
-        w.writerow([cell(v) for v in (
-            r.id, r.at.isoformat(), r.email or "", r.action,
-            ACTIONS.get(r.action, r.action), r.outcome, r.target or "",
-            r.ip or "", r.user_agent or "", str(r.detail or ""))])
-    buf.seek(0)
-    return buf
+            .execution_options(yield_per=EXPORT_BATCH))
+    with session() as s:
+        for i, r in enumerate(s.execute(stmt).scalars(), 1):
+            w.writerow([cell(v) for v in (
+                r.id, r.at.isoformat(), r.email or "", r.action,
+                ACTIONS.get(r.action, r.action), r.outcome, r.target or "",
+                r.ip or "", r.user_agent or "", str(r.detail or ""))])
+            if i % EXPORT_BATCH == 0:
+                yield buf.getvalue()
+                buf.seek(0)
+                buf.truncate()
+    yield buf.getvalue()
 
 
 def summary(s: Session, since: dt.datetime) -> dict:
@@ -253,17 +224,11 @@ def for_user(s: Session, user_id: int, limit: int = 20) -> list[dict]:
     return [as_dict(r) for r in rows]
 
 
-# ------------------------------------------------------------ deleting
-
 MAX_IDS = 1000
 
 
 class DeleteRequest:
-    """Which rows to delete: chosen ids, a period, or everything.
-
-    Exactly one of the three. A request naming none must not mean "all" -
-    everything is only ever deleted when asked for in so many words.
-    """
+    """Which rows to delete: chosen ids, a period, or everything."""
 
     def __init__(self, ids=None, since=None, until=None, everything=False):
         modes = [bool(ids), since is not None or until is not None, everything]
@@ -285,8 +250,7 @@ class DeleteRequest:
 
 
 def delete(s: Session, req: DeleteRequest, dry_run: bool = False) -> int:
-    """Delete the rows `req` names, or with dry_run only count them.
-    Returns how many."""
+    """Delete the rows `req` names, or with dry_run only count them."""
     n = s.execute(select(func.count()).select_from(ActivityLog)
                   .where(req.where())).scalar_one()
     if n and not dry_run:

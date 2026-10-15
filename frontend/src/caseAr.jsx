@@ -1,3 +1,4 @@
+// The Case AR tab, with its Group, File status and Validity filters.
 import { useMemo, useState } from "react";
 import { api, count } from "./api";
 import { col } from "./columns";
@@ -7,18 +8,11 @@ import { Button } from "./buttons";
 import { useLoad } from "./hooks";
 import { GRAND_TOTAL, sectionCaseAr, sectionClass } from "./caseAr-model";
 
-/* The Case AR sheet, with the page filters its Excel pivot carries: Group,
-   File status and Validity. Each change asks the server for the pivot again,
-   because it is built from Raw Data - hundreds of thousands of rows that stay
-   on the server. The Grand Total row is always last, and always the total of
-   what the filters leave. */
-
 const ALL = "(All)";
 const isCount = (c) => /cases/i.test(c);
 
 export default function CaseAr({ runId }) {
   const [chosen, setChosen] = useState({});
-  /* The last pivot stays on screen while the next filter's is fetched. */
   const { data, error } = useLoad(() => api.caseAr(runId, chosen), [runId, chosen],
                                   { keep: true });
 
@@ -32,8 +26,6 @@ export default function CaseAr({ runId }) {
     return kind === "int" || isCount(c) ? col.count(c, c) : col.money(c, c);
   }), [table, data]);
 
-  /* A section's heading: its name, and how many cases and closing orders
-     sit under it, read off its subtotal. */
   const cases = (table?.columns ?? []).find(isCount);
   const heading = (r) => r._kind === "section" && (
     <>

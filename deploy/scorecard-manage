@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
-# The app's server commands (backend/app/manage.py), run as the service
-# account with the service's own settings - so they reach the same database.
-# Installed to /usr/local/bin/scorecard-manage by install.sh.
-#
-#   sudo scorecard-manage check                         can it reach the database?
-#   sudo scorecard-manage create-admin EMAIL APD-1234   the first system admin
-#   sudo scorecard-manage reset-password EMAIL          a temporary password
-#   sudo scorecard-manage set-role EMAIL admin          viewer, admin or system_admin
-#   sudo scorecard-manage copy-db sqlite:////tmp/scorecard.db
-#                                                       bring in a laptop's data
+# The app's server commands (backend/app/manage.py), run as the service account with the service's own settings.
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "run it with sudo: sudo scorecard-manage $*" >&2; exit 1; }
 set -a; . /etc/scorecard/scorecard.env; set +a
+if [[ -f /etc/scorecard/migrate.env ]]; then
+  set -a; . /etc/scorecard/migrate.env; set +a
+fi
 cd /opt/scorecard/backend
 exec runuser -u scorecard -- /opt/scorecard/.venv/bin/python -m app.manage "$@"

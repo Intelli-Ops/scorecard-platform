@@ -1,3 +1,4 @@
+// The Collection High-Level tab.
 import { useMemo } from "react";
 import { money } from "./api";
 import { assemble, col } from "./columns";
@@ -7,37 +8,12 @@ import {
   pivotCollections, pivotCollectionsPace, TOTAL, weekLabel,
 } from "./collections-model";
 
-/* The Collection High-Level sheet.
-
-   Same manner as Settlement, one dimension different: where Settlement opens
-   the current month into weeks and puts a Settlement % beside each, Collections
-   opens each WEEK into its four payment types and totals them.
-
-     Week-32                        Week-33 ...
-     BILLING REBILLING APPEAL SETTLEMENT Total
-
-   The Pace block under it paces a group's whole week, not each payment type -
-   that is what the sheet does, and pacing a single payment type would be
-   projecting noise.
-
-   The sheet's payment-type footer is not a table here. It is five figures, and
-   they are already the tiles at the top of the page - printing them twice on
-   one screen is not a layout, it is a duplicate.
-
-   What is NOT here: the closed months, January to July, which the workbook
-   carries as one column each. The pipeline does not produce them - the
-   collections table it builds covers the current month only - so showing them
-   would mean inventing them. See the note in the card. */
-
 const GROUP = col.label("group", "Group", { width: 186, className: "sticky" });
 
 export default function Collections({ rows, pace, monthLabel }) {
   const grid = useMemo(() => pivotCollections(rows), [rows]);
   const paced = useMemo(() => pivotCollectionsPace(pace), [pace]);
 
-  /* One span per week over its payment types plus that week's total, then the
-     month total. Built through `assemble` so a heading can never claim more
-     columns than were added. */
   const { columns, spans } = useMemo(() => {
     const parts = grid.weeks.map((w) => ({
       span: { label: weekLabel(w), span: grid.types.length + 1, className: "current" },
@@ -79,12 +55,7 @@ export default function Collections({ rows, pace, monthLabel }) {
   );
 }
 
-/* The tiles ARE the payment-type footer the sheet prints under the grid - the
-   total, then the four types that make it up. It was a table here too until
-   that turned out to be the same five figures twice on one screen; the tiles
-   are the better half, because they carry each type's share as well.
-
-   No tile names a tone: Stats walks the palette, so the five never repeat. */
+// The tiles are the payment-type footer the sheet prints under the grid.
 export function CollectionsTiles({ rows, pace, monthLabel }) {
   const total = useMemo(() => collectionsToDate(rows), [rows]);
   const paceTo = useMemo(() => collectionsPaceTotal(pace), [pace]);

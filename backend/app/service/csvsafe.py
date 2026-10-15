@@ -1,15 +1,4 @@
-"""CSV that is safe to open in Excel.
-
-A cell that starts with =, +, - or @ is run as a formula when the file is
-opened in a spreadsheet. The activity log holds text anyone can send - a
-failed sign-in records the email and browser string exactly as typed - and
-the produced tables hold whatever was in the uploaded workbooks. Either could
-carry "=HYPERLINK(...)" or worse into the admin's Excel.
-
-The usual defence (OWASP's) is a leading apostrophe on text cells that start
-that way: Excel shows the text and runs nothing. Numbers are left alone, and
-so is text that is simply a negative number, so "-12.5" still reads as one.
-"""
+"""Makes CSV cells safe to open in Excel (no formulas)."""
 from __future__ import annotations
 import re
 

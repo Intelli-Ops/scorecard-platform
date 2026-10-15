@@ -1,17 +1,4 @@
-"""The schema as it stood when migrations became versioned. FROZEN.
-
-Two things read it, and both need it never to change:
-
-  * migration 0001, which creates exactly these tables in a new database;
-  * migrate.upgrade(), which brings a database from BEFORE versioned
-    migrations up to exactly this shape, and then lets the migrations after
-    0001 take it the rest of the way like any other.
-
-It is deliberately a copy and not `models.Base.metadata`. The models describe
-the schema as it is NOW; a migration has to describe it as it was THEN, or
-0001 would quietly create columns that 0002 is about to add. Every change
-since is a file in migrations/versions/ - never an edit here.
-"""
+"""The schema as it was when versioned migrations started. Do not edit."""
 from __future__ import annotations
 
 from sqlalchemy import (JSON, Boolean, Column, Date, Float, ForeignKey, Index,

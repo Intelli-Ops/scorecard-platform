@@ -1,3 +1,4 @@
+// The app shell: sign-in gate, sidebar and page routes.
 import { useEffect, useState } from "react";
 import { NavLink, Route, Routes, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./auth";
@@ -17,7 +18,7 @@ import { MenuIcon, NavChartIcon, NavHistoryIcon, NavPeopleIcon, NavPersonIcon,
 
 const OPEN_KEY = "scorecard.sidebar";
 
-/* One menu entry. Collapsed, only the icon shows and the tooltip names it. */
+// One menu entry.
 function Item({ to, icon, label, open }) {
   return (
     <NavLink to={to} className={({ isActive }) => (isActive ? "on" : "")}
@@ -28,29 +29,25 @@ function Item({ to, icon, label, open }) {
   );
 }
 
-/* A heading over a group of entries; collapsed, a hairline rule instead. */
+// A heading over a group of entries; collapsed, a hairline rule instead.
 const Section = ({ open, children }) =>
   open ? <div className="nav-section">{children}</div> : <div className="nav-rule" />;
 
-/* Nothing is reachable without an account. The gate is here, once, rather than
-   on each page - and the API refuses anyway, so a missed page cannot leak. */
+// Nothing is reachable without an account.
 export default function App() {
   const { user, checking, signOut } = useAuth();
   const location = useLocation();
 
-  /* The sidebar remembers whether it was open. Someone who collapses it wants
-     the room on every page, not just until the next click. */
   const [open, setOpen] = useState(() => {
     try { return localStorage.getItem(OPEN_KEY) !== "closed"; } catch { return true; }
   });
   useEffect(() => {
     try { localStorage.setItem(OPEN_KEY, open ? "open" : "closed"); }
-    catch { /* storage blocked - remembered for this visit only */ }
+    catch { /* storage blocked */ }
   }, [open]);
 
   if (checking) return <Loading what="Signing you in" />;
   if (!user) return <SignIn />;
-  // A temporary password from an admin opens nothing but the form to replace it.
   if (user.must_change_password) return <ChangePassword />;
 
   const initials = (user.display_name ?? user.email)
@@ -59,13 +56,8 @@ export default function App() {
 
   return (
     <div className={`app${open ? "" : " collapsed"}`}>
-      {/* Pinned to the window: it stays put while a long scorecard scrolls
-          under it, so the menu and Sign out are always one click away. */}
       <aside className="side">
         <div className="side-top">
-          {/* Collapsed, the button is all that is left - so it stays in the
-              same place on screen either way and never moves under the
-              cursor. */}
           <button className="hamburger" onClick={() => setOpen(!open)}
                   aria-expanded={open} aria-label={open ? "Hide menu" : "Show menu"}
                   title={open ? "Hide menu" : "Show menu"}>
@@ -81,12 +73,8 @@ export default function App() {
 
         <nav>
           <Item to="/scorecard" icon={<NavChartIcon />} label="This week" open={open} />
-          {/* Everyone's own account - a viewer included, who has to be able
-              to change their password without hunting for it. */}
           <Item to="/profile" icon={<NavPersonIcon />} label="Your profile" open={open} />
 
-          {/* A viewer reads scorecards; everything else here is an admin's.
-              The API refuses it regardless - this only keeps the menu honest. */}
           {user.is_admin && (
             <>
               <Section open={open}>Workspace</Section>
@@ -119,8 +107,6 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {/* Keyed by the page, so each page arrives with the same short rise
-            rather than snapping in. */}
         <div className="page" key={location.pathname}>
         <Routes>
           <Route path="/" element={<Navigate to="/scorecard" replace />} />

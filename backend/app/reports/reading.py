@@ -1,8 +1,4 @@
-"""Reading one source sheet, and recording that it was read.
-
-Both reports' readers time every read and note how many rows came back, so
-the review screen can show it. That bookkeeping was written out in each.
-"""
+"""Reads one source sheet and records how long it took."""
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,13 +12,7 @@ from .cache import Cache, NoCache, ParquetCache
 
 @dataclass
 class FileRead:
-    """What one read produced. Shown on the review screen.
-
-    key identifies the read; source_key identifies the UPLOADED FILE it came
-    from, and the two are not always the same. The delta workbooks are read
-    once per sheet - three sheets out of two files - so several reads share
-    one source_key and the run's audit trail has to add them up.
-    """
+    """What one read produced."""
     key: str
     source_key: str
     label: str

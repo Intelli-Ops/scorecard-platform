@@ -1,30 +1,4 @@
-"""Server-side commands, for the person running the app rather than using it.
-
-Run from backend/, with the same SCORECARD_DB the server uses:
-
-    python -m app.manage check                   can it reach the database?
-    python -m app.manage upgrade                 apply the migrations this
-                                                 database has not had
-    python -m app.manage clean-files             list stored files no row
-                                                 names (--delete removes them)
-    python -m app.manage create-admin EMAIL APD  a new SYSTEM admin account
-                                                 (asks for a password)
-    python -m app.manage promote EMAIL           make an existing account a
-                                                 system admin
-    python -m app.manage set-role EMAIL ROLE     viewer, admin or system_admin
-    python -m app.manage reset-password EMAIL    a temporary password, for when
-                                                 the only admin is locked out
-    python -m app.manage protect-log             add the trigger that stops
-                                                 activity log rows being edited (run
-                                                 with the database ADMIN's
-                                                 address - see below)
-    python -m app.manage copy-db FROM_URL        copy everything from another
-                                                 database into this one
-
-The first system admin has to come from here: accounts that sign up in the
-app wait for an admin to approve them, and only a system admin can make
-admins, so with none at all there is nobody to.
-"""
+"""Server commands: create admins, reset passwords, apply migrations, copy data."""
 from __future__ import annotations
 import argparse
 import getpass
@@ -32,11 +6,12 @@ import sys
 
 from sqlalchemy import create_engine, func, inspect, select, text
 
+from .clock import utcnow
 from .config import database_url, settings
 from .db import migrate
 from .db.models import Base, User
 from .db.session import create_all, engine, session
-from .service import auth
+from .service import auth, codes
 
 
 def _say(msg: str) -> None:
@@ -54,14 +29,13 @@ def cmd_check(_):
             "SELECT sqlite_version()" if engine().dialect.name == "sqlite"
             else "SELECT VERSION()")).scalar()
     _say(f"connected: {_where()} ({engine().dialect.name} {version})")
+    have, want = migrate.revision(engine()), migrate.head()
+    _say(f"schema: at migration {have or 'none'}, this code needs {want}"
+         + ("" if have == want else " - run: scorecard-manage upgrade"))
 
 
 def cmd_upgrade(a):
-    """Apply the migrations. The app's own database account can add tables,
-    columns and indexes but, on purpose, cannot DROP anything (that would let
-    it empty the activity log) - so a migration that removes or rebuilds a
-    table has to be run once as the database admin: pass its address with
-    --as, exactly as for protect-log."""
+    """Apply migrations, as the migration account when one is set."""
     if a.as_url:
         e = create_engine(database_url(a.as_url))
         migrate.upgrade(e)
@@ -105,23 +79,33 @@ def cmd_set_role(a):
     create_all()
     with session() as s:
         user = _user(s, a.email)
+        if a.role != "system_admin":
+            try:
+                auth.keep_a_system_admin(s, user, "changing their role")
+            except auth.AuthError as e:
+                sys.exit(str(e))
         user.role = a.role
         user.pending = False
         user.is_active = True
+        user.email_verified_at = user.email_verified_at or utcnow()
     _say(f"{a.email} is now {a.role}.")
 
 
 def cmd_reset_password(a):
+    """A password reset code, shown here rather than mailed - for when mail is
+    not working, or the only admin is locked out and cannot get it."""
     with session() as s:
-        temporary = auth.reset_password(s, _user(s, a.email))
-    _say(f"temporary password for {a.email}: {temporary}")
-    _say("It must be changed at the next sign-in.")
+        code = codes.emergency_reset_code(s, _user(s, a.email))
+    minutes = codes.ttl_minutes(codes.CODE_TTL)
+    _say(f"Reset code for {a.email}: {code}")
+    _say(f"It works once, within {minutes} minutes, and replaces any code "
+         f"already mailed. They type it into the code boxes - the screen "
+         f"they reach with Forgot password? -> {a.email} -> Send code - "
+         f"then choose a new password.")
 
 
 def cmd_protect_log(a):
-    """Create the triggers. Needs a database account allowed to - on MySQL
-    with binary logging on, that means the admin (root) account, which the app
-    itself should never hold. Pass its address with --as."""
+    """Create the triggers."""
     e = create_engine(database_url(a.as_url)) if a.as_url else engine()
     if migrate.protect_activity_log(e):
         _say("activity_log rows cannot be edited.")
@@ -131,13 +115,7 @@ def cmd_protect_log(a):
 
 
 def cmd_copy_db(a):
-    """Copy every row from FROM_URL into this database.
-
-    For moving the laptop's SQLite file onto the server's MySQL. The target
-    must be empty - copying into a database that already has rows would
-    collide on ids. Tables go in dependency order (accounts before sessions,
-    runs before their notes), so foreign keys are satisfied as they land.
-    """
+    """Copy every row from FROM_URL into this database."""
     source = create_engine(database_url(a.from_url))
     create_all()
     target = engine()
@@ -148,9 +126,6 @@ def cmd_copy_db(a):
         busy = ", ".join(f"{k}={v}" for k, v in existing.items() if v)
         sys.exit(f"the target is not empty ({busy}) - copy into a fresh database")
 
-    # Old rows gain the columns added since; the models' defaults fill them.
-    # A table the source never had (a database from before the activity log)
-    # is simply skipped - there is nothing in it to copy.
     migrate.add_missing_columns(source, Base.metadata)
     present = set(inspect(source).get_table_names())
     with source.connect() as src, target.begin() as dst:
@@ -162,7 +137,6 @@ def cmd_copy_db(a):
             for i in range(0, len(rows), 500):
                 dst.execute(table.insert(), rows[i:i + 500])
             _say(f"  {table.name}: {len(rows)} rows")
-    # Rows copied from before there were viewers carry the old "user" role.
     migrate.upgrade_roles(target)
     _say(f"copied into {_where()}")
     _say("Now copy the data folder's objects/ and results/ directories too - "
@@ -170,13 +144,7 @@ def cmd_copy_db(a):
 
 
 def cmd_clean_files(a):
-    """List - and with --delete, remove - stored files no row names.
-
-    The app keeps files and rows in step (service/blobs.py), but a process
-    killed between writing a file and saving its row leaves the file behind,
-    and nothing in the database knows to look for it. Files under an hour
-    old are left alone: one may be an upload whose row is about to be saved.
-    """
+    """List - and with --delete, remove - stored files no row names."""
     import time
     from .db.models import RunTable, Upload
     from .storage.files import FileStore

@@ -1,10 +1,4 @@
-"""Taking uploaded files in: classify, store, record.
-
-Replaces "drop the files into inputs/2026-W36/". The classifying is the same
-filename matching the .bat pipeline did, so nobody has to rename anything, but
-it happens at upload time rather than at run time - a missing or duplicated
-file is reported while the person is still there to fix it.
-"""
+"""Uploads: works out which input each file is, stores it, records it."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,15 +9,12 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db.session import after_commit
 from ..reports import CASE_AR_KEYS, REPORTS, ReportType, SourceFile
-from ..reports.locate import _matches
+from ..reports.locate import matches
 from ..storage.files import FileStore
 from ..db.models import RunInput, Upload
 from . import blobs
 
 
-# The longest file name taken, in bytes. A name is first written to disk as
-# it is, and Linux allows 255 bytes for one - well inside the 400 characters
-# the Upload.filename column holds. Real names run to about 60.
 MAX_NAME = 240
 
 
@@ -52,13 +43,7 @@ class IngestResult:
 
 
 def _all_sources() -> tuple[SourceFile, ...]:
-    """Every input any report declares, deduplicated.
-
-    Built from the registry rather than from the shared + Case AR lists, so a
-    file only one report needs - All Providers reads its KPI layout out of last
-    week's workbook - is still recognised. Hard-coding the two lists here meant
-    that file was silently rejected as "not one of the nine inputs".
-    """
+    """Every input any report declares, deduplicated."""
     seen: dict[str, SourceFile] = {}
     for report in REPORTS.values():
         for spec in report.sources:
@@ -67,9 +52,9 @@ def _all_sources() -> tuple[SourceFile, ...]:
 
 
 def classify(path: Path) -> SourceFile | None:
-    """Which input is this file? None if it is not one of them."""
+    """Which input is this file?"""
     for spec in _all_sources():
-        if _matches(spec, path):
+        if matches(spec, path):
             return spec
     return None
 
@@ -77,14 +62,7 @@ def classify(path: Path) -> SourceFile | None:
 def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
            for_report: str | None = None,
            uploaded_by: str | None = None) -> IngestResult:
-    """Store and record a batch of uploaded files.
-
-    for_report is required only for the two Case AR files, because those are
-    the ones that differ between GFS (Tuesday) and All Providers (Thursday).
-    Rejecting them rather than guessing is deliberate: guessing wrong attaches
-    Thursday's case activity to Tuesday's report, and nothing in the file would
-    ever reveal it.
-    """
+    """Store and record a batch of uploaded files."""
     result = IngestResult()
 
     for path in paths:
@@ -106,8 +84,6 @@ def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
 
         report_key = for_report if spec.key in CASE_AR_KEYS else None
         stored = store.put(path)
-        # The file is on disk before its row is saved. If the row never is,
-        # the file is taken back out rather than left with nothing naming it.
         blobs.discard_on_rollback(session, store, stored, path.suffix,
                                   Upload.sha256)
 
@@ -117,11 +93,6 @@ def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
                      uploaded_by=uploaded_by)
         session.add(new)
         session.flush()
-        # A newer copy REPLACES the one before it. The old one used to be
-        # kept - so the disk only ever grew, and removing a wrong file put
-        # the file it had replaced back in its place. It goes now, unless a
-        # build has read it: that build's record of what it was made from
-        # must stay true, so that copy stays for as long as the build does.
         earlier = session.execute(select(Upload.id).where(
             Upload.week == week, Upload.source_key == spec.key,
             Upload.report_key.is_(None) if report_key is None
@@ -139,25 +110,7 @@ def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
 
 
 def retire_uploads(session: Session, upload_ids, objects: FileStore) -> tuple[int, int]:
-    """Remove uploads nothing reads any more, and the bytes behind them.
-
-    Two levels of reference counting, because both are shared on purpose:
-
-      * the ROW goes only once no RunInput names it. An upload belongs to the
-        week, not to one run - the seven shared files feed both reports and
-        every rebuild reads them again.
-      * the BLOB goes only once no Upload row names its hash. Identical files
-        are stored once, and Thursday's Case AR is often byte-for-byte
-        Tuesday's, so one stored file can back two rows - and two weeks.
-
-    The rows go now, inside the caller's transaction. The bytes go only once
-    that transaction has COMMITTED: a row can be rolled back and a deleted
-    file cannot, and done the other way round a commit that failed would put
-    back rows pointing at files that no longer exist. The file's parsed copy
-    in the week's cache goes with it.
-
-    Returns (rows removed, blobs that will be unlinked).
-    """
+    """Remove uploads nothing reads any more, and the bytes behind them."""
     rows_gone, blobs_gone = 0, 0
     for upload_id in upload_ids:
         still_read = session.execute(
@@ -183,8 +136,8 @@ def retire_uploads(session: Session, upload_ids, objects: FileStore) -> tuple[in
 
 
 def _forget_parsed(week: str, sha: str):
-    """Drop a stored file's parsed copy from its week's cache (named after
-    the stored file - see ParquetCache.key_for)."""
+    """Drop a stored file's parsed copy from its week's cache (named after the
+    stored file - see ParquetCache.key_for)."""
     cache = settings.data_dir / "cache" / week
 
     def forget() -> None:
@@ -203,15 +156,7 @@ def _week_uploads(session: Session, week: str) -> list[Upload]:
 
 def latest_uploads(session: Session, report: ReportType, week: str,
                    rows: list[Upload] | None = None) -> dict[str, Upload]:
-    """The upload each source_key currently resolves to for this report.
-
-    Shared files match on report_key IS NULL; the two Case AR files must match
-    this report specifically - falling back to another report's copy would
-    silently mix Tuesday's and Thursday's data.
-
-    `rows` is the week's uploads, newest first, when the caller already has
-    them; otherwise they are fetched.
-    """
+    """The upload each source_key currently resolves to for this report."""
     wanted = {s.key for s in report.sources}
     out: dict[str, Upload] = {}
     for row in (_week_uploads(session, week) if rows is None else rows):
@@ -225,13 +170,7 @@ def latest_uploads(session: Session, report: ReportType, week: str,
 
 def week_status(session: Session, week: str) -> dict:
     """What the upload screen shows: which files are in, which are still needed."""
-    # Every row held for the week, not just the latest per source. A copy that
-    # was replaced after a build had read it is kept for that build, so this
-    # can be larger than what `have` lists - and it is the number deleting
-    # the week would remove.
     rows = _week_uploads(session, week)
-    # An upload a build has read cannot be removed on its own - see
-    # runner.remove_upload - so the screen is told which those are.
     read = set(session.execute(
         select(RunInput.upload_id).where(
             RunInput.upload_id.in_([u.id for u in rows]))).scalars()) if rows else set()

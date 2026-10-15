@@ -1,3 +1,4 @@
+// Tests for format.js.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { device } from "./format.js";
@@ -19,7 +20,6 @@ test("a browser is named by what it is, not what it imitates", () => {
 import { weekRange } from "./format.js";
 
 test("a week number is written as the Monday to Sunday it covers", () => {
-  // Checked by the numbers rather than the words, which vary by locale.
   assert.equal(weekRange("2026-W38"), "14 to 20 Sep 2026");
   assert.equal(weekRange("2026-W01"), "29 Dec 2025 to 4 Jan 2026");
   assert.equal(weekRange("2026-W53"), "28 Dec 2026 to 3 Jan 2027");

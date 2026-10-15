@@ -1,15 +1,4 @@
-"""The All-Providers calculation run: source tables in, finished tables out.
-
-The middle third of the All-Providers .bat pipeline's main(). It calls the
-audited functions in ap/marts in the same order with the same arguments; the
-workbook-writing that followed them is gone.
-
-It is a different sequence from the GFS pipeline, not a variation on it -
-prepare() before settlement_grids(), and the KPI blocks read out of last
-week's sheet. The calendar is shared: the month and its weeks come from the
-week being reported (period.py), the same as GFS. That is why the two reports keep separate
-pipelines instead of one parameterised engine.
-"""
+"""All Providers: the full calculation, from source tables to finished tables."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 import datetime as dt
@@ -41,8 +30,6 @@ class RunResult:
     kpi: dict
     current_month: int
 
-    # Settlements (In House / Board - Pace) and Collections Pace: the month's
-    # weeks so far projected to a full month over its working days.
     settlement_pace: dict = field(default_factory=dict)
     collections_pace: dict = field(default_factory=dict)
     year: int = 0
@@ -59,12 +46,7 @@ class RunResult:
 
 def run(src: ApSources, rules: dict, as_of: dt.date | None = None,
         week: str | None = None) -> RunResult:
-    """`week` is the label being reported, e.g. 2026-W37.
-
-    It is not cosmetic. A Mon-Fri week belongs to the month of its Wednesday,
-    and the sheet shows that month's weeks UP TO the week being reported - not
-    one per week that happens to appear in the data. See period.py.
-    """
+    """`week` is the label being reported, e.g. 2026-W37."""
     t0 = time.perf_counter()
     as_of = as_of or dt.date.today()
     period = reporting_period(week_label(week, as_of), rules.get("holidays"),

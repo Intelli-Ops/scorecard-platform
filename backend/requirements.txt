@@ -1,18 +1,7 @@
-# EVERY VERSION IS EXACT. A build made today and one made in six months
-# install the same packages, so a number that changes between them changed
-# because the code or the data did - never because a library moved underneath.
-#
-# This file pins what the app asks for by name. constraints.txt (applied by
-# the line below) pins what THOSE pull in, so nothing at all floats.
-#
-# To move a package forward: change it here, reinstall, run the whole test
-# suite, check one real week's figures, and regenerate constraints.txt
-# (instructions at the top of that file). Commit both.
+# every version IS exact.
 -c constraints.txt
 
-# --- Calculation core -------------------------------------------------
-# These produced the verified Week 35 numbers; do not bump them without
-# checking a real week's figures again.
+# --- Calculation core ------------------------------------------------- These produced the verified Week 35 numbers.
 polars==1.44.1
 fastexcel==0.21.0        # calamine reader - 2.3s vs 34.5s for openpyxl
 pyarrow==25.0.1          # parquet
@@ -26,20 +15,13 @@ sqlalchemy==2.0.52
 pydantic==2.13.5
 alembic==1.20.0          # versioned migrations - see app/db/migrate.py
 
-# MySQL, on the server. Pure Python, so it installs the same on Windows and
-# Ubuntu with nothing to compile. `cryptography` is what lets it sign in to
-# MySQL 8, whose default authentication (caching_sha2_password) needs it.
-# Locally SQLite is the default and neither is used.
+# MySQL, on the server.
 pymysql==1.2.3
 cryptography==50.0.1
-# Time-zone names ("Asia/Karachi") for the out-of-hours alert. Linux ships
-# them; Windows does not.
+# Time-zone names ("Asia/Karachi") for the out-of-hours alert.
 tzdata==2026.4
 
-# --- Jobs -------------------------------------------------------------
-# None. Builds run on a background thread inside the web process, and the
-# queue is the database's own `run` table (app/jobs/worker.py) - so a waiting
-# build survives a restart without a queue server to install and run.
+# --- Jobs ------------------------------------------------------------- None.
 
 # --- Dev / test -------------------------------------------------------
 pytest==9.1.1

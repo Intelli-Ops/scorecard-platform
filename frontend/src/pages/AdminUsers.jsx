@@ -1,3 +1,4 @@
+// Admin: accounts, roles, access and approvals.
 import { useState } from "react";
 import { api, stamp, when } from "../api";
 import { useAuth } from "../auth";
@@ -8,19 +9,8 @@ import { Stat, Stats } from "../ui";
 import { CheckIcon, CrossIcon, KeyIcon, LeaveIcon, PauseIcon, PlayIcon,
          UnlockIcon } from "../icons";
 
-/* Accounts, for admins.
-
-   Three roles. A viewer reads the approved scorecards it has been given. An
-   admin runs the workspace - uploads, builds, approvals - and looks after
-   viewers. A system admin does all of that and is the only one who can make,
-   change or remove admins.
-
-   What each admin may do to each account is decided by the server and sent
-   with the row (`can`), so this screen offers exactly the buttons that will
-   work - an admin simply sees no Delete beside another admin. Every press is
-   written to the activity log. */
-
 const STATUS = {
+  unverified: ["", "Email not confirmed"],
   pending: ["warn", "Waiting"],
   active: ["good", "Active"],
   locked: ["alert", "Locked"],
@@ -33,21 +23,18 @@ export default function AdminUsers() {
   const { user: me, signOut } = useAuth();
   const { data: users, error, setError, reload } = useLoad(api.users, []);
   const reports = useLoad(api.reports, []).data ?? [];
-  const [temp, setTemp] = useState(null);       // a just-issued temporary password
-  const [copied, setCopied] = useState(false);
+  const [sent, setSent] = useState(null);       // whose password was just reset
 
-  /* Every action: do it, then reload the list, so what is on screen is what
-     the server now holds rather than what we assume it holds. */
   const act = (fn) => async () => {
     setError(null);
     try { await fn(); await reload(); } catch (e) { setError(e); }
   };
 
   async function reset(u) {
-    setError(null); setCopied(false);
+    setError(null);
     try {
       const r = await api.resetPassword(u.id);
-      setTemp({ email: u.email, password: r.temporary_password });
+      setSent(r.notified);
       await reload();
     } catch (e) { setError(e); }
   }
@@ -55,11 +42,6 @@ export default function AdminUsers() {
   async function removeSelf(u) {
     try { await api.deleteUser(u.id); await signOut(); }
     catch (e) { setError(e); }
-  }
-
-  async function copy() {
-    try { await navigator.clipboard.writeText(temp.password); setCopied(true); }
-    catch { /* the password is on screen to copy by hand */ }
   }
 
   if (!users) return error ? <ErrorBox error={error} /> : <Loading what="Loading accounts" />;
@@ -79,19 +61,13 @@ export default function AdminUsers() {
 
       <ErrorBox error={error} />
 
-      {temp && (
-        <Card title={`Temporary password for ${temp.email}`}
-              sub="Shown once. Give it to them in person or on Teams, not by email."
-              right={<Button tone="quiet" size="sm" onClick={() => setTemp(null)}>Done</Button>}>
-          <div className="row">
-            <code className="secret">{temp.password}</code>
-            <Button size="sm" icon={copied ? <CheckIcon /> : null} onClick={copy}>
-              {copied ? "Copied" : "Copy"}
-            </Button>
-          </div>
-          <div className="small muted" style={{ marginTop: 10 }}>
-            They will be asked to choose their own password as soon as they sign in.
-            All their sessions have been signed out.
+      {sent && (
+        <Card title={`Password reset for ${sent}`}
+              sub="Their old password no longer works, and every session has been signed out."
+              right={<Button tone="quiet" size="sm" onClick={() => setSent(null)}>Done</Button>}>
+          <div className="small muted">
+            We have emailed them to choose a new one with "Forgot password?" on
+            the sign-in screen, which sends a 6-digit code to their email.
           </div>
         </Card>
       )}
@@ -124,9 +100,6 @@ export default function AdminUsers() {
               render: (u) => <RoleCell u={u} act={act} /> },
             { key: "reports", label: "Scorecards",
               render: (u) => <AccessCell u={u} reports={reports} act={act} /> },
-            /* Status and when they last signed in, together: both answer "is
-               this account in use", and a column each pushed the buttons off
-               the edge of the table. */
             { key: "status", label: "Status",
               render: (u) => {
                 const [tone, word] = STATUS[u.status] ?? ["", u.status];
@@ -151,10 +124,7 @@ export default function AdminUsers() {
   );
 }
 
-/* The role: a choice for a system admin looking at someone they manage, a
-   label for everyone else. Making someone a system admin cannot be undone by
-   the person doing it - after that only they can change their own account -
-   so that one choice asks to be confirmed. */
+// The role: a choice for a system admin looking at someone they manage, a label for everyone else.
 function RoleCell({ u, act }) {
   const [pending, setPending] = useState(null);
   const label = <span className={`pill role-${u.role}`}>{ROLE_LABEL[u.role] ?? u.role}</span>;
@@ -177,8 +147,7 @@ function RoleCell({ u, act }) {
   );
 }
 
-/* Which scorecards a viewer may read: one chip per report, pressed or not.
-   Admins read every scorecard, so for them it simply says so. */
+// Which scorecards a viewer may read: one chip per report, pressed or not.
 function AccessCell({ u, reports, act }) {
   if (u.is_admin) return <span className="muted small">All scorecards</span>;
   return (
@@ -206,12 +175,22 @@ function AccessCell({ u, reports, act }) {
   );
 }
 
-/* The tones say what each action does before the word is read - see
-   buttons.jsx: go lets someone in, soft is routine upkeep, warn stops someone
-   for now, danger cannot be undone. */
+// The tones say what each action does before the word is read.
 function Actions({ u, me, act, reset, removeSelf }) {
   const c = u.can;
   const self = u.id === me.id;
+
+  if (u.status === "unverified") {
+    return (
+      <span className="row tight">
+        <span className="muted small">Waiting for them to confirm their email</span>
+        {c.delete && (
+          <ConfirmButton icon={<CrossIcon />} label="Turn down" confirm="Confirm turn down"
+                         onConfirm={act(() => api.deleteUser(u.id))} />
+        )}
+      </span>
+    );
+  }
 
   if (u.status === "pending") {
     return (
@@ -243,7 +222,7 @@ function Actions({ u, me, act, reset, removeSelf }) {
                 onClick={act(() => api.setActive(u.id, true))}>Enable</Button>
       )}
       {c.reset_password && (
-        <ConfirmButton tone="soft" icon={<KeyIcon />} label="Reset password"
+        <ConfirmButton tone="soft" icon={<KeyIcon />} label="Force password reset"
                        confirm="Confirm reset" onConfirm={() => reset(u)} />
       )}
       {c.sign_out && u.sessions > 0 && (
@@ -264,7 +243,7 @@ function Actions({ u, me, act, reset, removeSelf }) {
       {!Object.values(c).some((v) => (Array.isArray(v) ? v.length : v)) && (
         <span className="muted small">
           {self ? "Your own account: see your profile"
-                : u.is_system_admin ? "Only they can change this account"
+                : u.is_system_admin ? "Only another system admin can change this account"
                 : "Only a system admin can change an admin"}
         </span>
       )}

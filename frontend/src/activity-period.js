@@ -1,14 +1,9 @@
-/* The periods the Activity screen can delete: the day, week (Monday to
-   Sunday) or month containing a date, in the browser's own time zone - a
-   "day" is the day as the admin lives it, not a UTC day that starts at 5am.
-
-   Pure, so it can be tested without a browser. */
-
+// Day, week and month ranges for deleting activity.
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const fmt = (d) => `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 
-/* "2026-09-29" -> a local Date at midnight, or null. */
+// "2026-09-29" -> a local Date at midnight, or null.
 export function parseDay(text) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text ?? "");
   if (!m) return null;
@@ -16,8 +11,7 @@ export function parseDay(text) {
   return d.getMonth() === +m[2] - 1 ? d : null;       // 2026-02-31 is not a day
 }
 
-/* { since, until, label } for kind "day" | "week" | "month", or null.
-   `until` is the first moment AFTER the period. */
+// { since, until, label } for kind "day" | "week" | "month", or null.
 export function periodOf(kind, text) {
   const d = parseDay(text);
   if (!d) return null;
@@ -42,7 +36,7 @@ export function periodOf(kind, text) {
   return { since: since.toISOString(), until: until.toISOString(), label };
 }
 
-/* Today as "2026-09-29", for the date box to start on. */
+// Today as "2026-09-29", for the date box to start on.
 export function today(now = new Date()) {
   const p = (n) => String(n).padStart(2, "0");
   return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;

@@ -1,9 +1,4 @@
-"""Database connection.
-
-SQLite locally so the project runs with nothing installed; MySQL on the server
-by setting SCORECARD_DB (see config.py). SQLAlchemy hides the difference, which
-is why the models avoid anything either one lacks.
-"""
+"""Database engine, sessions, and commit/rollback hooks."""
 from __future__ import annotations
 import logging
 from contextlib import contextmanager
@@ -28,9 +23,6 @@ def engine():
         options = {"future": True}
         if settings.database_url.startswith("mysql"):
             options.update(
-                # MySQL closes a connection that has sat idle for eight hours
-                # (wait_timeout). Without these the first request of the
-                # morning fails with "MySQL server has gone away".
                 pool_pre_ping=True,
                 pool_recycle=3600,
                 pool_size=10,
@@ -42,11 +34,32 @@ def engine():
 
 
 def create_all() -> None:
-    """Bring the database up to date - every migration it has not had (see
-    migrate.py) - and add the guard that stops activity log rows being edited."""
-    e = engine()
-    migrate.upgrade(e)
-    migrate.protect_activity_log(e)
+    """Apply pending migrations and add the activity log trigger."""
+    if not settings.migrate_database_url:
+        e = engine()
+        migrate.upgrade(e)
+        migrate.protect_activity_log(e)
+        return
+    settings.ensure()
+    e = create_engine(settings.migrate_database_url, future=True)
+    try:
+        migrate.upgrade(e)
+        migrate.protect_activity_log(e)
+    finally:
+        e.dispose()
+
+
+class SchemaOutOfDate(RuntimeError):
+    pass
+
+
+def check_schema() -> None:
+    """Refuse to run on a database the migrations have not reached."""
+    have, want = migrate.revision(engine()), migrate.head()
+    if have != want:
+        raise SchemaOutOfDate(
+            f"the database is at migration {have or 'none'}, this code needs "
+            f"{want}. Run: sudo scorecard-manage upgrade")
 
 
 def reset() -> None:
@@ -59,13 +72,7 @@ def reset() -> None:
 
 
 def after_commit(s: Session, fn: Callable[[], None]) -> None:
-    """Run `fn` once `s` has committed - and not at all if it does not.
-
-    For what a database cannot take back: deleting a file. Done inside the
-    transaction, a commit that then fails leaves rows pointing at files that
-    are gone. Done after, the worst a failure leaves is a file nothing points
-    at.
-    """
+    """Run `fn` once `s` has committed - and not at all if it does not."""
     s.info.setdefault(_AFTER_COMMIT, []).append(fn)
 
 
@@ -83,8 +90,6 @@ def _run_hooks(s: Session, which: str) -> None:
         try:
             fn()
         except Exception:
-            # The transaction is already decided; a clean-up that fails must
-            # not turn a saved change into an error, or hide the real one.
             log.exception("%s clean-up failed", which.replace("_", " "))
 
 

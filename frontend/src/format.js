@@ -1,14 +1,5 @@
-/* How a value is written down.
-
-   Pure functions, no network and no `import.meta`, so they can be imported by
-   anything - including a plain `node --test` run, which is why they are not in
-   api.js with the HTTP client any more.
-
-   One place decides what a dollar figure, a per cent and a count look like, so
-   the same number reads the same way on every screen. */
-
-/* Money to the cent, always: a scorecard figure is checked against the
-   workbook, and a whole-dollar figure never quite matches it. */
+// Formatting numbers, money, dates and sizes.
+// Money to the cent, always.
 export const money = (n) =>
   n == null ? "" : n.toLocaleString(undefined,
     { style: "currency", currency: "USD",
@@ -27,16 +18,10 @@ export const when = (iso) =>
   iso ? new Date(iso).toLocaleString(undefined,
     { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
 
-/* Bucket labels come from the .bat pipeline: W2 is week 2 of the month, M5 is month 5.
-   Both appear because the report shows weekly detail for the current month and
-   monthly totals for the months before it. */
 const MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/* Weeks are written out: "Week-2", not "Wk 2". These are weeks of the month
-   (a week belongs to the month of its Wednesday) and the people reading the
-   sheet say them in full, so the screen does too. One
-   definition, here, because it was written twice and the two could drift. */
+// Weeks are written out: "Week-2", not "Wk 2".
 export const weekLabel = (n) => `Week-${n}`;
 
 export const bucketLabel = (b) =>
@@ -44,10 +29,7 @@ export const bucketLabel = (b) =>
 
 export const monthName = (m) => MONTHS[m] ?? String(m);
 
-/* A browser's self-description, reduced to what a person recognises -
-   "Chrome on Windows" rather than a 130-character user-agent string. Order
-   matters: Edge and Opera also call themselves Chrome, and Chrome also calls
-   itself Safari, so the more specific names are tried first. */
+// A browser's self-description, reduced to what a person recognises.
 export function device(ua) {
   if (!ua) return "Unknown device";
   const browser =
@@ -66,20 +48,17 @@ export function device(ua) {
   return os ? `${browser} on ${os}` : browser;
 }
 
-/* A date and time in full, for a record that may be read months later -
-   "28 Sept 2026, 09:14" - where `when` leaves the year off. */
+// A date and time in full, for a record that may be read months later.
 export const stamp = (iso) =>
   iso ? new Date(iso).toLocaleString(undefined,
     { day: "numeric", month: "short", year: "numeric",
       hour: "2-digit", minute: "2-digit" }) : "";
 
-/* "2026-W38" as the days it covers - "14 to 20 Sept 2026", Monday to Sunday -
-   because nobody outside the build knows which dates a week number means. */
+// "2026-W38" as the days it covers.
 export function weekRange(label) {
   const m = /^(\d{4})-W(\d{2})$/.exec(label ?? "");
   if (!m) return label ?? "";
   const [year, week] = [+m[1], +m[2]];
-  // ISO week 1 is the week holding 4 January.
   const jan4 = new Date(Date.UTC(year, 0, 4));
   const monday = new Date(jan4);
   monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() || 7) - 1) + (week - 1) * 7);

@@ -1,3 +1,4 @@
+// Admin: the activity log, its alerts, export and deletion.
 import { useEffect, useMemo, useState } from "react";
 import { api, count, device, stamp, when } from "../api";
 import { Card, DataTable, ErrorBox, Loading, Outcome, Picker, Segmented,
@@ -8,16 +9,6 @@ import { Button, DeleteButton } from "../buttons";
 import { DownloadIcon } from "../icons";
 import { useLoad } from "../hooks";
 import { periodOf, today } from "../activity-period";
-
-/* The activity log, for admins.
-
-   Two halves. At the top, what the log says needs looking at - password
-   guessing, sign-ins from new places, bulk exports - worked out from the log
-   itself by the server. Below, the log: every event, newest first, filtered
-   and exported as needed.
-
-   An alert's "Show events" narrows the log to the rows behind it, so going
-   from "something is wrong" to "here is exactly what happened" is one click. */
 
 const PERIODS = [
   { value: 1, label: "24 hours" },
@@ -44,8 +35,6 @@ export default function AdminActivity() {
   const actions = actionsLoad.data;
   const alerts = alertsLoad.data;
 
-  /* Typing in the email or address box waits for a pause before asking the
-     server, rather than sending a query per keystroke. */
   useEffect(() => {
     const t = setTimeout(() => setFilters((f) =>
       (f.email === typed.email && f.ip === typed.ip ? f : { ...f, ...typed })), 350);
@@ -57,8 +46,6 @@ export default function AdminActivity() {
   const page = pageLoad.data;
   const error = actionError ?? actionsLoad.error ?? alertsLoad.error ?? pageLoad.error;
 
-  /* Ticked rows. Kept with the list they were ticked on, so changing a
-     filter never leaves ticks on rows that are no longer on screen. */
   const [ticked, setTicked] = useState({ page: null, ids: new Set() });
   const chosen = ticked.page === page ? ticked.ids : new Set();
   const tick = (ids, on) => {
@@ -70,7 +57,6 @@ export default function AdminActivity() {
   };
   const allTicked = page?.items.length > 0 && page.items.every((r) => chosen.has(r.id));
 
-  /* Delete, then show the log as it now is - with the deletion's own row. */
   async function remove(body) {
     setError(null);
     try {
@@ -85,8 +71,6 @@ export default function AdminActivity() {
     setMore(true);
     try {
       const p = await api.activity({ ...query, limit: 100, before_id: before });
-      /* Only onto the page it continues: if the filters changed while this
-         was on its way, its rows belong to a list no longer on screen. */
       pageLoad.setData((cur) => (cur?.next === before
         ? { items: [...cur.items, ...p.items], next: p.next } : cur));
     } catch (e) { setError(e); }
@@ -116,7 +100,6 @@ export default function AdminActivity() {
       const cat = actions.categories[key.split(".")[0]] ?? "Other";
       (groups[cat] ??= []).push({ value: key, label });
     }
-    // Each group opens with "every event of this kind", then the events.
     return Object.entries(groups).map(([cat, items]) => ({
       group: cat,
       options: [{ value: `${items[0].value.split(".")[0]}.`, label: `All ${cat.toLowerCase()}` },
@@ -202,7 +185,6 @@ export default function AdminActivity() {
                     onChange={(v) => setTyped((t) => ({ ...t, email: v }))} />
         <TextFilter label="Address" placeholder="IP address" size={14} value={typed.ip}
                     onChange={(v) => setTyped((t) => ({ ...t, ip: v }))} />
-        {/* Each filter has its own ×; this undoes several at once. */}
         {Object.values(filters).filter(Boolean).length > 1 && (
           <Button tone="quiet" size="sm" onClick={() => {
             setFilters(EMPTY); setTyped({ email: "", ip: "" });
@@ -290,10 +272,7 @@ const SPANS = [
   { value: "all", label: "Everything" },
 ];
 
-/* Deleting a stretch of the log: the day, week or month holding a date, or
-   all of it. It says how many events that is before anything goes, and asks
-   once more. The deletion leaves its own row behind, even after
-   "Everything". */
+// Deleting a stretch of the log: the day, week or month holding a date, or all of it.
 function DeletePeriod({ onDelete }) {
   const [span, setSpan] = useState("day");
   const [date, setDate] = useState(today());
@@ -302,8 +281,6 @@ function DeletePeriod({ onDelete }) {
     : period && { since: period.since, until: period.until, label: period.label };
   const key = JSON.stringify(body);
 
-  /* How many it would delete - counted by the server, not guessed from the
-     page, which holds only the newest hundred. */
   const preview = useLoad(() => (body ? api.deleteActivity({ ...body, dry_run: true })
                                       : Promise.resolve(null)), [key]);
   const n = preview.data?.count;
@@ -336,8 +313,7 @@ function DeletePeriod({ onDelete }) {
   );
 }
 
-/* The event's particulars, on one line - the reason a sign-in failed, the
-   files an upload brought in. The whole record is on the tooltip. */
+// The event's particulars, on one line.
 function Detail({ d }) {
   if (!d || !Object.keys(d).length) return null;
   const parts = [];

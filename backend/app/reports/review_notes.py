@@ -1,17 +1,4 @@
-"""The checks a person has to see before a report goes out.
-
-Both pipelines end here. Only three kinds of thing are reported, because they
-are the only ones that change what goes to the client:
-
-  * new providers or groups - and whether their figures made it in
-  * figures with no data for the week (a KPI block with no source, or one
-    that came to nothing - DDLE with no filings, say)
-  * duplicate case ids in Delta Comparison
-
-Rows dropped by the routine filters (inactive providers, closed files, no
-Case AR match, Partial Paid rewrites) are not reported. They happen every week
-and are the filters doing their job; listing them buried the three above.
-"""
+"""The checks a person must see before a report goes out."""
 from __future__ import annotations
 import datetime as dt
 
@@ -22,7 +9,7 @@ from .period import Period
 
 
 def week_label(week: str | None, as_of: dt.date) -> str:
-    """The ISO week being reported; the run date's own week when none is given."""
+    """The iso week being reported; the run date's own week when none is given."""
     if week:
         return week
     y, w, _ = as_of.isocalendar()
@@ -30,13 +17,7 @@ def week_label(week: str | None, as_of: dt.date) -> str:
 
 
 def add_new_providers(kpi: dict, krep) -> list[tuple[str, str, float]]:
-    """Give every provider with a KPI figure and no row a row of its own.
-
-    The .bat pipeline inserts a row into the sheet for it (add_kpi_rows); here
-    the row is a new entry in the block, named as the numbers file names the
-    provider, so its figure is counted in the block's total rather than lost.
-    Returns (block, provider, value) for each row added.
-    """
+    """Give every provider with a KPI figure and no row a row of its own."""
     added = []
     for block, name, v in krep.unmapped_groups:
         if v and block in kpi:
@@ -66,7 +47,6 @@ def review_notes(drep, krep, added, delta: pl.DataFrame, grids: dict,
     Providers reads its layout from last week's sheet)."""
     notes: list[Note] = []
 
-    # --- new providers ----------------------------------------------------
     for block, name, v in added:
         notes.append(action(
             "kpi_new_provider",
@@ -100,7 +80,6 @@ def review_notes(drep, krep, added, delta: pl.DataFrame, grids: dict,
             f"figures are not counted: {', '.join(map(str, krep.unknown_providers))}",
             providers=[str(u) for u in krep.unknown_providers]))
 
-    # --- no data for the week ----------------------------------------------
     if krep.skipped_blocks:
         why = ("no column for it in the KPI-numbers file" if has_scorecard
                else "no KPI-numbers file was supplied")
@@ -127,7 +106,6 @@ def review_notes(drep, krep, added, delta: pl.DataFrame, grids: dict,
             f"No payments for {period.label} up to this week in the Payment "
             f"Detail Report", month=period.month))
 
-    # --- duplicate case ids -------------------------------------------------
     if getattr(drep, "duplicate_case_ids", 0) and "Case_ID" in delta.columns:
         dup = (delta.group_by("Case_ID").len().filter(pl.col("len") > 1)
                     .sort("Case_ID")["Case_ID"].to_list())

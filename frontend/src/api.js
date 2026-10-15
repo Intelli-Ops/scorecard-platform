@@ -1,23 +1,16 @@
+// Calls to the backend API.
 const BASE = import.meta.env.VITE_API ?? "http://127.0.0.1:8000";
 
-/* The sign-in is a cookie the server sets and this code cannot read
-   (HttpOnly). It used to be a token kept in localStorage, where any script
-   on the page could take it; nothing here holds it any more, and the browser
-   attaches it to requests to this server by itself. Tokens left behind by
-   the old version are cleared. */
-try { localStorage.removeItem("scorecard.token"); } catch { /* no storage */ }
+try { localStorage.removeItem("scorecard.token"); } catch { /* storage blocked */ }
 
 async function json(path, opts = {}) {
   const r = await fetch(BASE + path, opts);
   if (r.status === 401) {
-    // The session has ended or been revoked: back to the sign-in screen.
     if (!path.startsWith("/api/auth/")) window.location.reload();
   }
   if (!r.ok) {
     let detail;
     try { detail = (await r.json()).detail; } catch { detail = r.statusText; }
-    /* An admin reset this account's password while it was open. The app shows
-       the choose-a-new-password screen once it knows, so tell it. */
     if (detail?.code === "password_change_required") {
       window.dispatchEvent(new Event("scorecard:password-change"));
     }
@@ -45,8 +38,7 @@ const query = (params) => {
   return text ? `?${text}` : "";
 };
 
-/* Save a response as a file. Fetched rather than linked, so a refusal can be
-   shown as an error instead of opening as a page of JSON. */
+// Save a response as a file.
 async function download(path, fallbackName) {
   const r = await fetch(BASE + path);
   if (!r.ok) throw new Error(`Could not download ${fallbackName} (${r.status})`);
@@ -63,14 +55,20 @@ async function download(path, fallbackName) {
 }
 
 export const api = {
-  // --- accounts ---
   signup: (email, apd_id, password) =>
     post("/api/auth/signup", { email, apd_id, password }),
   login: (email, password) => post("/api/auth/login", { email, password }),
+  verifyEmail: (email, code) => post("/api/auth/verify-email", { email, code }),
+  resendVerification: (email, password) =>
+    post("/api/auth/verify-email/resend", { email, password }),
+  forgotPassword: (email) => post("/api/auth/password/forgot", { email }),
+  checkResetCode: (email, code) =>
+    post("/api/auth/password/verify-code", { email, code }),
+  setNewPassword: (ticket, password) =>
+    post("/api/auth/password/reset", { ticket, password }),
   logout: () => json("/api/auth/logout", { method: "POST" }),
   me: () => json("/api/auth/me"),
 
-  // --- your own profile ---
   updateProfile: (display_name) => patch("/api/me", { display_name }),
   changePassword: (current, next) =>
     post("/api/me/password", { current, new: next }),
@@ -79,9 +77,7 @@ export const api = {
   endOtherSessions: () => post("/api/me/sessions/end-others"),
   myActivity: () => json("/api/me/activity"),
 
-  // --- admin ---
   users: () => json("/api/admin/users"),
-  // `reports` optional: grant a new viewer its scorecards as it is approved.
   approveUser: (id, reports) =>
     post(`/api/admin/users/${id}/approve`, reports ? { reports } : {}),
   setRole: (id, role) => post(`/api/admin/users/${id}/role`, { role }),
@@ -94,35 +90,25 @@ export const api = {
   actions: () => json("/api/admin/actions"),
   activity: (filters = {}) => json(`/api/admin/activity${query(filters)}`),
   alerts: (days = 7) => json(`/api/admin/alerts?days=${days}`),
-  /* System admins only. { ids } | { since, until, label } | { everything },
-     plus dry_run to count first. */
   deleteActivity: (body) => post("/api/admin/activity/delete", body),
   downloadActivity: (filters = {}) =>
     download(`/api/admin/activity/csv${query(filters)}`, "activity.csv"),
 
   reports: () => json("/api/reports"),
-  // The latest APPROVED scorecard per report, and who approved it.
   currentScorecards: () => json("/api/scorecards/current"),
   weeks: () => json("/api/weeks"),
   week: (w) => json(`/api/weeks/${w}`),
-  // The month a week belongs to, and the working days its pace uses.
   weekMonth: (w) => json(`/api/weeks/${w}/month`),
-  // null goes back to the calendar's count.
   setWorkingDays: (w, days) =>
     json(`/api/weeks/${w}/month`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ working_days: days }) }),
 
-  // The browser sends the files; the server hashes what it receives and
-  // refuses anything that is not one of the nine inputs.
-  // Who uploaded is taken from the signed-in account on the server.
   upload(week, files, { forReport, onProgress } = {}) {
     const body = new FormData();
     for (const f of files) body.append("files", f, f.name);
     if (forReport) body.append("for_report", forReport);
 
-    // XHR rather than fetch: it reports upload progress, and a 385 MB week
-    // with no progress bar looks indistinguishable from a hung page.
     return new Promise((resolve, reject) => {
       const x = new XMLHttpRequest();
       x.open("POST", `${BASE}/api/weeks/${week}/uploads`);
@@ -144,34 +130,23 @@ export const api = {
   startRun: (report, week, asOf) =>
     json(`/api/runs?report=${report}&week=${week}` +
          (asOf ? `&as_of=${asOf}` : ""), { method: "POST" }),
-  // Twelve weeks, not twenty rows: a week holds two runs and more when one is
-  // rebuilt, so a row limit cuts the list in the middle of a week.
   runs: (report, weeks = 12) =>
     json(`/api/runs?weeks=${weeks}` + (report ? `&report=${report}` : "")),
   run: (id) => json(`/api/runs/${id}`),
-  // Who approved comes from the signed-in account, not from the caller.
   approve: (id) => json(`/api/runs/${id}/approve`, { method: "POST" }),
   unapprove: (id) => json(`/api/runs/${id}/unapprove`, { method: "POST" }),
   deleteRun: (id) => json(`/api/runs/${id}`, { method: "DELETE" }),
 
-  // Uploads outlive runs, so deleting builds one by one never clears a
-  // week. This is what removes the files themselves.
   deleteWeek: (w) => json(`/api/weeks/${w}`, { method: "DELETE" }),
-  // One wrong file, taken back - refused once a build has read it.
   removeUpload: (w, id) =>
     json(`/api/weeks/${w}/uploads/${id}`, { method: "DELETE" }),
   figures: (id, name) => json(`/api/runs/${id}/figures/${name}`),
-  // The Case AR pivot, rebuilt on the server for { group, file_status, validity }.
   caseAr: (id, filters = {}) => json(`/api/runs/${id}/case-ar${query(filters)}`),
   table: (id, name, { limit = 100, offset = 0 } = {}) =>
     json(`/api/runs/${id}/tables/${name}?limit=${limit}&offset=${offset}`),
 
-  // A whole table as CSV - every row, not the page on screen.
   downloadCsv: (id, name) =>
     download(`/api/runs/${id}/tables/${name}/csv`, `${name}.csv`),
 };
 
-/* Formatting lives in format.js - pure, and importable without a bundler.
-   Re-exported here because every screen has always reached for it through
-   api.js, and moving a file is not a reason to touch twenty imports. */
 export * from "./format.js";

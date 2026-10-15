@@ -1,13 +1,4 @@
-"""Roles and access: viewer, admin, system admin - and working days.
-
-The rules, as agreed:
-
-  * a viewer sees only the approved scorecards of the reports it was given
-  * uploading, building, approving and deleting are for admins and above
-  * admins manage viewers; only a system admin makes or manages admins
-  * nobody touches a system admin's account but that person, and a system
-    admin may remove their own account only while another one remains
-"""
+"""Tests for roles, report access and working days."""
 from __future__ import annotations
 
 import pytest
@@ -15,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.db import session as db_session
-from tests.accounts import account, make_account, sign_in
+from tests.accounts import account, confirm_email, make_account, sign_in
 
 
 @pytest.fixture
@@ -51,12 +42,15 @@ def _run(week="2026-W38", report="gfs", status="approved"):
         return run.id
 
 
+def login_ok(client, email, password="a good long password"):
+    return client.post("/api/auth/login", json={"email": email,
+                                               "password": password}).status_code == 200
+
+
 def _id(client, headers, email):
     return next(u["id"] for u in client.get("/api/admin/users", headers=headers).json()
                 if u["email"] == email)
 
-
-# ------------------------------------------------------------ viewers
 
 def test_a_viewer_sees_only_the_reports_it_was_given(client):
     gfs = _run(report="gfs")
@@ -67,7 +61,6 @@ def test_a_viewer_sees_only_the_reports_it_was_given(client):
     assert [c["key"] for c in cards] == ["gfs"]
     assert client.get(f"/api/runs/{gfs}", headers=viewer).status_code == 200
     assert client.get(f"/api/runs/{gfs}/figures/kpi", headers=viewer).status_code == 200
-    # The other report does not exist, as far as this viewer can tell.
     assert client.get(f"/api/runs/{ap}", headers=viewer).status_code == 404
     assert client.get(f"/api/runs/{ap}/figures/kpi", headers=viewer).status_code == 404
 
@@ -104,8 +97,6 @@ def test_a_viewer_cannot_upload(client):
     assert r.status_code == 403
 
 
-# ------------------------------------------------------------ who manages whom
-
 def test_an_admin_grants_a_viewer_access(client, admin):
     make_account("v@appedology.com", "APD-0100")
     vid = _id(client, admin, "v@appedology.com")
@@ -123,6 +114,7 @@ def test_approving_a_sign_up_can_grant_access_at_once(client, admin):
     client.post("/api/auth/signup", json={"email": "new@appedology.com",
                                           "apd_id": "APD-0300",
                                           "password": "a good long password"})
+    confirm_email(client, "new@appedology.com")
     nid = _id(client, admin, "new@appedology.com")
     r = client.post(f"/api/admin/users/{nid}/approve", headers=admin,
                     json={"reports": ["gfs"]})
@@ -148,16 +140,73 @@ def test_an_admin_cannot_manage_another_admin(client, root, admin):
                                     headers=admin, json=body)
         assert r.status_code == 403, path
     assert client.delete(f"/api/admin/users/{oid}", headers=admin).status_code == 403
-    # The system admin can.
     assert client.delete(f"/api/admin/users/{oid}", headers=root).status_code == 200
 
 
-def test_nobody_touches_another_system_admin(client, root):
+def test_nobody_demotes_or_removes_another_system_admin(client, root):
     make_account("root2@appedology.com", "APD-0002", role="system_admin")
     rid = _id(client, root, "root2@appedology.com")
     assert client.delete(f"/api/admin/users/{rid}", headers=root).status_code == 403
     assert client.post(f"/api/admin/users/{rid}/role", headers=root,
                        json={"role": "viewer"}).status_code == 403
+
+
+def test_a_system_admin_can_stop_another_in_an_emergency(client, root):
+    """A stolen laptop, a leaked password: another system admin can sign them
+    out, disable them, re-enable them and reset their password."""
+    make_account("root2@appedology.com", "APD-0002", role="system_admin")
+    theirs = sign_in(client, "root2@appedology.com")
+    rid = _id(client, root, "root2@appedology.com")
+
+    assert client.post(f"/api/admin/users/{rid}/sign-out",
+                       headers=root).json()["ended"] == 1
+    assert client.get("/api/auth/me", headers=theirs).status_code == 401
+
+    theirs = sign_in(client, "root2@appedology.com")
+    assert client.post(f"/api/admin/users/{rid}/active", headers=root,
+                       json={"active": False}).status_code == 200
+    assert client.get("/api/auth/me", headers=theirs).status_code == 401
+    assert client.post(f"/api/admin/users/{rid}/active", headers=root,
+                       json={"active": True}).status_code == 200
+
+    r = client.post(f"/api/admin/users/{rid}/reset-password", headers=root)
+    assert r.status_code == 200
+    assert r.json()["notified"] == "root2@appedology.com"
+    assert login_ok(client, "root2@appedology.com") is False   # old one is dead
+
+
+def test_an_admin_cannot_stop_a_system_admin(client, root, admin):
+    rid = _id(client, admin, "root@appedology.com")
+    for path, body in [("active", {"active": False}), ("reset-password", None),
+                       ("sign-out", None), ("unlock", None)]:
+        r = client.post(f"/api/admin/users/{rid}/{path}", headers=admin, json=body)
+        assert r.status_code == 403, path
+    assert client.get("/api/auth/me", headers=root).status_code == 200
+
+
+def test_the_last_active_system_admin_is_never_disabled(client, root):
+    """Two system admins disabling each other at once leave one active."""
+    from app.db.models import User
+    from app.db.session import session
+    from app.service import auth
+    make_account("root2@appedology.com", "APD-0002", role="system_admin")
+    with session() as s:
+        one = s.query(User).filter_by(email="root@appedology.com").one()
+        two = s.query(User).filter_by(email="root2@appedology.com").one()
+        auth.set_active(s, one, two, False)           # the first one wins
+    with session() as s:
+        one = s.query(User).filter_by(email="root@appedology.com").one()
+        two = s.query(User).filter_by(email="root2@appedology.com").one()
+        with pytest.raises(auth.Forbidden, match="only active system admin"):
+            auth.set_active(s, two, one, False)       # and leaves one standing
+
+
+def test_the_server_command_will_not_demote_the_last_system_admin(client, root):
+    from app import manage
+    with pytest.raises(SystemExit, match="only active system admin"):
+        manage.main(["set-role", "root@appedology.com", "admin"])
+    make_account("root2@appedology.com", "APD-0002", role="system_admin")
+    manage.main(["set-role", "root@appedology.com", "admin"])      # now it may
 
 
 def test_a_system_admin_may_leave_only_if_another_remains(client, root):
@@ -190,6 +239,28 @@ def test_the_users_screen_offers_only_what_will_work(client, root, admin):
     assert rows["admin@appedology.com"]["delete"]
     assert not rows["root@appedology.com"]["delete"]        # the only system admin
 
+    make_account("root2@appedology.com", "APD-0003", role="system_admin")
+    other = {u["email"]: u["can"] for u in
+             client.get("/api/admin/users", headers=root).json()}["root2@appedology.com"]
+    assert other["disable"] and other["reset_password"] and other["sign_out"]
+    assert not other["delete"] and other["roles"] == [] and not other["access"]
+
+
+def test_an_account_is_approved_only_once_its_email_is_confirmed(client, admin):
+    client.post("/api/auth/signup", json={"email": "new@appedology.com",
+                                          "apd_id": "APD-0300",
+                                          "password": "a good long password"})
+    row = next(u for u in client.get("/api/admin/users", headers=admin).json()
+               if u["email"] == "new@appedology.com")
+    assert row["status"] == "unverified" and not row["can"]["approve"]
+    r = client.post(f"/api/admin/users/{row['id']}/approve", headers=admin)
+    assert r.status_code == 409 and "not confirmed" in r.json()["detail"]
+
+    confirm_email(client, "new@appedology.com")
+    row = next(u for u in client.get("/api/admin/users", headers=admin).json()
+               if u["email"] == "new@appedology.com")
+    assert row["status"] == "pending" and row["can"]["approve"]
+
 
 def test_deleting_an_account_keeps_its_history(client, admin):
     make_account("v@appedology.com", "APD-0100")
@@ -201,8 +272,6 @@ def test_deleting_an_account_keeps_its_history(client, admin):
     assert {e["action"] for e in events} >= {"auth.login"}
 
 
-# ------------------------------------------------------------ working days
-
 def test_working_days_default_to_the_calendar_and_can_be_set(client, admin):
     info = client.get("/api/weeks/2026-W38/month", headers=admin).json()
     assert info["month"] == "2026-09" and not info["entered"]
@@ -210,21 +279,18 @@ def test_working_days_default_to_the_calendar_and_can_be_set(client, admin):
 
     r = client.put("/api/weeks/2026-W38/month", headers=admin, json={"working_days": 20})
     assert r.json()["working_days"] == 20 and r.json()["entered"]
-    # Every week of the month shares it.
     assert client.get("/api/weeks/2026-W37/month",
                       headers=admin).json()["working_days"] == 20
-    # Back to the calendar.
     r = client.put("/api/weeks/2026-W38/month", headers=admin, json={"working_days": None})
     assert not r.json()["entered"]
 
 
 def test_the_days_passed_by_the_end_of_the_week(client, admin):
-    """2026-W39 ends Fri 25 Sep: 1-25 September holds 19 weekdays, less
-    Labour Day (7 Sep) in the rules' holidays."""
+    """2026-W39 ends Fri 25 Sep: 1-25 September holds 19 weekdays, less Labour
+    Day (7 Sep) in the rules' holidays."""
     info = client.get("/api/weeks/2026-W39/month", headers=admin).json()
     assert info["week_of_month"] == 4
     assert info["days_passed"] == 18 and info["passed_through"] == "2026-09-25"
-    # Never more than the month's working days, when fewer are entered.
     client.put("/api/weeks/2026-W39/month", headers=admin, json={"working_days": 15})
     assert client.get("/api/weeks/2026-W39/month",
                       headers=admin).json()["days_passed"] == 15
@@ -238,7 +304,7 @@ def test_working_days_must_fit_the_month(client, admin):
 
 
 def test_the_pace_uses_the_entered_working_days():
-    """The sheet's =SUM(...)/elapsed*days, with the month's days as entered."""
+    """The sheet's =sum(...)/elapsed*days, with the month's days as entered."""
     from app.reports.period import reporting_period
     from app.reports.pacing import pace_grid
     calendar = reporting_period("2026-W38", [])

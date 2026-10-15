@@ -26,7 +26,8 @@ Time needed: about 15 minutes, mostly package downloads.
 | **Backend** | Python (FastAPI) service. Checks sign-ins, stores uploads, builds the scorecards | `/opt/scorecard`, runs as the `scorecard` system user |
 | **systemd** | Starts the backend at boot and restarts it if it stops | `/etc/systemd/system/scorecard.service` |
 | **MySQL 8** | The database | the `scorecard` database |
-| **Settings** | Database address and password, time zone, limits | `/etc/scorecard/scorecard.env` |
+| **Settings** | Database address and password, mail server, time zone, limits | `/etc/scorecard/scorecard.env` |
+| **Migration login** | The second database account, the one allowed to change tables. Root only; the service never reads it | `/etc/scorecard/migrate.env` |
 | **Data folder** | Every uploaded Excel file and every build's results | `/var/lib/scorecard` |
 
 The backend listens on `127.0.0.1` only, so it cannot be reached except
@@ -70,11 +71,17 @@ What the script does, in order:
 2. Creates the `scorecard` system user (it cannot log in).
 3. Copies the code to `/opt/scorecard` and installs the Python packages
    into `/opt/scorecard/.venv`.
-4. Creates the `scorecard` MySQL database and a `scorecard` MySQL user
-   with a random 48-character password, and writes that password into
-   `/etc/scorecard/scorecard.env`. Only root and the service can read it.
-5. Creates the tables, and adds the database trigger that stops activity
-   log entries from being edited.
+4. Creates the `scorecard` MySQL database and two MySQL accounts, each
+   with its own random 48-character password:
+   - `scorecard`, which the app runs as. It can read and write rows and
+     nothing else, so it cannot change or drop a table. Its password goes
+     in `/etc/scorecard/scorecard.env`, which only root and the service can
+     read.
+   - `scorecard_migrate`, which can change tables. It is used only to
+     install and update. Its password goes in `/etc/scorecard/migrate.env`,
+     which only root can read.
+5. Creates the tables (as `scorecard_migrate`), and adds the database
+   trigger that stops activity log entries from being edited.
 6. Installs and starts the `scorecard` service, and the nginx site.
 7. Checks that both the backend and nginx answer.
 
@@ -126,6 +133,52 @@ run `sudo nginx -t && sudo systemctl reload nginx`.
 
 Updates never overwrite this file, so HTTPS stays in place.
 
+## 4. Email
+
+The app emails 6-digit codes. Each works once, for 5 minutes, and five wrong
+tries use it up:
+
+- **Confirm your email**, sent when someone signs up. Until they enter it,
+  the account cannot be approved, so typing a colleague's address is not
+  enough to get in.
+- **Reset your password**, sent when someone presses **Forgot password?** on
+  the sign-in screen. Nobody else is involved, and no admin sees a password.
+
+It also sends two notices: **your password was changed** after any reset,
+and **choose a new password** when an admin uses **Force password reset**
+(for a lost laptop or a leaked password). A forced reset stops the old
+password working at once; the person then uses Forgot password?.
+
+Until mail is set up, sign-ups and password resets are refused with a
+message saying so.
+
+**Usually nothing to do here.** If the zip has a `mail.env` in it (the
+developer's mail settings, which `make_package.py` adds), `install.sh` copies
+them into `/etc/scorecard/scorecard.env` on every install. It also fills in
+`SCORECARD_PUBLIC_URL` from the nginx site's `server_name` if it is empty.
+The zip then holds the mail password, so keep it as you would the password.
+
+To set them by hand instead, put these in `/etc/scorecard/scorecard.env`:
+
+```
+SCORECARD_PUBLIC_URL=https://scorecard.yourcompany.com
+SCORECARD_SMTP_HOST=smtp.office365.com
+SCORECARD_SMTP_PORT=587
+SCORECARD_SMTP_USER=scorecard@appedology.com
+SCORECARD_SMTP_PASSWORD=the-mailbox-password
+```
+
+For Microsoft 365 the mailbox needs SMTP AUTH turned on (Microsoft 365 admin
+centre, the user, **Mail**, **Manage email apps**, **Authenticated SMTP**).
+Then run `sudo systemctl restart scorecard`.
+
+**If mail stops working** and someone is locked out,
+`sudo scorecard-manage reset-password EMAIL` prints a reset code on the
+screen instead of mailing it. First have them press **Forgot password?**,
+enter their email and press **Send code**: that brings them to the code
+boxes, even though no email arrives. Then run the command and give them the
+code it prints, within 5 minutes. It replaces any code that was mailed.
+
 ---
 
 ## Updating to a new version
@@ -138,9 +191,21 @@ cd scorecard
 sudo bash deploy/install.sh
 ```
 
-Replaced: the code, the built app and the Python packages. The service is
-restarted, and the database migrations it has not yet had are applied
-automatically (`backend/app/db/migrations/versions/`).
+Replaced: the code, the built app and the Python packages. The database
+changes the new version needs (`backend/app/db/migrations/versions/`) are
+applied by the script, as `scorecard_migrate`, and then the service is
+restarted. The app itself cannot change tables. If it starts on a database
+that has not been upgraded, it stops and its log says to run
+`sudo scorecard-manage upgrade`.
+
+**Updating from a version before the two database accounts:** the script
+creates `scorecard_migrate` and `/etc/scorecard/migrate.env`, takes the
+table-changing rights away from `scorecard`, and adds
+`SCORECARD_AUTO_MIGRATE=0` to the settings file. Nothing else needs doing,
+except setting up email (step 4 above). Accounts that were already approved
+count as having confirmed their email. People still waiting for approval will
+be asked to confirm theirs. Temporary passwords handed out before the update
+stop working 24 hours after they were issued.
 
 Kept: `/etc/scorecard/scorecard.env`, the MySQL database, `/var/lib/scorecard`
 and the nginx site.
@@ -168,7 +233,8 @@ sudo tar czf /backup/scorecard-data-$(date +%F).tar.gz \
 
 To run this every night, save it as `/etc/cron.daily/scorecard-backup` and
 make it executable (`chmod +x`). Also copy `/etc/scorecard/scorecard.env`
-somewhere safe once, since it holds the database password.
+and `/etc/scorecard/migrate.env` somewhere safe once, since they hold the
+two database passwords.
 
 **Restore:** stop the service (`sudo systemctl stop scorecard`), then run
 `gunzip < backup.sql.gz | sudo mysql scorecard` and unpack the tar into
@@ -210,13 +276,20 @@ If the database lives on a separate MySQL 8 server:
 
 ```sql
 CREATE DATABASE scorecard CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+
+-- The app runs as this one. Rows only.
 CREATE USER 'scorecard'@'APP_SERVER_IP' IDENTIFIED BY 'a-long-random-password';
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES, TRIGGER
-  ON scorecard.* TO 'scorecard'@'APP_SERVER_IP';
+GRANT SELECT, INSERT, UPDATE, DELETE ON scorecard.* TO 'scorecard'@'APP_SERVER_IP';
+
+-- Install and update only. Changes tables.
+CREATE USER 'scorecard_migrate'@'APP_SERVER_IP' IDENTIFIED BY 'another-long-random-password';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES, TRIGGER
+  ON scorecard.* TO 'scorecard_migrate'@'APP_SERVER_IP';
 ```
 
-   There is deliberately no `DROP`: `TRUNCATE` would get around the app's
-   rules for the activity log.
+   The app's own account gets no `CREATE`, `ALTER`, `DROP` or `TRIGGER`.
+   A bug in the app then cannot change a table or remove the trigger that
+   protects the activity log.
 
 2. On the app server:
 
@@ -229,6 +302,15 @@ sudo bash deploy/install.sh --external-db
 
 ```
 SCORECARD_DB=mysql://scorecard:a-long-random-password@db.yourcompany.com/scorecard
+```
+
+   Also set `SCORECARD_AUTO_MIGRATE=0`, and write the migration account's
+   address into its own file, readable by root alone:
+
+```bash
+echo 'SCORECARD_MIGRATE_DB=mysql://scorecard_migrate:another-long-random-password@db.yourcompany.com/scorecard' \
+  | sudo tee /etc/scorecard/migrate.env >/dev/null
+sudo chmod 600 /etc/scorecard/migrate.env
 ```
 
    Then run `sudo bash deploy/install.sh --external-db` again.
@@ -250,7 +332,8 @@ sudo scorecard-manage protect-log --as "mysql://admin:ADMINPASS@db.yourcompany.c
 | Restart it (after editing settings) | `sudo systemctl restart scorecard` |
 | Check it is healthy | `curl -f http://127.0.0.1/api/health` → `{"ok":true,"checks":{"database":true,"storage":true,"disk_space":true,"worker":true},"queued_builds":0}`. Any check `false` makes it a 503 and names what is wrong. Asked from another computer it says only `{"ok":true}` or `false` |
 | Check it reaches the database | `sudo scorecard-manage check` |
-| Unlock a locked-out admin | `sudo scorecard-manage reset-password EMAIL` |
+| Get a locked-out admin back in | `sudo scorecard-manage reset-password EMAIL`: prints a 5-minute reset code, for when mail is not working |
+| Apply database changes by hand | `sudo scorecard-manage upgrade` (the installer does this on every update) |
 | Change someone's role | `sudo scorecard-manage set-role EMAIL admin` (`viewer`, `admin`, `system_admin`) |
 | See disk use | `sudo du -sh /var/lib/scorecard/*` |
 
@@ -261,7 +344,11 @@ change.
 
 | Setting | Set by install to | Meaning |
 |---|---|---|
-| `SCORECARD_DB` | local MySQL, random password | The database address |
+| `SCORECARD_DB` | local MySQL, random password | The database address the app runs as. That account can read and write rows only |
+| `SCORECARD_AUTO_MIGRATE` | `0` | `0`: the app only checks that the tables are up to date. `1` (a laptop): it updates them itself |
+| `SCORECARD_PUBLIC_URL` | `https://` + `SERVER_NAME` | The address of the "Open Scorecard" button in the emails |
+| `SCORECARD_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD` | empty, `587` | The mail server (see "Email"). Empty: sign-ups and resets are refused |
+| `SCORECARD_MAIL_FROM` | empty | The From address. Empty: the SMTP user |
 | `SCORECARD_DATA` | `/var/lib/scorecard` | Uploaded files, results, cache |
 | `SCORECARD_TIMEZONE` | `Asia/Karachi` | Time zone for the out-of-hours sign-in alert |
 | `SCORECARD_WORK_HOURS` | `7-21` | Sign-ins outside these hours are flagged |
@@ -282,6 +369,9 @@ change.
 | `bash\r: not found` | A script has Windows line endings | Use the zip from `make_package.py`, which fixes them |
 | Log says **activity_log triggers are not as they should be** | The trigger was never added (external MySQL) | Step 3 of "MySQL on another server" |
 | `Access denied for user 'scorecard'` | The password in the settings file and MySQL differ | Set it again: `sudo mysql -e "ALTER USER 'scorecard'@'127.0.0.1' IDENTIFIED BY '...'"` and the same in `scorecard.env` |
+| Service will not start; log says **the database is at migration ...** | The code was updated but the database was not | `sudo scorecard-manage upgrade`, then `sudo systemctl restart scorecard` |
+| Sign-up says **This server cannot send email yet** | Mail is not set up | "Email", above |
+| Sign-up or reset says **The email could not be sent just now** | The mail server refused or did not answer | `sudo journalctl -u scorecard -n 50` shows its reply. Usually the SMTP password, or SMTP AUTH turned off for the mailbox |
 | Activity log shows `127.0.0.1` for everyone | A second proxy or load balancer in front of nginx | Have that proxy pass the visitor's address, and trust it in `set_real_ip_from` |
 
 ---

@@ -1,5 +1,4 @@
 # Uploaded client source files and anything derived from them.
-# Never commit: large, and they contain case data.
 data/
 uploads/
 *.xlsb
@@ -31,11 +30,13 @@ data/
 frontend/dist/
 frontend/.env.local
 
+# The mail account's password.
+/mail.env
+
 # Zips made by deploy/make_package.py
 release/
 
-# Project notes kept on the developer's machine only; DEPLOY.md is the one
-# document that ships.
+# Project notes kept on the developer's machine only.
 /README.md
 /ARCHITECTURE.md
 /HOW-IT-WORKS.md

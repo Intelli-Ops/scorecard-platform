@@ -1,23 +1,11 @@
-"""Delta Comparison — steps doc Phases 4 and 6.
-
-Phase 4: combine WC Delta (WC workbook) + Med-Legal Delta + IMR Delta (MLCR workbook)
-         onto 15 shared columns; Med-Legal keeps F&F settlements only.
-Phase 6: filter to live GFS settlements and attach the Custom Case AR lookups.
-
-Verified against week 2026-W35: 666 rows, 665 distinct case ids, and every value
-matches the delivered sheet except 11 rows — see FINDING_AND_AWARD_NOTE below.
-
-Columns are matched BY NAME, never by position: the steps doc's wcColsNums /
-medColsNums / imrColsNums are all stale (a column was inserted upstream), and the
-three sheets use different names for the same field.
-"""
+"""GFS: Delta Comparison (steps doc phases 4 and 6)."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 import datetime as dt
 
 import polars as pl
 
-from ...common import i64 as _i64
+from ...common import StageLog, i64 as _i64
 
 FINDING_AND_AWARD_NOTE = (
     "'FINDING & AWARD' collapses to CIC Pending, matching the week-34 sheet and the "
@@ -26,18 +14,12 @@ FINDING_AND_AWARD_NOTE = (
 
 
 @dataclass
-class DeltaReport:
-    stages: list[tuple[str, int]] = field(default_factory=list)
+class DeltaReport(StageLog):
     partial_paid_rewritten: int = 0
     per_sheet: dict[str, int] = field(default_factory=dict)
     duplicate_case_ids: int = 0
-    # Tuesday's "- comments" lookups: rows in each comments sheet, and
-    # (matched, of) Delta Comparison rows per source sheet.
     comment_rows: dict[str, int] = field(default_factory=dict)
     comments_found: dict[str, tuple[int, int]] = field(default_factory=dict)
-
-    def add(self, label: str, n: int) -> None:
-        self.stages.append((label, n))
 
 
 def combine_delta(sheets: dict[str, pl.DataFrame], rules: dict) -> tuple[pl.DataFrame, DeltaReport]:
@@ -57,8 +39,6 @@ def combine_delta(sheets: dict[str, pl.DataFrame], rules: dict) -> tuple[pl.Data
     comb = pl.concat(parts, how="vertical_relaxed")
     rep.add("PHASE 4  combined", comb.height)
 
-    # Med-Legal counts F&F only - applied here so every sheet built from the Delta
-    # data (Delta Comparison and the Settlement grids) sees the same rows.
     st = pl.col("Settlement_Type").cast(pl.Utf8).str.strip_chars().str.to_lowercase()
     for sheet, types in (rules["delta"].get("keep_settlement_types") or {}).items():
         comb = comb.filter((pl.col("_source_sheet") != sheet)
@@ -83,7 +63,6 @@ def build_delta(comb: pl.DataFrame,
     d = comb.with_columns(_i64("Case_ID").alias("Case_ID"),
                           _i64("Provider_ID").alias("Provider_ID"))
 
-    # Type: GFS when the case is in Supporting File 'GFS Cases', else Other.
     gset = gfs_cases.select(_i64("CASEID").alias("Case_ID")).unique()
     d = d.join(gset.with_columns(pl.lit(True).alias("_gfs")), on="Case_ID", how="left")
     d = d.with_columns(
@@ -91,14 +70,12 @@ def build_delta(comb: pl.DataFrame,
           .then(pl.lit(r["gfs_type_value"]))
           .otherwise(pl.lit(r["other_type_value"])).alias("Type")).drop("_gfs")
 
-    # Group: Provider_ID -> Provider List, 5th column.
     prov = (provider_list
             .select(_i64("BUSINESSREGID").alias("Provider_ID"),
                     pl.col("Provider Group").alias("Group"))
             .unique(subset=["Provider_ID"], keep="first"))
     d = d.join(prov, on="Provider_ID", how="left")
 
-    # --- the three filters, in the order the user confirmed ---------------------
     if r.get("drop_na_group", True):
         d = d.filter(pl.col("Group").is_not_null())
         rep.add("1. drop NA Group (inactive providers)", d.height)
@@ -111,13 +88,11 @@ def build_delta(comb: pl.DataFrame,
     d = d.filter(~status_lc.str.contains(kw) | pl.col("File_Status").is_null())
     rep.add(f"3. drop File_Status containing '{kw}'", d.height)
 
-    # Partial Paid: Settlement Amount is REPLACED by Remaining Payment.
     pp = status_lc.str.contains(r["partial_paid_keyword"])
     rep.partial_paid_rewritten = d.filter(pp).height
     d = d.with_columns(pl.when(pp).then(pl.col(r["partial_paid_uses"]))
                          .otherwise(pl.col("Settlement_Amount")).alias("Settlement_Amount"))
 
-    # --- Custom Case AR lookups (Closing Order 24, Case_Validity 101, Lien Filed 19)
     cols = r["custom_ar_columns"]
     cus = (custom_ar.with_columns(_i64("CASEID").alias("Case_ID"))
                     .unique(subset=["Case_ID"], keep="first")     # VLOOKUP takes first
@@ -125,7 +100,6 @@ def build_delta(comb: pl.DataFrame,
     d = d.join(cus, on="Case_ID", how="inner")                    # inner == drop NA status
     rep.add("4. join Custom Case AR", d.height)
 
-    # --- same validity / closing-order cleanup as the Case AR path --------------
     vmap = ca.get("validity_map") or {}
     blank_to = ca.get("validity_blank_becomes")
     expr = pl.col("Case_Validity")
@@ -145,7 +119,6 @@ def build_delta(comb: pl.DataFrame,
           .then(pl.col("Closing Order"))
           .otherwise(pl.lit(ca["closing_order_default"])).alias("Closing Order"))
 
-    # --- Aging, measured from the run date -------------------------------------
     age = (pl.lit(as_of) - pl.col("Date").cast(pl.Date)).dt.total_days()
     expr = pl.lit(r["aging_default"])
     for days, label in reversed(r["aging_buckets"]):
@@ -158,18 +131,7 @@ def build_delta(comb: pl.DataFrame,
 
 def attach_comments(d: pl.DataFrame, comments: dict[str, pl.DataFrame],
                     rules: dict, rep: DeltaReport) -> pl.DataFrame:
-    """Tuesday: the litigation team's Ongoing DOR Status / Details, by Case ID.
-
-    `comments` maps a Delta source sheet ("WC Delta") to that sheet of the
-    "- comments" workbook. Each Delta Comparison row is looked up only in the
-    sheet of its OWN source - WC rows in WC, Med-Legal rows in Med-Legal - so
-    a case listed on both never picks up the other sheet's comment. IMR rows
-    stay blank: that sheet of the comments copy has no such columns. A case id
-    listed twice takes its first row, which is what the VLOOKUP did.
-
-    With no comments files the columns are still added, empty: the sheet
-    always has them, and last week's values are never carried forward.
-    """
+    """Tuesday: the litigation team's Ongoing DOR Status / Details, by Case ID."""
     c = rules["delta"].get("comments") or {}
     cols = list(c.get("columns") or [])
     if not cols:
@@ -194,8 +156,6 @@ def attach_comments(d: pl.DataFrame, comments: dict[str, pl.DataFrame],
     out = (out.drop(cols)
               .join(pl.concat(parts, how="vertical_relaxed"),
                     on=["Case_ID", "_source_sheet"], how="left", maintain_order="left"))
-    # Matched means the case id was FOUND - a found case whose comment cells
-    # are empty still matched.
     for sheet in d["_source_sheet"].unique(maintain_order=True).to_list():
         rows = out.filter(pl.col("_source_sheet") == sheet)
         rep.comments_found[sheet] = (int(rows["_commented"].sum() or 0), rows.height)

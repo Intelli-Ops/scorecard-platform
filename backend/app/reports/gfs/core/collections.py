@@ -1,36 +1,19 @@
-"""Collection High-Level — steps doc Phase 7 (Payment Detailed Report).
-
-Verified against week 2026-W35:
-    grid   196/196 cells matched (9 groups x 4 weeks x 5 columns, plus the Total row)
-    pace    45/45 cells matched
-    footer   4/4  matched (BILLING / RE BILLING / APPEAL / SETTLEMENT)
-
-Two things the steps doc leaves implicit and that were confirmed from the data:
-
-  * "in payment type make 'board reps' & 'in house rep', 'settlement'" means BOARD REPS
-    and IN HOUSE REPS are folded INTO the SETTLEMENT bucket, not renamed alongside it.
-  * The sheet's "Week 01..05" columns are Excel WEEKNUM buckets, not week-of-month.
-    For August 2026 that is weeks 32..36, and the fifth holds no payments.
-"""
+"""GFS: Collection High-Level (steps doc phase 7)."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 import datetime as dt
 
 import polars as pl
 
-from ...common import excel_weeknum, i64 as _i64
+from ...common import StageLog, excel_weeknum, i64 as _i64
 
 PAYMENT_TYPES = ["BILLING", "REBILLING", "APPEAL", "SETTLEMENT"]
 
 
 @dataclass
-class CollectionReport:
-    stages: list[tuple[str, int]] = field(default_factory=list)
+class CollectionReport(StageLog):
     weeks: list[int] = field(default_factory=list)
     unknown_groups: list[str] = field(default_factory=list)
-
-    def add(self, label: str, n: int) -> None:
-        self.stages.append((label, n))
 
 
 def build_collections(payments: pl.DataFrame,
@@ -41,12 +24,7 @@ def build_collections(payments: pl.DataFrame,
                       month: int | None = None,
                       week_expr: pl.Expr | None = None,
                       after: dt.date | None = None) -> tuple[pl.DataFrame, CollectionReport]:
-    """Payment Detailed Report -> Group x week x payment-type totals.
-
-    `month` keeps only that month's payments: the sheet's week blocks belong to one
-    month, and a report pulled across a month end must not spill into them.
-    `week_expr` numbers the weeks (over the `paid_on` column); by default Excel WEEKNUM.
-    `after` keeps only payments dated later than that day."""
+    """Payment Detailed Report -> Group x week x payment-type totals."""
     r = rules["collections"]
     rep = CollectionReport()
 
@@ -65,20 +43,17 @@ def build_collections(payments: pl.DataFrame,
     if after is not None:
         d = d.filter(pl.col("paid_on") > after)
 
-    # drop PI case types
     drop = [x.upper() for x in r["drop_case_types"]]
     d = d.filter(~pl.col("case_type").cast(pl.Utf8).str.to_uppercase().is_in(drop)
                  | pl.col("case_type").is_null())
     rep.add(f"after dropping {'/'.join(r['drop_case_types'])}", d.height)
 
-    # Group from the Provider List
     prov = (provider_list
             .select(_i64("BUSINESSREGID").alias("regid"),
                     pl.col("Provider Group").alias("Group"))
             .unique(subset=["regid"], keep="first"))
     d = d.join(prov, on="regid", how="left")
 
-    # Type: gfs when the case is in Supporting File 'GFS Cases', else other client
     g = (gfs_cases.select(_i64("CASEID").alias("cid")).unique()
                   .with_columns(pl.lit(True).alias("_g")))
     d = (d.join(g, on="cid", how="left")
@@ -89,7 +64,6 @@ def build_collections(payments: pl.DataFrame,
     d = d.filter(pl.col("Type") == r["gfs_type_value"])
     rep.add("after Type = gfs", d.height)
 
-    # collapse payment types
     to_settlement = [x.upper() for x in r["fold_into_settlement"]]
     d = d.with_columns(
         pl.when(pl.col("ptype").is_in(to_settlement)).then(pl.lit("SETTLEMENT"))

@@ -1,17 +1,4 @@
-"""The month and weeks a report covers, worked out from the week being built.
-
-A Mon-Fri week belongs to the month holding most of its weekdays, which is always the
-month of its Wednesday. So 2026-W36 (Mon 31 Aug - Fri 4 Sep) is September's week 1,
-shown as 1-4 Sep, with 31 August counted in August's month total; and 2026-W40
-(Mon 28 Sep - Fri 2 Oct) is September's week 5, 28-30 Sep, with 1-2 October added to
-October's week 1, which then runs 1-9 Oct.
-
-Pacing counts working days: weekdays that are not in the `holidays` list of
-the report's rules.yml.
-
-Both reports use this one calendar. The .bat pipelines keep a copy each
-(gfs-automation scripts/run_week.py and ap/period.py); this is that code, shared.
-"""
+"""The month and weeks a report covers, and its working days."""
 from __future__ import annotations
 import calendar
 import datetime as dt
@@ -30,10 +17,7 @@ def working_days(first: dt.date, last: dt.date, holidays=frozenset()) -> int:
 
 
 def month_weeks(year: int, month: int) -> list[tuple[dt.date, dt.date]]:
-    """Every week of the month as (first day, last day).
-
-    A week is in the month when its Wednesday is. The first week starts on the 1st, so
-    leading days that belong to the previous month's week join it."""
+    """Every week of the month as (first day, last day)."""
     first = dt.date(year, month, 1)
     last = dt.date(year, month, calendar.monthrange(year, month)[1])
     spans = []
@@ -54,8 +38,6 @@ class Period:
     weeks_so_far: int
     last_day: dt.date                    # the Sunday closing the reporting week
     holidays: frozenset
-    # The month's working days as entered by a person on the upload screen,
-    # when the calendar's count is wrong. None: use the calendar.
     entered_days: int | None = None
 
     @property
@@ -102,8 +84,7 @@ class Period:
 
 def reporting_period(week: str, holidays: list | None,
                      entered: dict | None = None) -> Period:
-    """The period `week` reports on. `entered` maps "2026-09" to the working
-    days a person entered for that month, when they did."""
+    """The period `week` reports on."""
     y, w = map(int, week.split("-W"))
     monday = dt.date.fromisocalendar(y, w, 1)
     wednesday = monday + dt.timedelta(days=2)
@@ -117,8 +98,8 @@ def reporting_period(week: str, holidays: list | None,
 
 
 def week_index_expr(col: str, period: Period) -> pl.Expr:
-    """1-based week of the month for a date column: the last week whose Monday is on or
-    before the date. Weekend days join the week they close; the 1st joins week 1."""
+    """1-based week of the month for a date column: the last week whose Monday
+    is on or before the date."""
     later = period.week_mondays[1:]
     if not later:
         return pl.lit(1)

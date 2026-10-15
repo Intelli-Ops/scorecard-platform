@@ -1,12 +1,4 @@
-"""Runs: starting a build, reading what it produced, approving it, and
-getting its tables out.
-
-Admins build, approve and delete; a viewer reads the APPROVED runs of the
-reports it has been given (see _readable). Deliberately thin: every endpoint
-is a few lines over service/runner.py and service/review.py, so the rules
-about a run needing a person's approval live in one place and cannot drift
-between the API and the background job.
-"""
+"""Builds: starting them, reading their results, approving and exporting."""
 from __future__ import annotations
 import datetime as dt
 import io
@@ -27,18 +19,11 @@ from ..service import audit, csvsafe, review as review_service, runner
 from ..service.ingest import week_status
 from .deps import current_user, require_admin, valid_week as _week
 
-# Applied to the whole router rather than route by route: a rule you have to
-# remember to add is a rule that gets forgotten on the one route that mattered.
 router = APIRouter(prefix="/api", dependencies=[Depends(current_user)])
 
 
 def _readable(run: Run | None, user: User, request: Request) -> Run:
-    """The run, if this person may read it - or 404.
-
-    Admins read every run. A viewer reads APPROVED runs of the reports they
-    have been given, and nothing else. 404 rather than 403 for the rest: a
-    viewer has no business learning which run ids exist.
-    """
+    """The run, if this person may read it - or 404."""
     if run is None:
         raise HTTPException(404, "No such run.")
     if user.is_admin:
@@ -50,10 +35,6 @@ def _readable(run: Run | None, user: User, request: Request) -> Run:
     raise HTTPException(404, "No such run.")
 
 
-# How many requests may hold a whole Raw Data table in memory at once (the
-# Case AR pivot does), and how long another waits for a turn before being
-# told to try again. Two is enough for the handful of people who use this;
-# what it prevents is twenty.
 _heavy = threading.BoundedSemaphore(2)
 HEAVY_WAIT = 20.0
 
@@ -74,15 +55,7 @@ def _already_building(run_id: int | None) -> HTTPException:
 def start_run(request: Request, report: str = Query(...),
               week: str = Query(...), as_of: dt.date | None = Query(None),
               user=Depends(require_admin)) -> dict:
-    """Queue a build. Returns straight away - poll /api/runs/{id} for progress.
-
-    One build per report and week at a time. A double-click, or two people
-    pressing Build together, used to queue the same work twice.
-
-    One transaction holds all of it: the run, the files it will read (see
-    runner.queue) and the log row saying who asked. The worker only ever sees
-    a build that is completely described.
-    """
+    """Queue a build."""
     _week(week)
     if report not in REPORTS:
         raise HTTPException(404, f"unknown report {report!r}")
@@ -99,17 +72,10 @@ def start_run(request: Request, report: str = Query(...),
         try:
             run = runner.queue(s, report, week, as_of)
         except IntegrityError:
-            # Two presses arriving together each found nothing building. The
-            # check above cannot see the other's uncommitted run; the unique
-            # Run.active_key can, in whichever server process each landed.
             s.rollback()
             busy = _building(s, report, week)
             if busy is not None:
                 raise _already_building(busy) from None
-            # Not a second build: the other thing the database refuses here
-            # is a file that was replaced or removed in the same moment, so
-            # the run named an upload that had just gone. Saying "already
-            # being built" sent people looking for a build that was not there.
             raise HTTPException(
                 409, {"message": "This week's files changed while the build "
                                  "was being started. Press Build again."}
@@ -125,13 +91,7 @@ def start_run(request: Request, report: str = Query(...),
 
 @router.get("/scorecards/current")
 def current_scorecards(user=Depends(current_user)) -> list[dict]:
-    """The scorecard to read right now, per report: the latest APPROVED one.
-
-    Approved, not merely built: a run still in review may yet be rebuilt or
-    corrected, and this is the page for people who read the scorecard rather
-    than make it. If a newer week is built but not yet approved, that is said
-    too, so nobody mistakes last week's figures for this week's.
-    """
+    """The scorecard to read right now, per report: the latest approved one."""
     out = []
     with session() as s:
         for r in (r for r in REPORTS.values() if r.key in user.reports):
@@ -172,12 +132,7 @@ def current_scorecards(user=Depends(current_user)) -> list[dict]:
 @router.get("/runs", dependencies=[Depends(require_admin)])
 def list_runs(report: str | None = Query(None),
               weeks: int = Query(12, ge=1, le=104)) -> list[dict]:
-    """Run history for the last `weeks` weeks - twelve by default.
-
-    Bounded by weeks and not by rows: a week holds two runs when both reports
-    are built and more when one is rebuilt, so a row limit would cut the list
-    in the middle of a week.
-    """
+    """Run history for the last `weeks` weeks - twelve by default."""
     with session() as s:
         keys = [report] if report else list(REPORTS)
         out: list[dict] = []
@@ -199,8 +154,6 @@ def get_run(run_id: int, request: Request,
                     "queued_ahead": worker.ahead(s, run.id)}
         out = review_service.review(s, run)
         if not user.is_admin:
-            # The review's working - which files, which warnings - is for the
-            # people who build the scorecard, not the people who read it.
             for k in ("notes", "inputs", "compared_with", "needs_attention"):
                 out.pop(k, None)
         audit.record_once("run.view", db=s, user=user, target=f"run {run_id}",
@@ -232,12 +185,7 @@ def approve_run(run_id: int, request: Request,
 @router.post("/runs/{run_id}/unapprove")
 def unapprove_run(run_id: int, request: Request,
                   user=Depends(require_admin)) -> dict:
-    """Take an approval back.
-
-    People click the wrong button. Before this the only way out was to build
-    the week again, which changes the run id that screenshots and emails
-    already point at.
-    """
+    """Take an approval back."""
     with session() as s:
         run = s.get(Run, run_id)
         if run is None:
@@ -258,21 +206,7 @@ def unapprove_run(run_id: int, request: Request,
 @router.delete("/runs/{run_id}")
 def delete_run(run_id: int, request: Request,
                user=Depends(require_admin)) -> dict:
-    """Delete a scorecard.
-
-    A build that was started for the wrong week, or twice by mistake, should
-    not sit in the history forever confusing the next person.
-
-    The files it read go with it, but only the ones nothing else needs: an
-    upload feeds both reports and every rebuild of its week, so it is removed
-    once no surviving run consumes it. Delete the GFS run and All Providers
-    keeps its inputs; delete the last run for a week and the files go too.
-
-    A running build cannot be deleted out from under itself.
-
-    Admins only. It cannot be undone, and a scorecard that has been sent to
-    a client should not be removable by whoever happens to be signed in.
-    """
+    """Delete a scorecard."""
     with session() as s:
         run = s.get(Run, run_id)
         if run is None:
@@ -308,12 +242,7 @@ def get_table(run_id: int, name: str, request: Request,
               limit: int = Query(100, ge=1, le=5000),
               offset: int = Query(0, ge=0),
               user=Depends(current_user)) -> dict:
-    """A page of one produced table.
-
-    Raw Data is 278,930 rows. It stays in the store and is paged from here,
-    which is why the dashboard opens instantly where the 21 MB workbook took
-    20 seconds.
-    """
+    """A page of one produced table."""
     with session() as s:
         run = _readable(s.get(Run, run_id), user, request)
         try:
@@ -335,12 +264,9 @@ def get_case_ar(run_id: int, request: Request, group: str | None = None,
         run = _readable(s.get(Run, run_id), user, request)
         key = run.report_key
         try:
-            path = runner._table_path(run, "raw_data", None)
+            path = runner.table_path(run, "raw_data")
         except KeyError as e:
             raise HTTPException(404, str(e))
-    # Each of these holds all of Raw Data in memory while it pivots. Let in
-    # without limit, a few people changing filters at once - or one person
-    # clicking quickly - held a copy each until the server ran out.
     if not _heavy.acquire(timeout=HEAVY_WAIT):
         raise HTTPException(503, "The server is busy with other Case AR "
                                  "requests. Try again in a moment.",
@@ -353,28 +279,14 @@ def get_case_ar(run_id: int, request: Request, group: str | None = None,
         _heavy.release()
 
 
-# A separate path segment, not a ".csv" suffix: "{name}" would otherwise match
-# "raw_data.csv" first and look for a table by that name.
 @router.get("/runs/{run_id}/tables/{name}/csv")
 def download_table(run_id: int, name: str, request: Request,
                    user=Depends(current_user)):
-    """The whole table as a CSV file.
-
-    Not a page - the whole thing, 278,930 rows of Raw Data included. The
-    dashboard is for reading; this is for the times someone needs the figures
-    somewhere else, and a scorecard nobody can get data out of just gets worked
-    around.
-
-    Sent a piece at a time (runner.table_chunks): the table is never whole in
-    the server's memory, as the parquet AND the finished CSV both used to be.
-    Each piece is written with polars rather than assembled by hand, so
-    quoting, commas inside values and nulls come out the way every spreadsheet
-    expects.
-    """
+    """The whole table as a CSV file."""
     with session() as s:
         run = _readable(s.get(Run, run_id), user, request)
         try:
-            rows = runner._table_row(run, name).rows
+            rows = runner.table_row(run, name).rows
             chunks = runner.table_chunks(run, name)
             first = next(chunks)            # a missing file fails here, not
         except (KeyError, FileNotFoundError) as e:     # half-way down a download

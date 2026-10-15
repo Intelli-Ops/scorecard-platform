@@ -1,20 +1,10 @@
-/* The settlement table's arithmetic, checked against the delivered workbook.
- *
- *   node --test src/settlement-model.test.mjs
- *
- * The expected numbers are read straight out of "GFS - Weekly Scorecard
- * (Week -35) 2026", Settlement High-Level 2026, row 16 - the In House Total
- * row - and its August week columns. They are here because these two totals
- * are the ones a client reads off a scorecard, and a table that renders
- * beautifully with a wrong Total is worse than one that does not render.
- */
+// Tests for settlement-model.js, against the delivered workbook.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { TOTAL, monthToDate, paceTotals, pivot, pivotPace, sortBlocks, splitBuckets }
   from "./settlement-model.js";
 
-/* A Miles, In House, August 2026 - actuals and their paces, from the sheet. */
 const WEEKLY = { W32: 17200, W33: 9900, W34: 35543.07, W35: 39800 };
 const PACED = { W32: 72240, W33: 56910, W34: 87700.298, W35: 107565.2235 };
 
@@ -41,14 +31,12 @@ test("months sort before weeks, each in calendar order", () => {
 test("the month total is the current month's weeks, not the year", () => {
   const p = pivot(rows(), [], "In House");
   const total = p.rows.find((r) => r.group === TOTAL);
-  // 17200 + 9900 + 35543.07 + 39800
   assert.equal(Math.round(total._month * 100) / 100, 102443.07);
 });
 
 test("the year total is every bucket, months and weeks together", () => {
   const p = pivot(rows(), [], "In House");
   const total = p.rows.find((r) => r.group === TOTAL);
-  // 94277.20 + 87496.39 + 102443.07
   assert.equal(Math.round(total._total * 100) / 100, 284216.66);
 });
 
@@ -63,8 +51,6 @@ test("the Total row's per cent is read from settlement_totals, never summed", ()
   const totals = [{ block: "In House", bucket: "M1", settlement_pct: 0.461539954 }];
   const p = pivot(rows(), totals, "In House");
   const total = p.rows.find((r) => r.group === TOTAL);
-  // The one group row says 0.3405; the block's own figure is 0.4615. Summing
-  // or averaging the column would produce neither.
   assert.equal(total.M1_pct, 0.461539954);
 });
 
@@ -85,7 +71,7 @@ test("In House comes before Board", () => {
   assert.deepEqual(sortBlocks(["Other", "board", "IN HOUSE"]), ["IN HOUSE", "board", "Other"]);
 });
 
-/* ---------------------------------------------------------------- pace */
+// ---------------------------------------------------------------- pace
 
 const paceRows = Object.entries(PACED).map(([bucket, pace]) => ({
   block: "In House", group: "A Miles", bucket, pace,
@@ -99,8 +85,6 @@ test("the pace block keeps the workbook's numbers and week order", () => {
 });
 
 test("pace totals come from the LAST week alone, not from summing the weeks", () => {
-  // Each week's pace already carries the whole month to date. Summing all four
-  // would report 324,415 for a month pacing to 107,565.
   assert.equal(paceTotals(paceRows)["In House"], 107565.2235);
 });
 

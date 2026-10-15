@@ -1,3 +1,4 @@
+// This week's approved scorecards.
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, stamp, weekRange } from "../api";
@@ -6,18 +7,6 @@ import { useLoad } from "../hooks";
 import { ClearX, ErrorBox, Loading, Segmented } from "../components";
 import { ScorecardView } from "./Dashboard";
 
-/* This week's scorecard: the page for people who READ the scorecard rather
-   than build it.
-
-   It always shows the latest APPROVED scorecard for each report, with who
-   approved it and when at the top - the approval is what makes the figures
-   safe to act on, so it comes before them. A newer week that is built but not
-   yet approved is mentioned rather than shown, so nobody reads figures that
-   may still change.
-
-   Built to stand on its own: it is the one page a read-only account will see
-   once access is limited by role. */
-
 const KEY = "scorecard.current.report";
 const CLOSED = "scorecard.current.closed";
 
@@ -25,8 +14,7 @@ function read() {
   try { return localStorage.getItem(KEY); } catch { return null; }
 }
 
-/* Which runs' approval banners have been closed. Remembered per RUN, not
-   once for good: the next approval is news, so its banner shows again. */
+// Which runs' approval banners have been closed.
 function closedRuns() {
   try { return JSON.parse(localStorage.getItem(CLOSED) ?? "[]"); } catch { return []; }
 }
@@ -38,13 +26,11 @@ export default function Current() {
   const [closed, setClosed] = useState(closedRuns);
   const [closing, setClosing] = useState(null);
 
-  /* The banner folds away rather than vanishing: the figures below slide up
-     into its place, so the page does not jump. */
   function close(runId) {
     setClosing(runId);
     setTimeout(() => {
       const next = [...closedRuns().filter((id) => id !== runId), runId].slice(-50);
-      try { localStorage.setItem(CLOSED, JSON.stringify(next)); } catch { /* this visit only */ }
+      try { localStorage.setItem(CLOSED, JSON.stringify(next)); } catch { /* storage blocked */ }
       setClosed(next);
       setClosing(null);
     }, 320);
@@ -52,13 +38,12 @@ export default function Current() {
 
   function choose(key) {
     setReport(key);
-    try { localStorage.setItem(KEY, key); } catch { /* remembered or not */ }
+    try { localStorage.setItem(KEY, key); } catch { /* storage blocked */ }
   }
 
   if (error) return <ErrorBox error={error} />;
   if (!cards) return <Loading what="Finding this week's scorecard" />;
 
-  // A viewer who has not been given any scorecard yet.
   if (cards.length === 0) {
     return (
       <>
@@ -83,7 +68,6 @@ export default function Current() {
   }
 
   const card = cards.find((c) => c.key === report) ?? cards[0];
-  // A switch only when there is something to switch between.
   const picker = cards.length > 1 ? (
     <Segmented value={card.key} onChange={choose}
                options={cards.map((c) => ({ value: c.key, label: c.short }))} />
