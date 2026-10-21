@@ -235,7 +235,7 @@ def build_kpi_scorecard(table: pl.DataFrame | None,
 
     if table is None or not (sc.get("metrics") or sc.get("totals")):
         rep.skipped_blocks.extend(dict.fromkeys(wanted))
-        rep.scorecard_note = "no KPI-numbers file - those blocks keep last week's figures"
+        rep.scorecard_note = "no KPI-numbers file - those blocks show no data this week"
         return {}
 
     rows = [list(r) for r in table.iter_rows()]

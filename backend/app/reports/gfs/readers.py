@@ -112,8 +112,9 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
         scorecard = None
         notes.append(warning(
             "kpi_numbers_not_supplied",
-            "KPI numbers file not supplied - the blocks it feeds will "
-            "keep last week's figures"))
+            "KPI numbers file not supplied - the blocks it feeds (DOR, PMR, NTP, "
+            "Enforcement Of Agreement, Medical Index, Med Legal) will show no data "
+            "this week"))
     else:
         scorecard = timed("kpi_numbers", "KPI numbers", sc_path,
                           lambda: fastexcel.read_excel(str(sc_path)).load_sheet(
