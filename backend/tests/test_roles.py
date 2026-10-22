@@ -209,6 +209,20 @@ def test_the_server_command_will_not_demote_the_last_system_admin(client, root):
     manage.main(["set-role", "root@appedology.com", "admin"])      # now it may
 
 
+def test_the_installer_makes_the_default_admin_once(client, monkeypatch):
+    import io
+    from app import manage
+    args = ["create-admin", "boss@appedology.com", "APD-0009",
+            "--password-stdin", "--if-missing"]
+    monkeypatch.setattr("sys.stdin", io.StringIO("Default@2026\n"))
+    manage.main(args)
+    assert sign_in(client, "boss@appedology.com", "Default@2026")
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("Another@2026\n"))
+    manage.main(args)                       # an update: left as it is
+    assert sign_in(client, "boss@appedology.com", "Default@2026")
+
+
 def test_a_system_admin_may_leave_only_if_another_remains(client, root):
     me = _id(client, root, "root@appedology.com")
     r = client.delete(f"/api/admin/users/{me}", headers=root)

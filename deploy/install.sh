@@ -12,6 +12,11 @@ APP_USER=scorecard
 MIGRATE_USER=scorecard_migrate
 DB_NAME=scorecard
 SERVER_NAME=${SERVER_NAME:-_}
+
+# The default super admin, made on the first install: the app's system admin, and a MySQL account with full rights on the database - one login for both. Change the password after the first sign-in.
+ADMIN_EMAIL=ali.asghar@appedology.com
+ADMIN_APD=APD-2625
+ADMIN_PASSWORD='Scorecard@2026'
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 EXTERNAL_DB=0
@@ -222,6 +227,19 @@ SQL
   echo "activity_log rows cannot be edited"
 fi
 
+step "Default super admin '$ADMIN_EMAIL'"
+printf '%s\n' "$ADMIN_PASSWORD" \
+  | scorecard-manage create-admin "$ADMIN_EMAIL" "$ADMIN_APD" --password-stdin --if-missing
+if [[ $EXTERNAL_DB -eq 0 ]]; then
+  # IF NOT EXISTS: an update never puts back a password that was changed.
+  mysql <<SQL
+CREATE USER IF NOT EXISTS '$ADMIN_EMAIL'@'localhost' IDENTIFIED BY '$ADMIN_PASSWORD';
+CREATE USER IF NOT EXISTS '$ADMIN_EMAIL'@'127.0.0.1' IDENTIFIED BY '$ADMIN_PASSWORD';
+GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$ADMIN_EMAIL'@'localhost', '$ADMIN_EMAIL'@'127.0.0.1';
+SQL
+  echo "MySQL: '$ADMIN_EMAIL' has full rights on the '$DB_NAME' database"
+fi
+
 # Service
 step "Service"
 install -m 644 "$SRC/deploy/scorecard.service" /etc/systemd/system/scorecard.service
@@ -270,11 +288,12 @@ cat <<EOF
 
 Done. The Scorecard platform is running at http://$ADDRESS/
 
-On a first install, make the first system admin (it asks for a password):
+Sign in as the default super admin - the same login works for MySQL:
 
-  sudo scorecard-manage create-admin you@appedology.com APD-1234
+  email:    $ADMIN_EMAIL
+  password: the default in deploy/install.sh (ADMIN_PASSWORD)
 
-Then add HTTPS - see DEPLOY.md, "HTTPS".
+Change the password after the first sign-in. Then add HTTPS - see DEPLOY.md, "HTTPS".
 EOF
 if ! grep -q '^SCORECARD_SMTP_HOST=.\+' "$ENV_FILE"; then
   cat <<EOF

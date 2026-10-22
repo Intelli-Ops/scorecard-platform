@@ -82,8 +82,9 @@ What the script does, in order:
      which only root can read.
 5. Creates the tables (as `scorecard_migrate`), and adds the database
    trigger that stops activity log entries from being edited.
-6. Installs and starts the `scorecard` service, and the nginx site.
-7. Checks that both the backend and nginx answer.
+6. Creates the default super admin (step 2 below).
+7. Installs and starts the `scorecard` service, and the nginx site.
+8. Checks that both the backend and nginx answer.
 
 It ends with:
 
@@ -91,17 +92,63 @@ It ends with:
 Done. The Scorecard platform is running at http://scorecard.yourcompany.com/
 ```
 
-## 2. Make the first admin
+## 2. The default super admin
 
-Nobody can sign in yet. People who sign up wait for an admin to approve
-them, so the first admin has to be made on the server:
+The install makes one super admin, so someone can sign in straight away.
+It is set at the top of `deploy/install.sh`:
+
+| | |
+|---|---|
+| Email | `ali.asghar@appedology.com` (APD-2625) |
+| Password | `ADMIN_PASSWORD` in `deploy/install.sh` |
+
+The same email and password are:
+
+- **in the app**, a system admin. It can sign in, approve other sign-ups,
+  and make other admins from the **Users** screen.
+- **in MySQL**, an account with full rights on the `scorecard` database,
+  for looking at the data with MySQL Workbench or `mysql`. It accepts
+  connections from the server itself only, so from another computer use an
+  SSH tunnel (Workbench: **Standard TCP/IP over SSH**).
+
+**Change the password after the first sign-in.** Anyone who has seen the
+code knows the default. The two are separate once made, so change both:
+
+- the app: **Change password** after signing in;
+- MySQL: `sudo mysql -e "ALTER USER 'ali.asghar@appedology.com'@'localhost', 'ali.asghar@appedology.com'@'127.0.0.1' IDENTIFIED BY 'the-new-password'"`.
+
+Running the install again (an update) never resets either password. Other
+admins can still be made on the server, with a password typed in:
 
 ```bash
-sudo scorecard-manage create-admin ali.asghar@appedology.com APD-1234
+sudo scorecard-manage create-admin someone@appedology.com APD-1234
 ```
 
-It asks for a password twice. That person can now sign in, approve other
-sign-ups, and make other admins from the **Users** screen.
+With `--external-db` only the app account is made; the DBA creates any
+MySQL accounts.
+
+### All the logins
+
+| Login | Username | Password | Used by |
+|---|---|---|---|
+| App super admin | `ali.asghar@appedology.com` | `Scorecard@2026` (default, change it) | People, at the app's sign-in page |
+| Database admin | `ali.asghar@appedology.com` | `Scorecard@2026` (default, change it) | People, with MySQL Workbench or `mysql` |
+| App's database account | `scorecard` | Random, made by the install | The app itself |
+| Migration account | `scorecard_migrate` | Random, made by the install | The install and updates only |
+| MySQL root | `root` | None: `sudo mysql` | The server's administrator |
+
+The two random passwords do not exist until the install runs, and every
+server gets its own. To see them on the server:
+
+```bash
+sudo grep SCORECARD_DB= /etc/scorecard/scorecard.env      # scorecard
+sudo cat /etc/scorecard/migrate.env                         # scorecard_migrate
+```
+
+Each prints an address of the form
+`mysql://USERNAME:PASSWORD@127.0.0.1/scorecard`; the password is the part
+between `:` and `@`. Nobody needs to type these, and changing one means
+changing it in MySQL and in that file together.
 
 ## 3. HTTPS
 
@@ -245,8 +292,9 @@ two database passwords.
 ## Bringing data over from a laptop (optional)
 
 This is only needed if the app was already used on a Windows laptop and that
-history should come along. Do it right after the install, **before** step 2
-(the target database must be empty).
+history should come along. Do it right after the install, before anyone
+signs in (the target database must be empty, so the commands below first
+remove the default super admin).
 
 1. On the laptop, stop the app. Copy `data\scorecard.db`, `data\objects\`
    and `data\results\` to the server, for example into `/tmp/laptop-data/`.
@@ -255,6 +303,7 @@ history should come along. Do it right after the install, **before** step 2
 ```bash
 sudo systemctl stop scorecard
 sudo chown -R scorecard: /tmp/laptop-data
+sudo mysql scorecard -e "DELETE FROM user_account"
 sudo scorecard-manage copy-db sqlite:////tmp/laptop-data/scorecard.db
 sudo rsync -a /tmp/laptop-data/objects /tmp/laptop-data/results /var/lib/scorecard/
 sudo chown -R scorecard: /var/lib/scorecard
@@ -263,8 +312,9 @@ sudo rm -rf /tmp/laptop-data
 ```
 
 (`sqlite:////` has four slashes: three for the address, one for the path.)
-The laptop's accounts come along, so skip step 2 if an admin already
-exists there.
+The laptop's accounts come along, with their laptop passwords, in place of
+the default super admin. If none of them is a system admin, make one with
+`sudo scorecard-manage set-role EMAIL system_admin`.
 
 ---
 

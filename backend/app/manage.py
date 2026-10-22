@@ -55,9 +55,18 @@ def _user(s, email: str) -> User:
 
 def cmd_create_admin(a):
     create_all()
-    password = getpass.getpass("Password for the new admin: ")
-    if password != getpass.getpass("Same again: "):
-        sys.exit("the two passwords differ")
+    if a.if_missing:
+        with session() as s:
+            if s.execute(select(User).where(User.email == a.email.strip().lower())
+                         ).scalar_one_or_none():
+                _say(f"{a.email} already has an account - left as it is.")
+                return
+    if a.password_stdin:                # install.sh, with the default admin
+        password = sys.stdin.readline().rstrip("\r\n")
+    else:
+        password = getpass.getpass("Password for the new admin: ")
+        if password != getpass.getpass("Same again: "):
+            sys.exit("the two passwords differ")
     with session() as s:
         try:
             user = auth.sign_up(s, a.email, a.apd_id, password, pending=False)
@@ -179,6 +188,10 @@ def main(argv=None):
     c.set_defaults(fn=cmd_upgrade)
     c = sub.add_parser("create-admin")
     c.add_argument("email"); c.add_argument("apd_id")
+    c.add_argument("--password-stdin", action="store_true",
+                   help="read the password from the first line of stdin")
+    c.add_argument("--if-missing", action="store_true",
+                   help="do nothing if the email already has an account")
     c.set_defaults(fn=cmd_create_admin)
     c = sub.add_parser("promote"); c.add_argument("email")
     c.set_defaults(fn=cmd_promote)
