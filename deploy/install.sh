@@ -160,6 +160,19 @@ if [[ -f $SRC/mail.env ]]; then
   done < "$SRC/mail.env"
 fi
 
+# HTTPS is required only once nginx serves it (DEPLOY.md, "HTTPS"); before that, requiring it would refuse every sign-in.
+if ! grep -qs 'listen.*443' "$NGINX_SITE"; then
+  if grep -q '^SCORECARD_REQUIRE_HTTPS=1' "$ENV_FILE"; then
+    set_setting SCORECARD_REQUIRE_HTTPS 0
+    echo "set SCORECARD_REQUIRE_HTTPS=0: this server has no HTTPS yet"
+  fi
+  if grep -q '^SCORECARD_PUBLIC_URL=https://' "$ENV_FILE"; then
+    url=$(sed -n 's|^SCORECARD_PUBLIC_URL=https://|http://|p' "$ENV_FILE")
+    set_setting SCORECARD_PUBLIC_URL "$url"
+    echo "set SCORECARD_PUBLIC_URL=$url"
+  fi
+fi
+
 # The address in the links the app mails.
 if ! grep -q '^SCORECARD_PUBLIC_URL=.\+' "$ENV_FILE"; then
   name=$SERVER_NAME
@@ -294,7 +307,8 @@ Sign in as the default super admin - the same login works for MySQL:
   email:    $ADMIN_EMAIL
   password: the default in deploy/install.sh (ADMIN_PASSWORD)
 
-Change the password after the first sign-in. Then add HTTPS - see DEPLOY.md, "HTTPS".
+Change the password after the first sign-in. Once the app has a domain, add
+HTTPS - see DEPLOY.md, "HTTPS".
 EOF
 if ! grep -q '^SCORECARD_SMTP_HOST=.\+' "$ENV_FILE"; then
   cat <<EOF

@@ -150,9 +150,11 @@ Each prints an address of the form
 between `:` and `@`. Nobody needs to type these, and changing one means
 changing it in MySQL and in that file together.
 
-## 3. HTTPS
+## 3. HTTPS (later, once there is a domain)
 
-Passwords are sent at sign-in, so HTTPS is required before real use.
+The app works over plain `http://` until this is done. Passwords are sent at
+sign-in, so they cross the network unencrypted until then. A certificate is
+issued for a domain name, so this step waits until the app has one.
 
 **If the server has a public domain name**, get a free certificate. It
 renews itself:
@@ -179,6 +181,18 @@ Then change the port 80 block to `return 301 https://$host$request_uri;`, and
 run `sudo nginx -t && sudo systemctl reload nginx`.
 
 Updates never overwrite this file, so HTTPS stays in place.
+
+Then make the app refuse anything not sent over HTTPS, and put `https://` in
+the links it emails, in `/etc/scorecard/scorecard.env`:
+
+```
+SCORECARD_REQUIRE_HTTPS=1
+SCORECARD_PUBLIC_URL=https://scorecard.yourcompany.com
+```
+
+and run `sudo systemctl restart scorecard`. (The installer sets
+`SCORECARD_REQUIRE_HTTPS` back to 0 on a server whose nginx site has no
+`listen 443`, since requiring HTTPS there would refuse every sign-in.)
 
 ## 4. Email
 
@@ -396,7 +410,8 @@ change.
 |---|---|---|
 | `SCORECARD_DB` | local MySQL, random password | The database address the app runs as. That account can read and write rows only |
 | `SCORECARD_AUTO_MIGRATE` | `0` | `0`: the app only checks that the tables are up to date. `1` (a laptop): it updates them itself |
-| `SCORECARD_PUBLIC_URL` | `https://` + `SERVER_NAME` | The address of the "Open Scorecard" button in the emails |
+| `SCORECARD_PUBLIC_URL` | `http://` + `SERVER_NAME` | The address of the "Open Scorecard" button in the emails. `https://` once HTTPS is set up |
+| `SCORECARD_REQUIRE_HTTPS` | `0` | `1`: the app refuses anything not sent over HTTPS. Set it once HTTPS is set up (step 3) |
 | `SCORECARD_SMTP_HOST`, `_PORT`, `_USER`, `_PASSWORD` | empty, `587` | The mail server (see "Email"). Empty: sign-ups and resets are refused |
 | `SCORECARD_MAIL_FROM` | empty | The From address. Empty: the SMTP user |
 | `SCORECARD_DATA` | `/var/lib/scorecard` | Uploaded files, results, cache |
