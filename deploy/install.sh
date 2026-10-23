@@ -197,8 +197,9 @@ SQL
     chmod 600 "$MIGRATE_ENV"
     echo "created '$MIGRATE_USER', address in $MIGRATE_ENV (root only)"
   fi
-  # Rows only, on a new install and on an update alike.
+  # Rows only, on a new install and on an update alike. The GRANT first gives the REVOKE something to take: on a new install there is no grant yet, and MySQL refuses to revoke one that does not exist.
   mysql <<SQL
+GRANT SELECT ON $DB_NAME.* TO '$APP_USER'@'localhost', '$APP_USER'@'127.0.0.1';
 REVOKE ALL PRIVILEGES ON $DB_NAME.* FROM '$APP_USER'@'localhost', '$APP_USER'@'127.0.0.1';
 GRANT SELECT, INSERT, UPDATE, DELETE
   ON $DB_NAME.* TO '$APP_USER'@'localhost', '$APP_USER'@'127.0.0.1';
