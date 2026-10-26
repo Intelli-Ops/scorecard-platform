@@ -120,7 +120,11 @@ export const api = {
           if (x.status >= 200 && x.status < 300) resolve(body);
           else reject(new Error(body.detail?.message ?? body.detail
                                 ?? x.statusText));
-        } catch { reject(new Error(`upload failed (${x.status})`)); }
+        } catch {
+          reject(new Error(x.status === 413
+            ? "upload failed (413): larger than the web server accepts"
+            : `upload failed (${x.status})`));
+        }
       };
       x.onerror = () => reject(new Error("upload failed - is the server running?"));
       x.send(body);

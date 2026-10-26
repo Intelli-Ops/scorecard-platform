@@ -45,16 +45,30 @@ export default function Weeks() {
   const error = (failure?.week === week ? failure.error : null)
     ?? statusLoad.error ?? weeksLoad.error;
 
+  // One file per request: nginx caps each request (DEPLOY.md), and a week's files together can pass that cap even when each one is well under it.
   async function send(files) {
     if (!files?.length || !validWeek) return;
     setError(null); setResult(null); setProgress(0);
+    const total = files.reduce((n, f) => n + f.size, 0) || 1;
+    const out = { week, accepted: [], rejected: [] };
+    let done = 0;
     try {
-      const r = await api.upload(week, files, {
-        forReport: forReport || undefined,
-        onProgress: setProgress,
-      });
-      setResult(r);
-      statusLoad.setData(r.status);
+      for (const f of files) {
+        try {
+          const r = await api.upload(week, [f], {
+            forReport: forReport || undefined,
+            onProgress: (p) => setProgress((done + p * f.size) / total),
+          });
+          out.accepted.push(...r.accepted);
+          out.rejected.push(...r.rejected);
+          out.status = r.status;
+        } catch (e) {
+          out.rejected.push({ filename: f.name, reason: e.message });
+        }
+        done += f.size;
+      }
+      setResult(out);
+      if (out.status) statusLoad.setData(out.status);
       await weeksLoad.reload();
     } catch (e) { setError(e); }
     finally { setProgress(null); }
