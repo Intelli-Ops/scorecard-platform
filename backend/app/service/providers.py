@@ -1,5 +1,4 @@
-"""The provider list - provider to group - as admins keep it on the Providers
-screen."""
+"""The provider list, as kept on the Providers page."""
 from __future__ import annotations
 
 from sqlalchemy import select

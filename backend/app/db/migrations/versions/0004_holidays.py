@@ -1,5 +1,4 @@
-"""Migration 0004: holidays kept in the database, editable by admins, starting
-from the list that was in both reports' rules.yml.
+"""Migration 0004: the holiday table, seeded with the list rules.yml had.
 
 Revision ID: 0004
 Revises: 0003"""

@@ -30,8 +30,7 @@ def timed_reader(cache: Cache | None, reads: list[FileRead]):
     def timed(key: str, label: str, path: Path | None,
               load: Callable[[], pl.DataFrame],
               source_key: str | None = None) -> pl.DataFrame | None:
-        """Read one sheet, recording how long it took and how much came back -
-        or None if its file was not uploaded."""
+        """Read one sheet and time it; None if the file was not uploaded."""
         if path is None:
             return None
         t = time.perf_counter()
@@ -53,8 +52,7 @@ PROVIDER_COLUMNS = {"regid": "BUSINESSREGID", "provider_id": "PROVIDER ID",
 
 
 def provider_list(rules: dict) -> pl.DataFrame:
-    """The provider list put into the rules by the app, shaped like the
-    Supporting File's Provider List sheet it replaces."""
+    """The provider list, shaped like the old Supporting File sheet."""
     rows = rules.get("providers") or []
     return pl.DataFrame(
         {col: [r.get(key) for r in rows] for key, col in PROVIDER_COLUMNS.items()},

@@ -98,9 +98,7 @@ def missing_inputs(run: Run) -> list[str]:
 
 def rules_for(session: Session, report_key: str, week: str,
               working_days: int | None, source: str | None) -> dict:
-    """A report's rules, with today's holidays and provider list, and the
-    working days a run was fixed on if they were entered by hand rather than
-    taken from the calendar."""
+    """A report's rules with the holidays, providers and any hand-entered working days."""
     rules = with_providers(session, with_holidays(session, load_rules(report_key)))
     if source == "entered":
         rules["working_days"] = {month_of(week, rules).key: working_days}

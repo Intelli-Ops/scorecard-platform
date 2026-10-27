@@ -1,5 +1,4 @@
-"""Partial builds: a section of the scorecard whose files are not in yet comes
-out empty, with a note saying what it is waiting for."""
+"""Partial builds: a section whose files are missing comes out empty, with a note."""
 from __future__ import annotations
 
 import polars as pl

@@ -187,10 +187,8 @@ kpi:
   # Blocks the sheet carries that no source feeds.
   unsourced_blocks: ["10635 (DDEL)"]
 
-  # The KPI sheet's blocks, top to bottom, and the provider-group rows in each,
-  # in sheet order - read once from the Week-41 2026 workbook. A group with
-  # figures and no row here still gets a row of its own; add it here to give it
-  # a fixed place. Names are matched ignoring case and spacing.
+  # KPI sheet blocks and their group rows, in order (from the Week-41 workbook).
+  # A group not listed here still gets a row of its own.
   layout:
     "SBR":
       - "Accumen Healthcare"

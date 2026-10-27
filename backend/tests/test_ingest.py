@@ -174,7 +174,7 @@ def test_the_tuesday_comments_copies_are_not_taken_for_the_delta_data(tmp_path):
         assert classify(make(tmp_path, name)).key == expected, name
 
 
-def test_the_comments_copies_feed_gfs_only_and_are_optional(db, store, tmp_path):
+def test_the_comments_copies_feed_gfs_only(db, store, tmp_path):
     names = ["Delta WC 09.28.2026.xlsb", "Delta WC 09.28.2026 - comments.xlsb"]
     ingest(db, store, WEEK, [make(tmp_path, n, n.encode()) for n in names])
     gfs = latest_uploads(db, get("gfs"), WEEK)
@@ -183,7 +183,8 @@ def test_the_comments_copies_feed_gfs_only_and_are_optional(db, store, tmp_path)
     assert gfs["delta_wc_comments"].filename == names[1]
     assert ap["delta_wc"].filename == names[0] and "delta_wc_comments" not in ap
     st = week_status(db, WEEK)["reports"]["gfs"]
-    assert not any("comments" in m for m in st["missing"])
+    assert not any("WC - comments" in m for m in st["missing"])
+    assert any("MLCR - comments" in m for m in st["missing"])
 
 
 def test_a_build_made_without_some_files_names_them(db, store, tmp_path):
@@ -192,4 +193,4 @@ def test_a_build_made_without_some_files_names_them(db, store, tmp_path):
     run = runner.queue(db, "gfs", WEEK)
     missing = runner.missing_inputs(run)
     assert "Combined Owner Case AR" in missing and "Hearing Calendar" not in missing
-    assert "KPI numbers" not in missing            # optional: never makes it partial
+    assert any(m.startswith("KPI numbers") for m in missing)

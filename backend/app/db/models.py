@@ -320,8 +320,7 @@ class MonthSetting(Base):
 
 
 class Holiday(Base):
-    """A day off - not a working day when pacing - as kept on the Holidays
-    screen."""
+    """A day off, left out of pacing."""
     __tablename__ = "holiday"
 
     day: Mapped[dt.date] = mapped_column(Date, primary_key=True)
@@ -331,8 +330,7 @@ class Holiday(Base):
 
 
 class Provider(Base):
-    """One row of the provider list - which group a provider's cases count
-    under - as kept on the Providers screen."""
+    """A provider and the group its cases count under."""
     __tablename__ = "provider"
 
     regid: Mapped[int] = mapped_column(Integer, primary_key=True)     # BUSINESSREGID

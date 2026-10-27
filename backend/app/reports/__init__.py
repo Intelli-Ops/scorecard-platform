@@ -33,14 +33,14 @@ SHARED_SOURCES: tuple[SourceFile, ...] = (
     SourceFile("document_log", ("document_log",), exts=(".csv",),
                label="SQL document log (SBR / DDE)"),
     SourceFile("kpi_numbers", ("kpi", "number"),
-               label="KPI numbers", required=False),
+               label="KPI numbers (usually Tuesday)"),
 )
 
 COMMENT_SOURCES: tuple[SourceFile, ...] = (
-    SourceFile("delta_wc_comments", ("delta wc", COMMENTS), required=False,
-               label="Delta WC - comments (Ongoing DOR)"),
-    SourceFile("delta_mlcr_comments", ("delta mlcr", COMMENTS), required=False,
-               label="Delta MLCR - comments (Ongoing DOR)"),
+    SourceFile("delta_wc_comments", ("delta wc", COMMENTS),
+               label="Delta WC - comments (usually Tuesday)"),
+    SourceFile("delta_mlcr_comments", ("delta mlcr", COMMENTS),
+               label="Delta MLCR - comments (usually Tuesday)"),
 )
 
 

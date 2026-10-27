@@ -1,5 +1,4 @@
-"""Migration 0005: the provider list kept in the database, editable by admins,
-starting from the Provider List sheet of the Supporting File.
+"""Migration 0005: the provider table, seeded from the Supporting File.
 
 Revision ID: 0005
 Revises: 0004"""

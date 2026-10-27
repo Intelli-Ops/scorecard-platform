@@ -274,8 +274,7 @@ def list_holidays() -> list[dict]:
 @router.post("/holidays")
 def add_holiday(body: NewHoliday, request: Request,
                 admin: User = Depends(require_admin)) -> dict:
-    """A new day off - its week and month lose a working day in every build
-    from now on."""
+    """A new day off: its week and month lose a working day."""
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "Give the holiday a name.")

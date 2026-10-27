@@ -111,10 +111,11 @@ export default function Weeks() {
       <div className="head">
         <h1>Upload a week</h1>
         <div className="sub">
-          Six files are shared between the reports. The two Case ARs belong to
-          one report each. On Tuesday, add the two Delta &ldquo;- comments&rdquo;
-          copies too: they fill Ongoing DOR Status and Details in GFS&apos;s Delta
-          raw data.
+          Six files are shared between the reports, KPI numbers among them. The
+          two Case ARs belong to one report each, and the two Delta &ldquo;-
+          comments&rdquo; copies are GFS&apos;s only. KPI numbers and the comments
+          usually come in on Tuesday: build without them on Monday and the build
+          is marked partial.
         </div>
       </div>
 

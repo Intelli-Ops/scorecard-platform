@@ -198,11 +198,11 @@ def week_status(session: Session, week: str) -> dict:
             "have": [{"id": u.id, "source_key": k, "filename": u.filename,
                       "uploaded_at": u.uploaded_at, "size_bytes": u.size_bytes,
                       "sha256": u.sha256, "read_by_a_build": u.id in read}
-                     for k, u in uploads.items()],
-            "missing": [s.label for s in report.sources
-                        if s.key not in uploads and s.required],
-            # Any file is enough to build: a section whose files are not in yet
-            # comes out empty, and the build is marked partial.
+                     for k, u in sorted(uploads.items(),
+                                        key=lambda ku: ku[1].filename.lower())],
+            "missing": sorted((s.label for s in report.sources
+                               if s.key not in uploads and s.required), key=str.lower),
+            # Any file is enough to build; missing files make it partial.
             "ready": any(s.key in uploads for s in report.sources),
             "complete": all(s.key in uploads for s in report.sources if s.required),
         }

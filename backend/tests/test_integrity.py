@@ -166,7 +166,7 @@ def test_files_a_queued_build_will_read_cannot_be_deleted_under_it(client):
     client.post(f"/api/runs?report=gfs&week={WEEK}")
     r = client.delete(f"/api/weeks/{WEEK}")
     assert r.status_code == 409 and "still has a build" in r.json()["detail"]
-    assert len(list(settings.object_dir.rglob("*.xlsx"))) == 6
+    assert len(list(settings.object_dir.rglob("*.xlsx"))) == 6 + 3   # with KPI numbers and both comments
 
 
 def test_a_waiting_build_survives_a_restart(client, stand_in_pipeline):
