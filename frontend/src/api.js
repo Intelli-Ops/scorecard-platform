@@ -91,6 +91,13 @@ export const api = {
   activity: (filters = {}) => json(`/api/admin/activity${query(filters)}`),
   alerts: (days = 7) => json(`/api/admin/alerts?days=${days}`),
   deleteActivity: (body) => post("/api/admin/activity/delete", body),
+  holidays: () => json("/api/admin/holidays"),
+  addHoliday: (day, name) => post("/api/admin/holidays", { day, name }),
+  deleteHoliday: (day) => json(`/api/admin/holidays/${day}`, { method: "DELETE" }),
+  providers: () => json("/api/admin/providers"),
+  addProvider: (row) => post("/api/admin/providers", row),
+  editProvider: (regid, row) => send("PUT")(`/api/admin/providers/${regid}`, row),
+  deleteProvider: (regid) => json(`/api/admin/providers/${regid}`, { method: "DELETE" }),
   downloadActivity: (filters = {}) =>
     download(`/api/admin/activity/csv${query(filters)}`, "activity.csv"),
 

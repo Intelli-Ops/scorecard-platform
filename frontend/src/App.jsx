@@ -12,8 +12,10 @@ import Profile from "./pages/Profile";
 import ChangePassword from "./pages/ChangePassword";
 import AdminUsers from "./pages/AdminUsers";
 import AdminActivity from "./pages/AdminActivity";
+import AdminHolidays from "./pages/AdminHolidays";
+import AdminProviders from "./pages/AdminProviders";
 import { Loading } from "./components";
-import { MenuIcon, NavChartIcon, NavHistoryIcon, NavPeopleIcon, NavPersonIcon,
+import { MenuIcon, NavCalendarIcon, NavChartIcon, NavHistoryIcon, NavListIcon, NavPeopleIcon, NavPersonIcon,
          NavShieldIcon, NavSignOutIcon, NavUploadIcon } from "./icons";
 
 const OPEN_KEY = "scorecard.sidebar";
@@ -83,6 +85,8 @@ export default function App() {
               <Section open={open}>Admin</Section>
               <Item to="/admin/activity" icon={<NavShieldIcon />} label="Activity" open={open} />
               <Item to="/admin/users" icon={<NavPeopleIcon />} label="Users" open={open} />
+              <Item to="/admin/holidays" icon={<NavCalendarIcon />} label="Holidays" open={open} />
+              <Item to="/admin/providers" icon={<NavListIcon />} label="Providers" open={open} />
             </>
           )}
         </nav>
@@ -120,6 +124,8 @@ export default function App() {
               <Route path="/dashboard/:id" element={<Dashboard />} />
               <Route path="/admin/users" element={<AdminUsers />} />
               <Route path="/admin/activity" element={<AdminActivity />} />
+              <Route path="/admin/holidays" element={<AdminHolidays />} />
+              <Route path="/admin/providers" element={<AdminProviders />} />
             </>
           )}
           <Route path="*" element={<Navigate to="/scorecard" replace />} />

@@ -295,3 +295,18 @@ export const Loading = ({ what = "Loading" }) => (
 
 export const ErrorBox = ({ error }) =>
   error ? <div className="card err">{String(error.message ?? error)}</div> : null;
+
+// A build made before every file was in: says so, and which files it lacks.
+export function PartialNotice({ missing }) {
+  if (!missing?.length) return null;
+  return (
+    <div className="waiting rise">
+      <span className="pulse" aria-hidden="true" />
+      <span>
+        <strong>Partial scorecard.</strong> Built without {missing.join(", ")} -
+        the parts that need {missing.length === 1 ? "it" : "them"} show no data.
+        Upload the rest and build again for the full scorecard.
+      </span>
+    </div>
+  );
+}

@@ -27,9 +27,13 @@ def timed_reader(cache: Cache | None, reads: list[FileRead]):
     `reads` for every sheet it loads."""
     cache = cache or NoCache()
 
-    def timed(key: str, label: str, path: Path, load: Callable[[], pl.DataFrame],
-              source_key: str | None = None) -> pl.DataFrame:
-        """Read one sheet, recording how long it took and how much came back."""
+    def timed(key: str, label: str, path: Path | None,
+              load: Callable[[], pl.DataFrame],
+              source_key: str | None = None) -> pl.DataFrame | None:
+        """Read one sheet, recording how long it took and how much came back -
+        or None if its file was not uploaded."""
+        if path is None:
+            return None
         t = time.perf_counter()
         ck = (ParquetCache.key_for(key, path)
               if isinstance(cache, ParquetCache) else key)
@@ -41,3 +45,19 @@ def timed_reader(cache: Cache | None, reads: list[FileRead]):
         return df
 
     return timed
+
+
+PROVIDER_COLUMNS = {"regid": "BUSINESSREGID", "provider_id": "PROVIDER ID",
+                    "name": "PROVIDER NAME", "status": "Provider Status",
+                    "provider_group": "Provider Group"}
+
+
+def provider_list(rules: dict) -> pl.DataFrame:
+    """The provider list put into the rules by the app, shaped like the
+    Supporting File's Provider List sheet it replaces."""
+    rows = rules.get("providers") or []
+    return pl.DataFrame(
+        {col: [r.get(key) for r in rows] for key, col in PROVIDER_COLUMNS.items()},
+        schema={"BUSINESSREGID": pl.Float64, "PROVIDER ID": pl.Utf8,
+                "PROVIDER NAME": pl.Utf8, "Provider Status": pl.Utf8,
+                "Provider Group": pl.Utf8})

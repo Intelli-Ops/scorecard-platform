@@ -150,6 +150,23 @@ export const NavShieldIcon = () => (
   </svg>
 );
 
+// A calendar page with one day marked - the holidays.
+export const NavCalendarIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <rect x="2.5" y="3.5" width="11" height="10" rx="1" {...NAV} />
+    <path d="M2.5 6.5h11M5.5 2v3M10.5 2v3" {...NAV} />
+    <path d="M9.5 9h2v2h-2Z" {...NAV} />
+  </svg>
+);
+
+// A list with a bullet on each line - the provider list.
+export const NavListIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M6 4h7.5M6 8h7.5M6 12h7.5" {...NAV} />
+    <path d="M2.8 4h.4M2.8 8h.4M2.8 12h.4" {...NAV} strokeWidth="2" />
+  </svg>
+);
+
 // Three bars on a baseline - the scorecard itself.
 export const NavChartIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">

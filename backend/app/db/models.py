@@ -2,7 +2,7 @@
 from __future__ import annotations
 import datetime as dt
 
-from sqlalchemy import (BigInteger, String, Integer, Float, DateTime, ForeignKey,
+from sqlalchemy import (BigInteger, String, Integer, Float, Date, DateTime, ForeignKey,
                         Text, UniqueConstraint, Index, JSON, Boolean, event, text)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
@@ -315,5 +315,30 @@ class MonthSetting(Base):
 
     month: Mapped[str] = mapped_column(String(7), primary_key=True)   # 2026-09
     working_days: Mapped[int] = mapped_column(Integer)
+    set_by: Mapped[str | None] = mapped_column(String(320))
+    set_at: Mapped[dt.datetime] = mapped_column(UtcDateTime(), default=utcnow)
+
+
+class Holiday(Base):
+    """A day off - not a working day when pacing - as kept on the Holidays
+    screen."""
+    __tablename__ = "holiday"
+
+    day: Mapped[dt.date] = mapped_column(Date, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    set_by: Mapped[str | None] = mapped_column(String(320))
+    set_at: Mapped[dt.datetime] = mapped_column(UtcDateTime(), default=utcnow)
+
+
+class Provider(Base):
+    """One row of the provider list - which group a provider's cases count
+    under - as kept on the Providers screen."""
+    __tablename__ = "provider"
+
+    regid: Mapped[int] = mapped_column(Integer, primary_key=True)     # BUSINESSREGID
+    provider_id: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str | None] = mapped_column(String(32))
+    provider_group: Mapped[str] = mapped_column(String(200))
     set_by: Mapped[str | None] = mapped_column(String(320))
     set_at: Mapped[dt.datetime] = mapped_column(UtcDateTime(), default=utcnow)

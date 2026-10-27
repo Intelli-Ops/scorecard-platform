@@ -42,9 +42,10 @@ def _groups_in(delta: pl.DataFrame, grids: dict, coll: pl.DataFrame) -> set[str]
 
 def review_notes(drep, krep, added, delta: pl.DataFrame, grids: dict,
                  coll: pl.DataFrame, kpi: dict, period: Period,
-                 layout_groups: list[str] | None, has_scorecard: bool) -> list[Note]:
+                 layout_groups: list[str] | None, has_scorecard: bool,
+                 has_payments: bool = True) -> list[Note]:
     """`layout_groups` is None when the report has no fixed group list (All
-    Providers reads its layout from last week's sheet)."""
+    Providers gives any group with figures a row)."""
     notes: list[Note] = []
 
     for block, name, v in added:
@@ -70,13 +71,13 @@ def review_notes(drep, krep, added, delta: pl.DataFrame, grids: dict,
     if unknown:
         notes.append(warning(
             "kpi_rows_dropped_unknown_provider",
-            f"Provider(s) in the KPI-numbers file but not in the Supporting File - "
+            f"Provider(s) in the KPI-numbers file but not on the Providers page - "
             f"their figures are not counted: {', '.join(map(str, unknown))}",
             providers=[str(u) for u in unknown]))
     if getattr(krep, "unknown_providers", None):
         notes.append(warning(
             "sqldoc_rows_dropped_unknown_provider",
-            f"ProviderID(s) in the SQL-Doc but not in the Provider List - their "
+            f"ProviderID(s) in the SQL-Doc but not on the Providers page - their "
             f"figures are not counted: {', '.join(map(str, krep.unknown_providers))}",
             providers=[str(u) for u in krep.unknown_providers]))
 
@@ -100,7 +101,7 @@ def review_notes(drep, krep, added, delta: pl.DataFrame, grids: dict,
             f"Expected column(s) not found in the KPI-numbers file, so those "
             f"figures are missing: {', '.join(krep.scorecard_missing)}",
             columns=list(krep.scorecard_missing)))
-    if coll.height == 0:
+    if has_payments and coll.height == 0:
         notes.append(warning(
             "collections_empty",
             f"No payments for {period.label} up to this week in the Payment "

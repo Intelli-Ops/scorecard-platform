@@ -28,6 +28,8 @@ def combine_delta(sheets: dict[str, pl.DataFrame], rules: dict) -> tuple[pl.Data
     parts = []
     for spec in rules["delta"]["sources"]:
         name = spec["sheet"]
+        if name not in sheets:          # its file is not in yet - a partial build
+            continue
         df = sheets[name]
         missing = [src for src in spec["columns"].values() if src not in df.columns]
         if missing:

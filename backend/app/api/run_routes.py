@@ -67,7 +67,8 @@ def start_run(request: Request, report: str = Query(...),
         st = week_status(s, week)["reports"][report]
         if not st["ready"]:
             raise HTTPException(
-                409, {"message": f"{st['label']} cannot be built yet",
+                409, {"message": f"Nothing has been uploaded for {st['label']} "
+                                 f"in {week} yet.",
                       "missing": st["missing"]})
         try:
             run = runner.queue(s, report, week, as_of)
@@ -122,6 +123,7 @@ def current_scorecards(user=Depends(current_user)) -> list[dict]:
                     "approver_name": approver,
                     "approved_at": approved.approved_at,
                     "finished_at": approved.finished_at,
+                    "missing": runner.missing_inputs(approved),
                 },
                 "waiting": None if newer is None else {
                     "id": newer.id, "week": newer.week, "status": newer.status},
@@ -178,7 +180,8 @@ def approve_run(run_id: int, request: Request,
                "approved_by": run.approved_by, "approved_at": run.approved_at}
         audit.record("run.approve", db=s, request=request, user=user,
                      target=f"run {run_id}",
-                     detail={"report": run.report_key, "week": run.week})
+                     detail={"report": run.report_key, "week": run.week,
+                             "missing": runner.missing_inputs(run)})
     return out
 
 

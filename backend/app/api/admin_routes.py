@@ -8,9 +8,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from ..clock import utcnow
-from ..db.models import Session as UserSession, User
+from ..db.models import Holiday, Provider, Session as UserSession, User
 from ..db.session import session
 from ..service import audit, auth, detect
+from ..service.providers import as_dict as _provider
 from .deps import require_admin
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin)])
@@ -30,6 +31,27 @@ class Access(BaseModel):
 
 class Approval(BaseModel):
     reports: list[str] | None = None
+
+
+class NewHoliday(BaseModel):
+    day: dt.date
+    name: str = Field(min_length=1, max_length=120)
+
+
+class ProviderIn(BaseModel):
+    regid: int = Field(ge=1)
+    provider_id: str = Field(min_length=1, max_length=200)
+    name: str | None = Field(default=None, max_length=255)
+    status: str | None = Field(default=None, max_length=32)
+    provider_group: str = Field(min_length=1, max_length=200)
+
+    def cleaned(self) -> dict:
+        out = {k: (v.strip() or None) if isinstance(v, str) else v
+               for k, v in self.model_dump().items()}
+        for k, what in (("provider_id", "a provider ID"), ("provider_group", "a group")):
+            if not out[k]:
+                raise HTTPException(400, f"Give the provider {what}.")
+        return out
 
 
 class ActivityDelete(BaseModel):
@@ -235,3 +257,123 @@ def delete_activity(body: ActivityDelete, request: Request,
         audit.record("admin.activity_delete", db=s, request=request, user=admin,
                      target=body.label or what, detail=detail)
     return {"deleted": n}
+
+
+def _holiday(h: Holiday) -> dict:
+    return {"day": h.day.isoformat(), "name": h.name,
+            "set_by": h.set_by, "set_at": h.set_at}
+
+
+@router.get("/holidays")
+def list_holidays() -> list[dict]:
+    """Every day off pacing leaves out, earliest first."""
+    with session() as s:
+        return [_holiday(h) for h in s.scalars(select(Holiday).order_by(Holiday.day))]
+
+
+@router.post("/holidays")
+def add_holiday(body: NewHoliday, request: Request,
+                admin: User = Depends(require_admin)) -> dict:
+    """A new day off - its week and month lose a working day in every build
+    from now on."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Give the holiday a name.")
+    if body.day.weekday() >= 5:
+        raise HTTPException(400, f"{body.day:%a %d %b %Y} is a weekend - it is "
+                                 f"not a working day anyway.")
+    with session() as s:
+        if s.get(Holiday, body.day) is not None:
+            raise HTTPException(409, f"{body.day:%d %b %Y} is already a holiday.")
+        h = Holiday(day=body.day, name=name, set_by=admin.email, set_at=utcnow())
+        s.add(h)
+        s.flush()
+        audit.record("holiday.add", db=s, request=request, user=admin,
+                     target=body.day.isoformat(), detail={"name": name})
+        return _holiday(h)
+
+
+@router.delete("/holidays/{day}")
+def delete_holiday(day: dt.date, request: Request,
+                   admin: User = Depends(require_admin)) -> dict:
+    """Make a holiday a working day again."""
+    with session() as s:
+        h = s.get(Holiday, day)
+        if h is None:
+            raise HTTPException(404, "That day is not a holiday.")
+        gone = _holiday(h)
+        s.delete(h)
+        audit.record("holiday.delete", db=s, request=request, user=admin,
+                     target=day.isoformat(), detail={"name": gone["name"]})
+        return gone
+
+
+@router.get("/providers")
+def list_providers() -> list[dict]:
+    """The provider list, by BUSINESSREGID."""
+    with session() as s:
+        return [_provider(p) | {"set_by": p.set_by, "set_at": p.set_at}
+                for p in s.scalars(select(Provider).order_by(Provider.regid))]
+
+
+@router.post("/providers")
+def add_provider(body: ProviderIn, request: Request,
+                 admin: User = Depends(require_admin)) -> dict:
+    """A new provider - its cases count under its group in builds from now on."""
+    row = body.cleaned()
+    with session() as s:
+        if s.get(Provider, row["regid"]) is not None:
+            raise HTTPException(409, f"BUSINESSREGID {row['regid']} is already in "
+                                     f"the list - change that row instead.")
+        p = Provider(**row, set_by=admin.email, set_at=utcnow())
+        s.add(p)
+        s.flush()
+        audit.record("provider.add", db=s, request=request, user=admin,
+                     target=str(p.regid), detail=_provider(p))
+        return _provider(p) | {"set_by": p.set_by, "set_at": p.set_at}
+
+
+@router.put("/providers/{regid}")
+def edit_provider(regid: int, body: ProviderIn, request: Request,
+                  admin: User = Depends(require_admin)) -> dict:
+    """Change a provider's details - its BUSINESSREGID can change too."""
+    row = body.cleaned()
+    with session() as s:
+        p = s.get(Provider, regid)
+        if p is None:
+            raise HTTPException(404, "No provider has that BUSINESSREGID.")
+        if row["regid"] != regid and s.get(Provider, row["regid"]) is not None:
+            raise HTTPException(409, f"BUSINESSREGID {row['regid']} is already in "
+                                     f"the list.")
+        was = _provider(p)
+        if row["regid"] != regid:
+            s.delete(p)
+            s.flush()
+            p = Provider(**row)
+            s.add(p)
+        else:
+            for k, v in row.items():
+                setattr(p, k, v)
+        p.set_by, p.set_at = admin.email, utcnow()
+        s.flush()
+        now = _provider(p)
+        audit.record("provider.edit", db=s, request=request, user=admin,
+                     target=str(regid),
+                     detail={k: {"was": was[k], "now": now[k]}
+                             for k in now if was[k] != now[k]})
+        return now | {"set_by": p.set_by, "set_at": p.set_at}
+
+
+@router.delete("/providers/{regid}")
+def delete_provider(regid: int, request: Request,
+                    admin: User = Depends(require_admin)) -> dict:
+    """Take a provider off the list - its cases no longer count under a group."""
+    with session() as s:
+        p = s.get(Provider, regid)
+        if p is None:
+            raise HTTPException(404, "No provider has that BUSINESSREGID.")
+        gone = _provider(p)
+        s.delete(p)
+        audit.record("provider.delete", db=s, request=request, user=admin,
+                     target=str(regid), detail=gone)
+        return gone

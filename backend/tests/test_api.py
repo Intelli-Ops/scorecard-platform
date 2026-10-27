@@ -33,7 +33,7 @@ def upload(client, week, name, body=b"stand-in", for_report=None):
 
 def test_uploads_are_recorded_against_the_signed_in_account(client):
     """Who uploaded comes from the account, not from a field the caller sets."""
-    upload(client, "2026-W36", "Supporting File.xlsx")
+    upload(client, "2026-W36", "Hearing Calendar.xlsx")
     from sqlalchemy import select
     from app.db.models import Upload
     from app.db.session import session
@@ -57,10 +57,10 @@ def test_reports_lists_both_and_marks_the_per_report_files(client):
 
 
 def test_upload_accepts_a_source_and_reports_what_it_ignored(client):
-    r = upload(client, "2026-W36", "Supporting File.xlsx")
+    r = upload(client, "2026-W36", "Hearing Calendar.xlsx")
     assert r.status_code == 200
     body = r.json()
-    assert body["accepted"][0]["source_key"] == "supporting"
+    assert body["accepted"][0]["source_key"] == "hearing_calendar"
     assert body["accepted"][0]["scope"] == "shared"
 
     r = upload(client, "2026-W36", "GFS - Weekly Scorecard (Week -36) 2026.xlsx")
@@ -85,11 +85,16 @@ def test_case_ars_are_kept_apart_per_report(client):
     assert gfs["sha256"] != ap["sha256"]
 
 
-def test_a_week_that_is_not_ready_cannot_be_built(client):
-    upload(client, "2026-W36", "Supporting File.xlsx")
+def test_a_week_with_nothing_uploaded_cannot_be_built(client):
     r = client.post("/api/runs", params={"report": "gfs", "week": "2026-W36"})
     assert r.status_code == 409
     assert "Combined Owner Case AR" in str(r.json()["detail"]["missing"])
+
+
+def test_a_week_with_some_files_can_be_built_partially(client):
+    upload(client, "2026-W36", "Hearing Calendar.xlsx")
+    r = client.post("/api/runs", params={"report": "gfs", "week": "2026-W36"})
+    assert r.status_code == 200
 
 
 def test_unknown_report_is_refused(client):
@@ -98,8 +103,8 @@ def test_unknown_report_is_refused(client):
 
 
 def test_weeks_lists_what_has_been_uploaded(client):
-    upload(client, "2026-W35", "Supporting File.xlsx")
-    upload(client, "2026-W36", "Supporting File.xlsx")
+    upload(client, "2026-W35", "Hearing Calendar.xlsx")
+    upload(client, "2026-W36", "Hearing Calendar.xlsx")
     weeks = [w["week"] for w in client.get("/api/weeks").json()]
     assert weeks == ["2026-W36", "2026-W35"]
 
@@ -214,7 +219,7 @@ def test_deleting_the_last_run_removes_the_files_it_read(client):
     from app.db.session import session
     from app.storage.files import FileStore
 
-    upload(client, "2026-W35", "Supporting File.xlsx")
+    upload(client, "2026-W35", "Hearing Calendar.xlsx")
     with session() as s:
         row = s.execute(select(Upload)).scalar_one()
         upload_id, sha, suffix = row.id, row.sha256, row.suffix
@@ -237,7 +242,7 @@ def test_deleting_one_run_keeps_files_the_other_report_still_reads(client):
     from app.config import settings
     from app.storage.files import FileStore
 
-    upload(client, "2026-W35", "Supporting File.xlsx")
+    upload(client, "2026-W35", "Hearing Calendar.xlsx")
     [upload_id] = _upload_ids()
 
     gfs = _finished_run(report="gfs")
@@ -257,7 +262,7 @@ def test_deleting_one_run_keeps_files_the_other_report_still_reads(client):
 
 def test_deleting_a_run_leaves_uploads_no_run_ever_read(client):
     """A file uploaded but never built is not this run's to remove."""
-    upload(client, "2026-W35", "Supporting File.xlsx")
+    upload(client, "2026-W35", "Hearing Calendar.xlsx")
     upload(client, "2026-W35", "Payment Detail.xlsx")
     read, unread = _upload_ids()
 
@@ -310,7 +315,7 @@ def test_deleting_a_week_removes_its_files_and_its_builds(client):
     from app.config import settings
     from app.storage.files import FileStore
 
-    upload(client, "2026-W35", "Supporting File.xlsx", body=b"one")
+    upload(client, "2026-W35", "Hearing Calendar.xlsx", body=b"one")
     upload(client, "2026-W35", "Payment Detail.xlsx", body=b"two")
     [read, _] = _upload_ids()
     _consume(_finished_run(week="2026-W35"), [read])
@@ -327,8 +332,8 @@ def test_deleting_a_week_removes_its_files_and_its_builds(client):
 def test_a_deleted_week_stops_being_listed(client):
     """The weeks list is built from uploads, so a week with none is gone from
     it - no Build button with nothing behind it."""
-    upload(client, "2026-W35", "Supporting File.xlsx")
-    upload(client, "2026-W36", "Supporting File.xlsx", body=b"another week")
+    upload(client, "2026-W35", "Hearing Calendar.xlsx")
+    upload(client, "2026-W36", "Hearing Calendar.xlsx", body=b"another week")
     assert {w["week"] for w in client.get("/api/weeks").json()} == {
         "2026-W35", "2026-W36"}
 
@@ -345,8 +350,8 @@ def test_deleting_a_week_leaves_another_weeks_identical_file(client):
     from app.db.session import session
 
     same = b"the very same bytes"
-    upload(client, "2026-W35", "Supporting File.xlsx", body=same)
-    upload(client, "2026-W36", "Supporting File.xlsx", body=same)
+    upload(client, "2026-W35", "Hearing Calendar.xlsx", body=same)
+    upload(client, "2026-W36", "Hearing Calendar.xlsx", body=same)
     with session() as s:
         row = s.execute(select(Upload)).scalars().first()
         blob = FileStore(settings.object_dir).path(row.sha256, row.suffix)
@@ -358,7 +363,7 @@ def test_deleting_a_week_leaves_another_weeks_identical_file(client):
 
 
 def test_a_week_with_a_running_build_cannot_be_deleted(client):
-    upload(client, "2026-W35", "Supporting File.xlsx")
+    upload(client, "2026-W35", "Hearing Calendar.xlsx")
     _finished_run(week="2026-W35", status="running")
     r = client.delete("/api/weeks/2026-W35")
     assert r.status_code == 409 and "still has a build running" in r.json()["detail"]

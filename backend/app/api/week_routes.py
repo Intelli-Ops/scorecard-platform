@@ -16,6 +16,7 @@ from ..db.models import MonthSetting, Run, Upload
 from ..db.session import session
 from ..reports import CASE_AR_KEYS, REPORTS, load_rules
 from ..service import audit, runner
+from ..service.holidays import with_holidays
 from ..service.ingest import ingest, too_long, week_status
 from ..storage.files import FileStore
 from .deps import current_user, require_admin, valid_week as _week
@@ -164,7 +165,7 @@ class WorkingDays(BaseModel):
 
 
 def _month_info(s, week: str) -> dict:
-    rules = _rules()
+    rules = with_holidays(s, load_rules("gfs"))
     period = runner.month_of(week, rules)
     row = s.get(MonthSetting, period.key)
     if row is not None:
@@ -179,12 +180,6 @@ def _month_info(s, week: str) -> dict:
             "week_of_month": n,
             "days_passed": period.pace_divisor(n),
             "passed_through": period.month_weeks[n - 1][1]}
-
-
-def _rules() -> dict:
-    """The holidays both reports' rules agree on - what the calendar count
-    leaves out."""
-    return load_rules("gfs")
 
 
 @router.get("/weeks/{week}/month", dependencies=[Depends(require_admin)])

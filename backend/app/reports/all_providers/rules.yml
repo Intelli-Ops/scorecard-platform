@@ -123,19 +123,9 @@ collections:
   # "in payment type make 'board reps' & 'in house rep', 'settlement'" = fold them into settlement, not rename them alongside it.
   fold_into_settlement: [BOARD REPS, IN HOUSE REPS, SETTLEMENT]
   payment_type_order: [BILLING, REBILLING, APPEAL, SETTLEMENT]
-  # The sheet's "Week 01..05" are the weeks of the month as defined under `holidays:` below (a week belongs to the month of its Wednesday), the same as the Settlement grids.
+  # The sheet's "Week 01..05" are the weeks of the month as defined under the pacing note below (a week belongs to the month of its Wednesday), the same as the Settlement grids.
 
-# Weeks, months and pacing - the same calendar as the gfs report. a mon-fri week belongs to the month that holds most of its weekdays - the month its wednesday falls in. so mon 31 aug - fri 4 sep is september's week 1 (1-4 sep; 31 aug is counted in august's month total), and mon 28 sep - fri 2 oct is september's week 5 (28-30 sep; 1-2 oct are added to october's week 1, which then runs 1-9 oct). the month and week being reported come from the week folder's name. pacing = month-to-date / working days elapsed * working days in the month, written into the sheet as a formula (e.g. =sum(j9,k9)/8*21). a working day is a weekday that is not listed below. source: holidays.png (night shift) in the main project folder. 4 jul 2026 is a saturday, so its observed friday, 3 jul, is the day off. add each new year's dates here.
-holidays:
-  - 2026-01-01   # New Year
-  - 2026-02-16   # Presidents' Day (U.S.)
-  - 2026-03-20   # Eid ul-Fitr (Pakistan)
-  - 2026-05-25   # Memorial Day (U.S.)
-  - 2026-05-27   # Eid ul-Azha
-  - 2026-07-03   # Independence Day (observed U.S.)
-  - 2026-09-07   # Labour Day
-  - 2026-11-26   # Thanksgiving Day (U.S.)
-  - 2026-12-25   # Christmas Day
+# Weeks, months and pacing - the same calendar as the gfs report. a mon-fri week belongs to the month that holds most of its weekdays - the month its wednesday falls in. so mon 31 aug - fri 4 sep is september's week 1 (1-4 sep; 31 aug is counted in august's month total), and mon 28 sep - fri 2 oct is september's week 5 (28-30 sep; 1-2 oct are added to october's week 1, which then runs 1-9 oct). the month and week being reported come from the week folder's name. pacing = month-to-date / working days elapsed * working days in the month, written into the sheet as a formula (e.g. =sum(j9,k9)/8*21). a working day is a weekday that is not a holiday. holidays are kept in the app (admin > holidays) - not in this file.
 
 # -
 kpi:
@@ -196,6 +186,189 @@ kpi:
 
   # Blocks the sheet carries that no source feeds.
   unsourced_blocks: ["10635 (DDEL)"]
+
+  # The KPI sheet's blocks, top to bottom, and the provider-group rows in each,
+  # in sheet order - read once from the Week-41 2026 workbook. A group with
+  # figures and no row here still gets a row of its own; add it here to give it
+  # a fixed place. Names are matched ignoring case and spacing.
+  layout:
+    "SBR":
+      - "Accumen Healthcare"
+      - "Advance MD"
+      - "Alexander Pharmacy"
+      - "A Miles"
+      - "Artheon"
+      - "Basem A Attum"
+      - "Bayco"
+      - "Concierge"
+      - "DDM"
+      - "Desert Care"
+      - "IMR"
+      - "Inland Empire Wellness"
+      - "JL Calpar Inc"
+      - "Lakewood"
+      - "Life Pharmacy"
+      - "Medbridge Pharmacy"
+      - "Med-Legal"
+      - "Medvantage"
+      - "MH Express"
+      - "Mesa Care"
+      - "POS"
+      - "Russman"
+      - "Southern California"
+      - "One & Only Chiro"
+      - "T Curtis"
+      - "Coastal Care"
+      - "United"
+      - "Tulip Radiology"
+      - "Prospice Med"
+      - "United Services Plus"
+      - "SUPPORT CLAIMS WEST"
+      - "Dr Dorian"
+      - "Form and Function Physical Therapy P.C."
+    "PMR":
+      - "365 Medical"
+      - "Artheon"
+      - "Bayco"
+      - "Concierge"
+      - "Alexander Pharmacy"
+      - "Credit Point"
+      - "Desert Care"
+      - "MH Express"
+      - "Mesa Care"
+      - "Life Pharmacy"
+      - "Medvantage"
+      - "POS"
+      - "Tulip Radiology"
+      - "T Curtis"
+      - "United Services Plus"
+      - "JL Calpar Inc"
+      - "Coastal Care"
+      - "United"
+    "DOR":
+      - "Med-Legal"
+      - "365 Medical"
+      - "Advance MD"
+      - "Accumen Healthcare"
+      - "Alexander Pharmacy"
+      - "A Miles"
+      - "Artheon"
+      - "Basem A Attum"
+      - "Concierge"
+      - "Bayco"
+      - "Desert Care"
+      - "Inland Empire Wellness"
+      - "Lakewood"
+      - "Life Pharmacy"
+      - "Medvantage"
+      - "MH Express"
+      - "POS"
+      - "Russman"
+      - "Tulip Radiology"
+      - "Southern California"
+      - "T Curtis"
+      - "Mesa care"
+      - "JL Calpar Inc"
+      - "Support Claims West"
+      - "United Services Plus"
+      - "United"
+      - "BVHS"
+      - "Coastal Care"
+      - "Dr Dorian"
+      - "Dorian Chiropractic"
+      - "One & Only Chiro"
+    "Med Legal":
+      - "NOI (COST)"
+      - "NOI for Payment"
+      - "Cost Petition"
+      - "Cost Petition (DOR)"
+    "Enforcement Of Agreement":
+      - "Med-Legal"
+      - "Medvantage"
+      - "Russman"
+      - "Andrew Miles"
+      - "Artheon"
+      - "Concierge"
+      - "MH Express"
+      - "Bayco"
+      - "Tulip Radiology"
+    "DDE":
+      - "Medvantage"
+      - "Advance Care"
+      - "Advance MD"
+      - "Basem A Attum"
+      - "Credit Point"
+      - "DDM"
+      - "Desert Care"
+      - "Lakewood"
+      - "Pro Ivy"
+      - "Russman"
+      - "T Curtis"
+      - "Artheon"
+      - "POS"
+      - "United"
+      - "Tulip Radiology"
+      - "Accumen Healthcare"
+      - "BayCo"
+      - "Concierge"
+      - "A Miles"
+      - "MH Express"
+      - "Mesa Care"
+      - "Inland Empire Wellness"
+      - "IMR"
+      - "JL Calpar Inc"
+      - "Legacy"
+      - "One & Only Chiro"
+      - "Southern California"
+      - "Medbridge Pharmacy"
+      - "SUPPORT CLAIMS WEST"
+      - "Life Pharmacy"
+      - "Dorian Chiropractic 1 Corporation"
+      - "Dorian Chiropractic 2 Corporation"
+      - "Dr Dorian"
+    "Medical Index":
+      - "Advance MD"
+      - "A Miles"
+      - "Artheon"
+      - "Basem A Attum"
+      - "Bayco"
+      - "Desert Care"
+      - "Lakewood"
+      - "Life Pharmacy"
+      - "Medvantage"
+      - "MH Express"
+      - "POS"
+      - "Southern California"
+      - "T Curtis"
+      - "Mesa Care"
+      - "Tulip Radiology"
+      - "JL Calpar"
+      - "United"
+      - "Concierge Diagnostics"
+      - "United Services Plus"
+    "10635 (DDEL)":
+      - "A Miles"
+      - "Accumen Healthcare"
+      - "Artheon"
+      - "Lakewood"
+      - "Desert Care"
+      - "Southern California"
+      - "T Curtis"
+      - "Basem A Attum"
+    "NTP":
+      - "A Miles"
+      - "Basem A Attum"
+      - "Accumen Healthcare"
+      - "Desert Care"
+      - "Lakewood"
+      - "Southern California"
+      - "SUPPORT CLAIMS WEST"
+      - "T Curtis"
+      - "BVHS"
+      - "Dr Dorian"
+      - "Dorian Chiropractic"
+      - "Dorian Chiropractic 2"
+      - "One & Only Chiro"
 
 # -
 template:

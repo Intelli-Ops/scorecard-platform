@@ -28,8 +28,6 @@ SHARED_SOURCES: tuple[SourceFile, ...] = (
                label="Master Settlement & Collection Delta MLCR"),
     SourceFile("payment_detail", ("payment detail",),
                label="Payment Detail Report"),
-    SourceFile("supporting", ("supporting file",),
-               label="Supporting File"),
     SourceFile("hearing_calendar", ("hearing calendar",),
                label="Hearing Calendar"),
     SourceFile("document_log", ("document_log",), exts=(".csv",),
@@ -37,11 +35,6 @@ SHARED_SOURCES: tuple[SourceFile, ...] = (
     SourceFile("kpi_numbers", ("kpi", "number"),
                label="KPI numbers", required=False),
 )
-
-TEMPLATE_SOURCE = SourceFile(
-    "template", ("provider", "score"), exts=(".xlsx",),
-    label="Last week's All Providers workbook (for the KPI layout)")
-
 
 COMMENT_SOURCES: tuple[SourceFile, ...] = (
     SourceFile("delta_wc_comments", ("delta wc", COMMENTS), required=False,
@@ -72,7 +65,7 @@ class ReportType:
 
     @property
     def sources(self) -> tuple[SourceFile, ...]:
-        """Every file this report needs: the shared seven, its own two Case
+        """Every file this report needs: the shared six, its own two Case
         ARs, and anything only it requires."""
         return SHARED_SOURCES + CASE_AR_SOURCES + self.extra_sources
 
@@ -96,7 +89,6 @@ REPORTS: dict[str, ReportType] = {
         short="All Providers",
         send_day="Thursday",
         rules_path=HERE / "all_providers" / "rules.yml",
-        extra_sources=(TEMPLATE_SOURCE,),
     ),
 }
 

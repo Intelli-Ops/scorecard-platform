@@ -51,6 +51,20 @@ def _all_sources() -> tuple[SourceFile, ...]:
     return tuple(seen.values())
 
 
+# Files that used to be uploaded each week, and what replaced them.
+NO_LONGER_UPLOADED = {
+    ("supporting file",): "the Supporting File is no longer needed - providers "
+                          "are kept on the Providers page",
+    ("provider", "score"): "last week's All Providers workbook is no longer "
+                           "needed - the KPI layout is kept in the app",
+}
+
+
+def _no_longer(path: Path) -> tuple[str, ...] | None:
+    name = path.name.lower()
+    return next((k for k in NO_LONGER_UPLOADED if all(f in name for f in k)), None)
+
+
 def classify(path: Path) -> SourceFile | None:
     """Which input is this file?"""
     for spec in _all_sources():
@@ -69,7 +83,8 @@ def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
         path = Path(path)
         spec = classify(path)
         if spec is None:
-            result.rejected.append((path.name, "not one of the report inputs"))
+            result.rejected.append((path.name, NO_LONGER_UPLOADED.get(
+                _no_longer(path), "not one of the report inputs")))
             continue
 
         if too_long(path.name):
@@ -186,6 +201,9 @@ def week_status(session: Session, week: str) -> dict:
                      for k, u in uploads.items()],
             "missing": [s.label for s in report.sources
                         if s.key not in uploads and s.required],
-            "ready": all(s.key in uploads for s in report.sources if s.required),
+            # Any file is enough to build: a section whose files are not in yet
+            # comes out empty, and the build is marked partial.
+            "ready": any(s.key in uploads for s in report.sources),
+            "complete": all(s.key in uploads for s in report.sources if s.required),
         }
     return out

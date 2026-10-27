@@ -93,7 +93,7 @@ def test_the_workspace_is_for_admins(client, method, path):
 def test_a_viewer_cannot_upload(client):
     viewer = account(client, "v@appedology.com", "APD-0100", reports="gfs")
     r = client.post("/api/weeks/2026-W38/uploads", headers=viewer,
-                    files=[("files", ("Supporting File.xlsx", b"x", "application/x"))])
+                    files=[("files", ("Hearing Calendar.xlsx", b"x", "application/x"))])
     assert r.status_code == 403
 
 
@@ -345,3 +345,103 @@ def test_a_build_records_the_working_days_it_paced_on(client, admin):
         assert run.working_days == 19 and run.working_days_source == "entered"
         assert rules["working_days"] == {"2026-09": 19}
         assert s.get(MonthSetting, "2026-09").set_by == "admin@appedology.com"
+
+
+def test_admins_keep_the_holidays_and_pacing_follows_them(client, admin, root):
+    """September 2026 has 22 weekdays; the starting list takes Labour Day (7 Sep)
+    off. 2026-W39 runs to Fri 25 Sep."""
+    days = [h["day"] for h in client.get("/api/admin/holidays", headers=root).json()]
+    assert "2026-09-07" in days and len(days) == 9
+
+    def sep():
+        return client.get("/api/weeks/2026-W39/month", headers=admin).json()
+    assert (sep()["working_days"], sep()["days_passed"]) == (21, 18)
+
+    assert client.delete("/api/admin/holidays/2026-09-07", headers=admin).status_code == 200
+    assert (sep()["working_days"], sep()["days_passed"]) == (22, 19)
+
+    r = client.post("/api/admin/holidays", headers=admin,
+                    json={"day": "2026-09-14", "name": "Office closed"})
+    assert r.status_code == 200 and r.json()["set_by"] == "admin@appedology.com"
+    assert (sep()["working_days"], sep()["days_passed"]) == (21, 18)
+
+    assert client.post("/api/admin/holidays", headers=admin,
+                       json={"day": "2026-09-14", "name": "Again"}).status_code == 409
+    assert client.post("/api/admin/holidays", headers=admin,
+                       json={"day": "2026-09-12", "name": "A Saturday"}).status_code == 400
+    assert client.post("/api/admin/holidays", headers=admin,
+                       json={"day": "2026-09-15", "name": "  "}).status_code == 400
+
+
+def test_a_build_paces_on_the_holidays_when_it_is_queued(client, admin):
+    from app.db.session import session
+    from app.service import runner
+    client.post("/api/admin/holidays", headers=admin,
+                json={"day": "2026-09-14", "name": "Office closed"})
+    with session() as s:
+        run = runner.queue(s, "gfs", "2026-W39")
+        assert run.working_days == 20 and run.working_days_source == "calendar"
+        s.rollback()
+
+
+def test_a_viewer_cannot_see_or_change_the_holidays(client):
+    viewer = account(client, "v@appedology.com", "APD-0100", reports="gfs")
+    assert client.get("/api/admin/holidays", headers=viewer).status_code == 403
+    assert client.post("/api/admin/holidays", headers=viewer,
+                       json={"day": "2026-09-14", "name": "x"}).status_code == 403
+    assert client.delete("/api/admin/holidays/2026-09-07", headers=viewer).status_code == 403
+
+
+def test_admins_keep_the_provider_list(client, admin):
+    rows = client.get("/api/admin/providers", headers=admin).json()
+    assert len(rows) == 59
+    assert next(p for p in rows if p["regid"] == 245)["provider_group"] == "A Miles"
+
+    new = {"regid": 381, "provider_id": "New Clinic", "name": "New Clinic LLC",
+           "status": "Active", "provider_group": "New Clinic"}
+    r = client.post("/api/admin/providers", headers=admin, json=new)
+    assert r.status_code == 200 and r.json()["set_by"] == "admin@appedology.com"
+    assert client.post("/api/admin/providers", headers=admin, json=new).status_code == 409
+
+    r = client.put("/api/admin/providers/381", headers=admin,
+                   json=new | {"regid": 382, "provider_group": "A Miles"})
+    assert r.json()["regid"] == 382 and r.json()["provider_group"] == "A Miles"
+    assert client.put("/api/admin/providers/382", headers=admin,
+                      json=new | {"regid": 218}).status_code == 409
+    assert client.put("/api/admin/providers/382", headers=admin,
+                      json=new | {"provider_group": " "}).status_code == 400
+
+    assert client.delete("/api/admin/providers/382", headers=admin).status_code == 200
+    assert len(client.get("/api/admin/providers", headers=admin).json()) == 59
+
+    from app.db.models import ActivityLog
+    from app.db.session import session
+    from sqlalchemy import select
+    with session() as s:
+        acts = [e.action for e in s.scalars(select(ActivityLog)) if e.action.startswith("provider.")]
+    assert acts == ["provider.add", "provider.edit", "provider.delete"]
+
+
+def test_a_build_reads_the_provider_list_as_it_stands(client, admin):
+    from app.db.session import session
+    from app.reports.reading import provider_list
+    from app.service import runner
+    client.delete("/api/admin/providers/218", headers=admin)
+    with session() as s:
+        rules = runner.rules_for(s, "gfs", "2026-W39", None, None)
+    df = provider_list(rules)
+    assert df.height == 58 and 218.0 not in df["BUSINESSREGID"].to_list()
+    assert df.columns == ["BUSINESSREGID", "PROVIDER ID", "PROVIDER NAME",
+                          "Provider Status", "Provider Group"]
+
+
+def test_a_supporting_file_is_turned_away_with_the_reason(client, admin):
+    r = client.post("/api/weeks/2026-W38/uploads", headers=admin,
+                    files=[("files", ("Supporting File.xlsx", b"x", "application/x"))])
+    assert "Providers page" in r.json()["rejected"][0]["reason"]
+
+
+def test_a_viewer_cannot_change_the_provider_list(client):
+    viewer = account(client, "v@appedology.com", "APD-0100", reports="gfs")
+    assert client.get("/api/admin/providers", headers=viewer).status_code == 403
+    assert client.delete("/api/admin/providers/218", headers=viewer).status_code == 403

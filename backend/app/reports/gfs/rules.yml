@@ -151,17 +151,7 @@ delta:   # Phases 4 and 6 -> the Delta Comparison sheet
   # Same cleanup as the Case AR path - see case_ar section for why exact match matters
   reuse_case_ar_closing_order_rules: true
 
-# Weeks, months and pacing a mon-fri week belongs to the month that holds most of its weekdays - the month its wednesday falls in. so mon 31 aug - fri 4 sep is september's week 1 (1-4 sep; 31 aug is counted in august's month total), and mon 28 sep - fri 2 oct is september's week 5 (28-30 sep; 1-2 oct are added to october's week 1, which then runs 1-9 oct). pacing = month-to-date / working days elapsed * working days in the month, where a working day is a weekday that is not listed below. source: holidays.png (night shift). 4 jul 2026 is a saturday, so its observed friday, 3 jul, is the day off. add each new year's dates here.
-holidays:
-  - 2026-01-01   # New Year
-  - 2026-02-16   # Presidents' Day (U.S.)
-  - 2026-03-20   # Eid ul-Fitr (Pakistan)
-  - 2026-05-25   # Memorial Day (U.S.)
-  - 2026-05-27   # Eid ul-Azha
-  - 2026-07-03   # Independence Day (observed U.S.)
-  - 2026-09-07   # Labour Day
-  - 2026-11-26   # Thanksgiving Day (U.S.)
-  - 2026-12-25   # Christmas Day
+# Weeks, months and pacing a mon-fri week belongs to the month that holds most of its weekdays - the month its wednesday falls in. so mon 31 aug - fri 4 sep is september's week 1 (1-4 sep; 31 aug is counted in august's month total), and mon 28 sep - fri 2 oct is september's week 5 (28-30 sep; 1-2 oct are added to october's week 1, which then runs 1-9 oct). pacing = month-to-date / working days elapsed * working days in the month, where a working day is a weekday that is not a holiday. holidays are kept in the app (admin > holidays) - not in this file.
 
 # -
 collections:   # Phase 7 -> the Collection High-Level 2026 sheet

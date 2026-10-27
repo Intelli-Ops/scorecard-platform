@@ -2,8 +2,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, count, when } from "../api";
-import { Card, ErrorBox, Loading, Notes, Stat, Status } from "../components";
-import { Button, LinkButton } from "../buttons";
+import { Card, ErrorBox, Loading, Notes, PartialNotice, Stat, Status } from "../components";
+import { Button, ConfirmButton, LinkButton } from "../buttons";
 import { CheckIcon } from "../icons";
 
 // The review: what a person has to check before the report goes out.
@@ -103,7 +103,12 @@ export default function Review() {
         </div>
         <div className="row">
           <Status value={run.status} />
-          {run.status === "review" ? (
+          {run.status === "review" && run.missing?.length ? (
+            <ConfirmButton tone="primary" size="md" icon={<CheckIcon />}
+                           label="Approve partial" confirm="Approve without them"
+                           busyLabel="Approving…" onConfirm={approve}
+                           title={`Missing: ${run.missing.join(", ")}`} />
+          ) : run.status === "review" ? (
             <Button tone="primary" icon={<CheckIcon />} onClick={approve}
                     busy={busy} busyLabel="Approving…">
               Approve
@@ -123,6 +128,7 @@ export default function Review() {
       </div>
 
       <ErrorBox error={actionError} />
+      <PartialNotice missing={run.missing} />
 
       <div className="grid cols-4" style={{ marginBottom: 26 }}>
         <Stat label="Needs attention" value={data.needs_attention ? "Yes" : "No"}

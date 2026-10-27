@@ -44,6 +44,11 @@ ACTIONS: dict[str, str] = {
     "admin.access":           "Changed scorecard access",
     "admin.delete_user":      "Deleted an account",
     "month.working_days":     "Set working days",
+    "holiday.add":            "Added a holiday",
+    "holiday.delete":         "Deleted a holiday",
+    "provider.add":           "Added a provider",
+    "provider.edit":          "Changed a provider",
+    "provider.delete":        "Deleted a provider",
     "admin.disable":          "Disabled an account",
     "admin.enable":           "Enabled an account",
     "admin.unlock":           "Unlocked an account",
@@ -57,6 +62,7 @@ ACTIONS: dict[str, str] = {
 CATEGORIES: dict[str, str] = {
     "auth": "Sign-in & accounts", "upload": "Uploads",
     "run": "Builds & approvals", "week": "Weeks", "month": "Working days",
+    "holiday": "Holidays", "provider": "Providers",
     "table": "Exports", "admin": "Admin",
 }
 

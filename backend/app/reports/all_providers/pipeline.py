@@ -8,14 +8,31 @@ import polars as pl
 
 from ..notes import Note, sort_notes
 from ..pacing import pace_grid
+from ..partial import absent, empty, missing_books, waiting
 from ..period import reporting_period, week_index_expr
 from ..review_notes import add_new_providers, review_notes, week_label
 from .core.case_ar import build_raw_data, build_case_ar
 from .core.collections import build_collections
-from .core.delta import (combine_delta, prepare, settlement_grids,
+from .core.delta import (DeltaReport, combine_delta, prepare, settlement_grids,
                          delta_comparison, cp_settled)
-from .core.kpi import build_kpi_sql, build_kpi_scorecard, read_kpi_layout
+from .core.kpi import KpiReport, build_kpi_sql, build_kpi_scorecard, kpi_layout
 from .readers import ApSources
+
+
+# The four tables' columns, for a section whose files are not in yet.
+EMPTY = {
+    "raw_data": {"CASEID": pl.Int64, "PROVIDER": pl.Utf8, "BUSINESSREGID": pl.Int64,
+                 "Group": pl.Utf8, "CASETYPE": pl.Utf8, "Closing Order": pl.Utf8,
+                 "Validity": pl.Utf8, "File Status": pl.Utf8, " BILLED": pl.Float64,
+                 " PAID": pl.Float64, "WRITEOFF": pl.Float64, "ADVANCE": pl.Float64,
+                 "OUTSTANDING": pl.Float64},
+    "case_ar": {"File Status": pl.Utf8, "Count of Cases": pl.UInt32, "BILLED": pl.Float64,
+                "PAID": pl.Float64, "WRITEOFF": pl.Float64, "ADVANCE": pl.Float64,
+                "OUTSTANDING": pl.Float64},
+    "delta_comparison": {"Group": pl.Utf8, "Month": pl.Int8, "Total Settlement": pl.Float64,
+                         "Pay Received - YES": pl.Float64, "Pay Received - NO": pl.Float64},
+    "collections": {"Group": pl.Utf8, "Week": pl.Int32, "PT": pl.Utf8, "Payment": pl.Float64},
+}
 
 
 @dataclass
@@ -53,18 +70,41 @@ def run(src: ApSources, rules: dict, as_of: dt.date | None = None,
                               rules.get("working_days"))
     year, month = period.year, period.month
 
-    raw, rep = build_raw_data(src.owner_ar, src.providers, src.custom_ar, rules)
-    case_ar = build_case_ar(raw, rules)
+    notes: list[Note] = [n for n in src.notes if n.code == "kpi_numbers_not_supplied"]
 
-    comb, drep = combine_delta(src.delta_sheets, rules)
-    dd, drep = prepare(comb, src.providers, rules, year, drep)
+    gone = absent(owner_case_ar=src.owner_ar, custom_case_ar=src.custom_ar)
+    if gone:
+        raw, case_ar = empty(EMPTY["raw_data"]), empty(EMPTY["case_ar"])
+        notes.append(waiting("Raw Data or Case AR", gone))
+    else:
+        raw, rep = build_raw_data(src.owner_ar, src.providers, src.custom_ar, rules)
+        case_ar = build_case_ar(raw, rules)
 
-    grids = settlement_grids(dd, rules, period, drep)
-    delta = delta_comparison(dd, rules, drep)
-    cp = cp_settled(src.hearing_noi, year, month)
-    coll, crep = build_collections(src.payments, src.providers, rules, year,
-                                   month=month,
-                                   week_expr=week_index_expr("paid_on", period))
+    books = missing_books(rules, src.delta_sheets)
+    if not src.delta_sheets:
+        delta, grids, drep = empty(EMPTY["delta_comparison"]), {}, DeltaReport()
+        notes.append(waiting("Delta Comparison or Settlement", books))
+    else:
+        if books:
+            notes.append(waiting("part of Delta Comparison and Settlement", books))
+        comb, drep = combine_delta(src.delta_sheets, rules)
+        dd, drep = prepare(comb, src.providers, rules, year, drep)
+        grids = settlement_grids(dd, rules, period, drep)
+        delta = delta_comparison(dd, rules, drep)
+
+    if src.hearing_noi is None:
+        cp = {}
+        notes.append(waiting("CP Settled Cases", ["hearing_calendar"]))
+    else:
+        cp = cp_settled(src.hearing_noi, year, month)
+
+    if src.payments is None:
+        coll = empty(EMPTY["collections"])
+        notes.append(waiting("Collections", ["payment_detail"]))
+    else:
+        coll, crep = build_collections(src.payments, src.providers, rules, year,
+                                       month=month,
+                                       week_expr=week_index_expr("paid_on", period))
 
     weeks = [f"W{i}" for i in range(1, period.weeks_so_far + 1)]
     paced = {block: pace_grid(amounts, weeks, period)
@@ -75,16 +115,20 @@ def run(src: ApSources, rules: dict, as_of: dt.date | None = None,
                         .select("Group", "Week", "amt").rows()}
     collections_paced = pace_grid(coll_amounts, weeks, period)
 
-    kpi_blocks = read_kpi_layout(src.template, rules)
-    kpi, krep = build_kpi_sql(src.sql_doc, src.providers, kpi_blocks, rules,
-                              year, month)
+    kpi_blocks = kpi_layout(rules)
+    if src.sql_doc is None:
+        kpi, krep = {}, KpiReport()
+        notes.append(waiting("KPI SBR or DDE", ["document_log"]))
+    else:
+        kpi, krep = build_kpi_sql(src.sql_doc, src.providers, kpi_blocks, rules,
+                                  year, month)
     kpi.update(build_kpi_scorecard(src.scorecard, src.providers, kpi_blocks,
                                    rules, krep))
     added = add_new_providers(kpi, krep)
 
-    notes: list[Note] = [n for n in src.notes if n.code == "kpi_numbers_not_supplied"]
     notes += review_notes(drep, krep, added, delta, grids, coll, kpi, period,
-                          None, has_scorecard=src.scorecard is not None)
+                          None, has_scorecard=src.scorecard is not None,
+                          has_payments=src.payments is not None)
 
     return RunResult(
         raw_data=raw, case_ar=case_ar, delta_comparison=delta, collections=coll,

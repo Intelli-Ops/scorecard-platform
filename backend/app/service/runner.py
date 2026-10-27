@@ -8,7 +8,7 @@ from pathlib import Path
 
 import polars as pl
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from ..clock import utcnow
 from ..config import settings
@@ -22,6 +22,8 @@ from ..reports.period import reporting_period
 from ..storage.files import FileStore, StoredFile
 from . import blobs
 from .figures import all_figures
+from .holidays import with_holidays
+from .providers import with_providers
 from .ingest import latest_uploads, retire_uploads
 
 _PIPELINES = {
@@ -50,7 +52,7 @@ def queue(session: Session, report_key: str, week: str,
     run = Run(report_key=report_key, week=week, status="pending",
               as_of=as_of or settings.today())
     session.add(run)
-    _fix_working_days(session, run, load_rules(report_key))
+    _fix_working_days(session, run, with_holidays(session, load_rules(report_key)))
     session.flush()        # the database refuses a second active build here
     for upload in latest_uploads(session, report, week).values():
         session.add(RunInput(run_id=run.id, upload_id=upload.id))
@@ -77,21 +79,29 @@ def plan(store: FileStore, run: Run) -> Plan:
     found = {key: store.path(u.sha256, u.suffix) for key, u in uploads.items()}
     ss = SourceSet(report=report, found=found,
                    missing=tuple(s for s in report.sources if s.key not in found))
-    if not ss.ok:
-        raise FileNotFoundError("; ".join(ss.problems()))
+    if not found:
+        raise FileNotFoundError(f"No files were uploaded for {run.week}.")
 
     return Plan(report_key=run.report_key, week=run.week, as_of=run.as_of,
-                rules=rules_for(run.report_key, run.week, run.working_days,
-                                run.working_days_source),
+                rules=rules_for(object_session(run), run.report_key, run.week,
+                                run.working_days, run.working_days_source),
                 sources=ss,
                 upload_ids={key: u.id for key, u in uploads.items()})
 
 
-def rules_for(report_key: str, week: str, working_days: int | None,
-              source: str | None) -> dict:
-    """A report's rules, with the working days a run was fixed on if they were
-    entered by hand rather than taken from the calendar."""
-    rules = load_rules(report_key)
+def missing_inputs(run: Run) -> list[str]:
+    """The files a build was made without - a partial build when there are any."""
+    had = {ri.upload.source_key for ri in run.inputs}
+    return [s.label for s in get_report(run.report_key).sources
+            if s.required and s.key not in had]
+
+
+def rules_for(session: Session, report_key: str, week: str,
+              working_days: int | None, source: str | None) -> dict:
+    """A report's rules, with today's holidays and provider list, and the
+    working days a run was fixed on if they were entered by hand rather than
+    taken from the calendar."""
+    rules = with_providers(session, with_holidays(session, load_rules(report_key)))
     if source == "entered":
         rules["working_days"] = {month_of(week, rules).key: working_days}
     return rules

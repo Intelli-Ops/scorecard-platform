@@ -42,7 +42,7 @@ def test_classifies_the_nine_by_filename(tmp_path):
         "Master Settlement & Collection Delta WC 08.31.2026.xlsb": "delta_wc",
         "Master Settlement & Collection Delta MLCR 08.31.26.xlsb": "delta_mlcr",
         "Payment Detail Report for 01st to 28th August - 2026.xlsx": "payment_detail",
-        "Supporting File.xlsx": "supporting",
+        "Hearing Calendar.xlsx": "hearing_calendar",
         "Hearing Calendar (Jan 2024 - 28th August 2026) - Updated.xlsx": "hearing_calendar",
         "sqllab_document_log_query_20260901T060517.csv": "document_log",
         "KPI-numbers.xlsx": "kpi_numbers",
@@ -82,17 +82,17 @@ def test_tuesday_and_thursday_case_ars_stay_apart(db, store, tmp_path):
 
 def test_shared_files_serve_both_reports(db, store, tmp_path):
     """Seven files are uploaded once, not once per report."""
-    ingest(db, store, WEEK, [make(tmp_path, "Supporting File.xlsx", b"shared")])
+    ingest(db, store, WEEK, [make(tmp_path, "Hearing Calendar.xlsx", b"shared")])
     for key in ("gfs", "all_providers"):
         got = latest_uploads(db, get(key), WEEK)
-        assert "supporting" in got
-        assert got["supporting"].report_key is None
+        assert "hearing_calendar" in got
+        assert got["hearing_calendar"].report_key is None
 
 
 def test_identical_bytes_are_stored_once(db, store, tmp_path):
     """Thursday's shared files are usually byte-identical to Tuesday's."""
-    a = make(tmp_path / "a", "Supporting File.xlsx", b"same bytes")
-    b = make(tmp_path / "b", "Supporting File.xlsx", b"same bytes")
+    a = make(tmp_path / "a", "Hearing Calendar.xlsx", b"same bytes")
+    b = make(tmp_path / "b", "Hearing Calendar.xlsx", b"same bytes")
     first = ingest(db, store, WEEK, [a]).accepted[0]
     second = ingest(db, store, WEEK, [b]).accepted[0]
 
@@ -146,16 +146,16 @@ def test_replacing_a_case_ar_leaves_the_other_reports_copy_alone(db, store, tmp_
 
 
 def test_week_status_reports_what_is_still_needed(db, store, tmp_path):
-    ingest(db, store, WEEK, [make(tmp_path, "Supporting File.xlsx")])
+    ingest(db, store, WEEK, [make(tmp_path, "Hearing Calendar.xlsx")])
     st = week_status(db, WEEK)["reports"]["gfs"]
-    assert st["ready"] is False
+    assert st["ready"] is True and st["complete"] is False
     assert "Combined Owner Case AR" in st["missing"]
-    assert "Supporting File" not in st["missing"]
+    assert "Hearing Calendar" not in st["missing"]
 
 
 def test_stored_bytes_can_be_proved_unchanged(store, tmp_path):
     """The hash is the upload check: same address means the same bytes."""
-    stored = store.put(make(tmp_path, "Supporting File.xlsx", b"payload"))
+    stored = store.put(make(tmp_path, "Hearing Calendar.xlsx", b"payload"))
     assert store.verify(stored.sha256, ".xlsx")
 
 
@@ -184,3 +184,12 @@ def test_the_comments_copies_feed_gfs_only_and_are_optional(db, store, tmp_path)
     assert ap["delta_wc"].filename == names[0] and "delta_wc_comments" not in ap
     st = week_status(db, WEEK)["reports"]["gfs"]
     assert not any("comments" in m for m in st["missing"])
+
+
+def test_a_build_made_without_some_files_names_them(db, store, tmp_path):
+    from app.service import runner
+    ingest(db, store, WEEK, [make(tmp_path, "Hearing Calendar.xlsx")])
+    run = runner.queue(db, "gfs", WEEK)
+    missing = runner.missing_inputs(run)
+    assert "Combined Owner Case AR" in missing and "Hearing Calendar" not in missing
+    assert "KPI numbers" not in missing            # optional: never makes it partial

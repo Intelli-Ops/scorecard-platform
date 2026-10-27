@@ -143,20 +143,20 @@ def test_a_queued_build_reads_the_files_it_was_queued_with(client, stand_in_pipe
     hashes = upload_everything(client)
     run_id = client.post(f"/api/runs?report=gfs&week={WEEK}").json()["run_id"]
 
-    corrected = upload(client, "supporting file.xlsx", body=b"a corrected copy")
-    assert corrected != hashes["supporting"]
+    corrected = upload(client, "hearing calendar.xlsx", body=b"a corrected copy")
+    assert corrected != hashes["hearing_calendar"]
 
     assert worker._claim() == run_id
     worker._build(run_id)
     assert _status(run_id) == "review"
-    assert stand_in_pipeline["supporting"] == hashes["supporting"]
+    assert stand_in_pipeline["hearing_calendar"] == hashes["hearing_calendar"]
 
     with session() as s:
         again = runner.queue(s, "gfs", WEEK)
         s.flush()
         used = {ri.upload.source_key: ri.upload.sha256 for ri in again.inputs}
         s.get(Run, again.id).status = "failed"
-    assert used["supporting"] == corrected
+    assert used["hearing_calendar"] == corrected
 
 
 def test_files_a_queued_build_will_read_cannot_be_deleted_under_it(client):
@@ -166,7 +166,7 @@ def test_files_a_queued_build_will_read_cannot_be_deleted_under_it(client):
     client.post(f"/api/runs?report=gfs&week={WEEK}")
     r = client.delete(f"/api/weeks/{WEEK}")
     assert r.status_code == 409 and "still has a build" in r.json()["detail"]
-    assert len(list(settings.object_dir.rglob("*.xlsx"))) == 7
+    assert len(list(settings.object_dir.rglob("*.xlsx"))) == 6
 
 
 def test_a_waiting_build_survives_a_restart(client, stand_in_pipeline):
@@ -263,7 +263,7 @@ def test_a_delete_that_does_not_commit_removes_no_file(client):
     from app.service import runner
     from app.storage.files import FileStore
 
-    sha = upload(client, "Supporting File.xlsx")
+    sha = upload(client, "Hearing Calendar.xlsx")
     result = settings.results_dir / "aa" / ("a" * 64 + ".parquet")
     result.parent.mkdir(parents=True)
     result.write_bytes(b"pretend parquet")
@@ -295,7 +295,7 @@ def test_an_upload_that_is_not_saved_leaves_no_file_behind(client):
     from app.service.ingest import ingest
     from app.storage.files import FileStore
 
-    src = settings.data_dir / "Supporting File.xlsx"
+    src = settings.data_dir / "Hearing Calendar.xlsx"
     src.write_bytes(b"never recorded")
     with pytest.raises(RuntimeError):
         with session() as s:
@@ -311,8 +311,8 @@ def test_a_failed_save_does_not_take_a_file_another_row_names(client):
     from app.service.ingest import ingest
     from app.storage.files import FileStore
 
-    upload(client, "Supporting File.xlsx", body=b"the same bytes")
-    src = settings.data_dir / "Supporting File.xlsx"
+    upload(client, "Hearing Calendar.xlsx", body=b"the same bytes")
+    src = settings.data_dir / "Hearing Calendar.xlsx"
     src.write_bytes(b"the same bytes")
     with pytest.raises(RuntimeError):
         with session() as s:
@@ -344,7 +344,7 @@ def test_files_nothing_names_can_be_found_and_removed(client, capsys):
     import os
     from app import manage
     from app.storage.files import FileStore
-    sha = upload(client, "Supporting File.xlsx")
+    sha = upload(client, "Hearing Calendar.xlsx")
     named = FileStore(settings.object_dir).path(sha, ".xlsx")
     old = settings.object_dir / "bb" / ("b" * 64 + ".xlsx")
     new = settings.results_dir / "cc" / ("c" * 64 + ".parquet")
@@ -628,13 +628,13 @@ def test_a_build_is_dated_where_the_business_is(monkeypatch):
 def test_a_wrong_file_can_be_taken_back(client):
     """Before this, a file uploaded by mistake stayed until the whole week was
     deleted."""
-    earlier = upload(client, "Supporting File.xlsx", body=b"the first copy")
-    wrong = upload(client, "Supporting File.xlsx", body=b"sent by mistake")
+    earlier = upload(client, "Hearing Calendar.xlsx", body=b"the first copy")
+    wrong = upload(client, "Hearing Calendar.xlsx", body=b"sent by mistake")
     assert not list(settings.object_dir.rglob(f"{earlier}*"))   # replaced, gone
     assert client.get(f"/api/weeks/{WEEK}").json()["files"] == 1
     cache = settings.data_dir / "cache" / WEEK / "gfs"
     cache.mkdir(parents=True)
-    (cache / f"supporting-{wrong[:16]}-15-1.parquet").write_bytes(b"parsed")
+    (cache / f"hearing_calendar-{wrong[:16]}-15-1.parquet").write_bytes(b"parsed")
 
     have = client.get(f"/api/weeks/{WEEK}").json()["reports"]["gfs"]["have"][0]
     assert have["sha256"] == wrong and have["read_by_a_build"] is False
@@ -642,10 +642,10 @@ def test_a_wrong_file_can_be_taken_back(client):
     r = client.delete(f"/api/weeks/{WEEK}/uploads/{have['id']}")
     assert r.status_code == 200 and r.json()["file_removed"] is True
     assert r.json()["status"]["reports"]["gfs"]["have"] == []   # empty, not the old one
-    assert "Supporting File" in r.json()["status"]["reports"]["gfs"]["missing"]
+    assert "Hearing Calendar" in r.json()["status"]["reports"]["gfs"]["missing"]
     assert not list(settings.object_dir.rglob("*.xlsx"))
     assert not list(cache.iterdir())                  # its parsed copy too
-    assert log("upload.delete")[0].detail["file"] == "Supporting File.xlsx"
+    assert log("upload.delete")[0].detail["file"] == "Hearing Calendar.xlsx"
 
     assert client.delete(f"/api/weeks/{WEEK}/uploads/{have['id']}").status_code == 404
     assert client.delete("/api/weeks/2026-W39/uploads/1").status_code == 404
@@ -669,7 +669,7 @@ def test_a_file_a_build_has_read_cannot_be_taken_back(client, stand_in_pipeline)
 def test_a_file_name_too_long_to_store_is_refused_with_a_reason(client):
     """A name the disk cannot hold was a server error for the whole upload -
     the good files in it included."""
-    name = "Supporting File " + "x" * 400 + ".xlsx"
+    name = "Hearing Calendar " + "x" * 400 + ".xlsx"
     r = client.post(f"/api/weeks/{WEEK}/uploads", files=[
         ("files", (name, b"x", "application/octet-stream")),
         ("files", ("Payment Detail.xlsx", b"y", "application/octet-stream"))])

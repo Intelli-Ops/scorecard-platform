@@ -79,7 +79,7 @@ def test_a_log_row_cannot_be_edited(client):
 def test_the_actions_people_take_are_logged(client, admin):
     client.headers.update(admin)
     client.post("/api/weeks/2026-W35/uploads",
-                files=[("files", ("Supporting File.xlsx", b"x", "application/x"))])
+                files=[("files", ("Hearing Calendar.xlsx", b"x", "application/x"))])
     run_id = _run()
     client.get(f"/api/runs/{run_id}")
     client.get(f"/api/runs/{run_id}")            # one visit, one row
@@ -92,7 +92,7 @@ def test_the_actions_people_take_are_logged(client, admin):
                        "run.unapprove", "run.delete"]
     upload = log("upload.files")[0]
     assert upload.target == "2026-W35"
-    assert upload.detail["accepted"][0]["file"] == "Supporting File.xlsx"
+    assert upload.detail["accepted"][0]["file"] == "Hearing Calendar.xlsx"
     assert log("run.unapprove")[0].detail["was_approved_by"] == ADMIN
 
 
@@ -519,13 +519,13 @@ def test_builds_interrupted_by_a_restart_are_closed_off(client):
 
 def test_a_windows_path_in_an_upload_name_is_cut_to_the_file(client, admin):
     r = client.post("/api/weeks/2026-W35/uploads", headers=admin, files=[
-        ("files", ("C:\\Users\\x\\Supporting File.xlsx", b"x", "application/x"))])
-    assert r.json()["accepted"][0]["filename"] == "Supporting File.xlsx"
+        ("files", ("C:\\Users\\x\\Hearing Calendar.xlsx", b"x", "application/x"))])
+    assert r.json()["accepted"][0]["filename"] == "Hearing Calendar.xlsx"
 
 
 def test_deleting_a_week_removes_its_cached_data(client, admin):
     client.post("/api/weeks/2026-W35/uploads", headers=admin,
-                files=[("files", ("Supporting File.xlsx", b"x", "application/x"))])
+                files=[("files", ("Hearing Calendar.xlsx", b"x", "application/x"))])
     cache = settings.data_dir / "cache" / "2026-W35" / "gfs"
     cache.mkdir(parents=True)
     (cache / "case_ar.parquet").write_bytes(b"client data")
@@ -750,14 +750,14 @@ def received(monkeypatch):
 def test_an_upload_is_not_taken_in_from_someone_not_signed_in(client, received):
     """The body used to be read first and the sender checked afterwards, so
     anyone could have the server swallow a gigabyte before being refused."""
-    files = [("files", ("Supporting File.xlsx", b"x" * 200_000, "application/x"))]
+    files = [("files", ("Hearing Calendar.xlsx", b"x" * 200_000, "application/x"))]
     r = client.post("/api/weeks/2026-W35/uploads", files=files)
     assert r.status_code == 401 and r.json()["detail"] == "Sign in to continue."
     assert received["bytes"] == 0
 
 
 def test_an_upload_is_not_taken_in_from_a_viewer(client, user, admin, received):
-    files = [("files", ("Supporting File.xlsx", b"x" * 200_000, "application/x"))]
+    files = [("files", ("Hearing Calendar.xlsx", b"x" * 200_000, "application/x"))]
     r = client.post("/api/weeks/2026-W35/uploads", headers=user, files=files)
     assert r.status_code == 403 and received["bytes"] == 0
     assert [e.target for e in log("admin.denied")] == [
@@ -819,7 +819,7 @@ def test_an_upload_over_the_size_limit_is_refused(client, admin, monkeypatch):
     monkeypatch.setattr(settings, "max_upload_mb", 1)
     big = b"x" * (1024 * 1024 + 1)
     r = client.post("/api/weeks/2026-W35/uploads", headers=admin,
-                    files=[("files", ("Supporting File.xlsx", big, "application/x"))])
+                    files=[("files", ("Hearing Calendar.xlsx", big, "application/x"))])
     assert r.status_code == 413
     assert not any(settings.object_dir.rglob("*.xlsx"))
 

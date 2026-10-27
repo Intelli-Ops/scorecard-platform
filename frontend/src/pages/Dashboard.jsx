@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, count, monthName } from "../api";
-import { Card, DataTable, ErrorBox, Loading, Segmented } from "../components";
+import { Card, DataTable, ErrorBox, Loading, PartialNotice, Segmented } from "../components";
 import { col } from "../columns";
 import Settlement, { SettlementTiles } from "../settlement";
 import Collections, { CollectionsTiles } from "../collections";
@@ -153,6 +153,7 @@ export function ScorecardView({ id, header }) {
   return (
     <>
       {header(run)}
+      <PartialNotice missing={run.run.missing} />
 
       {tab === "settlement" ? (
         <SettlementTiles settlement={settlement} pace={pace} cp={cp}

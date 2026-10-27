@@ -56,7 +56,16 @@ export default function Runs() {
                         title={r.report_full}>{r.report}</span>
                 ) },
               { key: "status", label: "Status",
-                render: (r) => <Status value={r.status} /> },
+                render: (r) => (
+                  <span className="row tight">
+                    <Status value={r.status} />
+                    {r.missing?.length > 0 && (
+                      <span className="pill warn" title={`Built without: ${r.missing.join(", ")}`}>
+                        Partial
+                      </span>
+                    )}
+                  </span>
+                ) },
               { key: "actions", label: "Action", num: true,
                 render: (r) => r.actions || "-" },
               { key: "warnings", label: "Warnings", num: true,

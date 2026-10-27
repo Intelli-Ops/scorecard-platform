@@ -123,6 +123,10 @@ def cmd_protect_log(a):
                  "run this with --as mysql://root:...@host/scorecard")
 
 
+# Tables a new database is made with rows in - the source's rows replace them.
+SEEDED = {"holiday", "provider"}
+
+
 def cmd_copy_db(a):
     """Copy every row from FROM_URL into this database."""
     source = create_engine(database_url(a.from_url))
@@ -130,7 +134,7 @@ def cmd_copy_db(a):
     target = engine()
     with target.connect() as c:
         existing = {t.name: c.execute(select(func.count()).select_from(t)).scalar()
-                    for t in Base.metadata.sorted_tables}
+                    for t in Base.metadata.sorted_tables if t.name not in SEEDED}
     if any(existing.values()):
         busy = ", ".join(f"{k}={v}" for k, v in existing.items() if v)
         sys.exit(f"the target is not empty ({busy}) - copy into a fresh database")
@@ -143,6 +147,8 @@ def cmd_copy_db(a):
                 _say(f"  {table.name}: not in the source, skipped")
                 continue
             rows = [dict(r._mapping) for r in src.execute(select(table))]
+            if table.name in SEEDED:
+                dst.execute(table.delete())
             for i in range(0, len(rows), 500):
                 dst.execute(table.insert(), rows[i:i + 500])
             _say(f"  {table.name}: {len(rows)} rows")

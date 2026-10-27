@@ -111,7 +111,7 @@ export default function Weeks() {
       <div className="head">
         <h1>Upload a week</h1>
         <div className="sub">
-          Seven files are shared between the reports. The two Case ARs belong to
+          Six files are shared between the reports. The two Case ARs belong to
           one report each. On Tuesday, add the two Delta &ldquo;- comments&rdquo;
           copies too: they fill Ongoing DOR Status and Details in GFS&apos;s Delta
           raw data.
@@ -224,12 +224,19 @@ export default function Weeks() {
             <Card key={key} flush title={r.label} sub={`Mailed ${r.send_day}`}
                   right={
                     r.ready
-                      ? <Button tone="primary" onClick={() => build(key)}
-                                disabled={building != null && building !== key}
-                                busy={building === key} busyLabel="Starting…">
-                          Build
-                        </Button>
-                      : <span className="pill">{r.missing.length} still needed</span>
+                      ? (
+                        <span className="row tight">
+                          {!r.complete && (
+                            <span className="pill warn">Partial · {r.missing.length} missing</span>
+                          )}
+                          <Button tone="primary" onClick={() => build(key)}
+                                  disabled={building != null && building !== key}
+                                  busy={building === key} busyLabel="Starting…">
+                            {r.complete ? "Build" : "Build partial"}
+                          </Button>
+                        </span>
+                      )
+                      : <span className="pill">Nothing uploaded yet</span>
                   }>
               <DataTable
                 columns={[
@@ -254,7 +261,10 @@ export default function Weeks() {
               />
               {r.missing.length > 0 && (
                 <div style={{ padding: "14px 22px", borderTop: "1px solid var(--line)" }}>
-                  <h3>Still needed</h3>
+                  <h3>Not in yet</h3>
+                  <div className="small muted" style={{ marginBottom: 6 }}>
+                    You can build without these: the parts that need them show no data.
+                  </div>
                   {r.missing.map((m) => (
                     <div key={m} className="small muted">{m}</div>
                   ))}

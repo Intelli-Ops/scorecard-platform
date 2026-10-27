@@ -4,9 +4,10 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from ..db.models import Run, RunNote
+from ..db.models import Run, RunInput, RunNote
 from ..reports import get as get_report
 from ..reports.notes import ACTION, WARNING, INFO, SEVERITY_ORDER
+from . import runner
 
 
 def previous_run(session: Session, run: Run) -> Run | None:
@@ -33,6 +34,7 @@ SECTIONS = {
     "collections_empty": "no_data",
     "delta_duplicate_case_ids": "duplicates",
     "delta_comments_missing": "no_data",
+    "section_waiting": "no_data",
 }
 
 
@@ -116,6 +118,7 @@ def review(session: Session, run: Run) -> dict:
             "approved_by": run.approved_by, "approved_at": run.approved_at,
             "working_days": run.working_days,
             "working_days_source": run.working_days_source,
+            "missing": runner.missing_inputs(run),
         },
         "compared_with": None if prev is None else {"id": prev.id, "week": prev.week},
         "needs_attention": counts[ACTION] > 0
@@ -149,7 +152,8 @@ def history(session: Session, report_key: str, weeks: int = 12) -> list[dict]:
     stmt = (select(Run)
             .where(Run.report_key == report_key, Run.week.in_(recent))
             .order_by(Run.week.desc(), Run.id.desc())
-            .options(selectinload(Run.notes), selectinload(Run.tables)))
+            .options(selectinload(Run.notes), selectinload(Run.tables),
+                     selectinload(Run.inputs).selectinload(RunInput.upload)))
     runs = session.execute(stmt).scalars().all()
     report = get_report(report_key)
     out = []
@@ -164,6 +168,7 @@ def history(session: Session, report_key: str, weeks: int = 12) -> list[dict]:
             "actions": severities.count(ACTION),
             "warnings": severities.count(WARNING),
             "rows": {t.name: t.rows for t in r.tables},
+            "missing": runner.missing_inputs(r),
         })
     return out
 

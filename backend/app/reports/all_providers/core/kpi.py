@@ -12,7 +12,6 @@ class KpiBlock:
     name: str
     header_row: int
     rows: dict[str, int] = field(default_factory=dict)
-    total_row: int | None = None
 
 
 @dataclass
@@ -31,41 +30,10 @@ class KpiReport:
     totals: dict[str, float] = field(default_factory=dict)
 
 
-TOTAL_LABELS = {"total", "grand total"}
-
-
-def read_kpi_layout(sheet, rules: dict) -> dict[str, KpiBlock]:
-    """Find the sheet's blocks by reading column B."""
-    k = rules["kpi"]
-    start = k["period_row"] + 1
-    labels = {r: str(v).strip() for (r, c), v in sheet.cells.items()
-              if c == 2 and r > start and str(v).strip()}
-    if not labels:
-        return {}
-    blocks: dict[str, KpiBlock] = {}
-    run: list[int] = []
-    for r in range(min(labels), max(labels) + 2):
-        if r in labels:
-            run.append(r)
-            continue
-        if len(run) > 1:
-            _add_block(blocks, labels, run)
-        run = []
-    if len(run) > 1:
-        _add_block(blocks, labels, run)
-    return blocks
-
-
-def _add_block(blocks: dict[str, KpiBlock], labels: dict[int, str],
-               run: list[int]) -> None:
-    name = labels[run[0]]
-    blk = KpiBlock(name, run[0])
-    for r in run[1:]:
-        if labels[r].lower() in TOTAL_LABELS:
-            blk.total_row = r
-            break
-        blk.rows.setdefault(labels[r], r)
-    blocks[name] = blk
+def kpi_layout(rules: dict) -> dict[str, KpiBlock]:
+    """The sheet's blocks and their rows, as written under kpi.layout."""
+    return {name: KpiBlock(name, i, {label: r for r, label in enumerate(rows)})
+            for i, (name, rows) in enumerate((rules["kpi"].get("layout") or {}).items())}
 
 
 def _group_dim(provider_list: pl.DataFrame, k: dict) -> pl.DataFrame:
