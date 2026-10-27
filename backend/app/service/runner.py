@@ -92,8 +92,8 @@ def plan(store: FileStore, run: Run) -> Plan:
 def missing_inputs(run: Run) -> list[str]:
     """The files a build was made without - a partial build when there are any."""
     had = {ri.upload.source_key for ri in run.inputs}
-    return [s.label for s in get_report(run.report_key).sources
-            if s.required and s.key not in had]
+    return sorted((s.label for s in get_report(run.report_key).sources
+                   if s.required and s.key not in had), key=str.lower)
 
 
 def rules_for(session: Session, report_key: str, week: str,
