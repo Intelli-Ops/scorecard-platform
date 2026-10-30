@@ -25,3 +25,14 @@ test("a week number is written as the Monday to Sunday it covers", () => {
   assert.equal(weekRange("2026-W53"), "28 Dec 2026 to 3 Jan 2027");
   assert.equal(weekRange("not a week"), "not a week");
 });
+
+import { daySpan, weekDays } from "./format.js";
+
+test("a week of the month is written as the days it covers", () => {
+  assert.equal(daySpan("2026-10-01", "2026-10-09"), "1 to 9 Oct");
+  assert.equal(daySpan("2026-09-28", "2026-10-02"), "28 Sep to 2 Oct");
+  const spans = { 10: [{ week: 1, first: "2026-10-01", last: "2026-10-09" }] };
+  assert.equal(weekDays(spans, 10, "1"), "1 to 9 Oct");
+  assert.equal(weekDays(spans, 10, 2), "");
+  assert.equal(weekDays(undefined, 10, 1), "");      // a run built before week spans
+});

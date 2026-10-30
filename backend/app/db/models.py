@@ -71,6 +71,8 @@ class User(Base):
     locked_until: Mapped[dt.datetime | None] = mapped_column(UtcDateTime())
 
     email_verified_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime())
+    # The inputs an admin may upload, comma separated; None for every one.
+    upload_access: Mapped[str | None] = mapped_column(String(400))
 
     @property
     def name(self) -> str:
@@ -93,6 +95,21 @@ class User(Base):
             from ..reports import REPORTS
             return list(REPORTS)
         return [k for k in (self.report_access or "").split(",") if k]
+
+    @property
+    def uploads_all(self) -> bool:
+        """May upload every input: a system admin, or an admin no one has narrowed."""
+        return self.is_system_admin or (self.is_admin and self.upload_access is None)
+
+    @property
+    def uploads(self) -> list[str]:
+        """The input keys this account may upload and take back."""
+        if not self.is_admin:
+            return []
+        from ..reports import input_keys
+        if self.uploads_all:
+            return input_keys()
+        return [k for k in self.upload_access.split(",") if k]
 
     @property
     def status(self) -> str:

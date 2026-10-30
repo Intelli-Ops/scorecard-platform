@@ -30,8 +30,13 @@ export default function Weeks() {
   const [progress, setProgress] = useState(null);
   const [over, setOver] = useState(false);
   const [building, setBuilding] = useState(null);
+  const [sendingAs, setSendingAs] = useState(null);
   const fileInput = useRef();
   const validWeek = WEEK_RE.test(week);
+  const mine = new Set(user.uploads ?? []);       // the inputs this account may upload
+  const sources = useLoad(api.reports, []).data ?? [];
+  const labels = [...new Map(sources.flatMap((r) => r.sources)
+    .map((x) => [x.key, x.label])).entries()];
 
   const weeksLoad = useLoad(api.weeks, []);
   const statusLoad = useLoad(
@@ -46,9 +51,11 @@ export default function Weeks() {
     ?? statusLoad.error ?? weeksLoad.error;
 
   // One file per request: nginx caps each request (DEPLOY.md), and a week's files together can pass that cap even when each one is well under it.
-  async function send(files) {
+  // With `as`, the files are taken as that one input whatever they are called, once their columns check out.
+  async function send(files, as) {
     if (!files?.length || !validWeek) return;
     setError(null); setResult(null); setProgress(0);
+    if (as) setSendingAs(as.key);
     const total = files.reduce((n, f) => n + f.size, 0) || 1;
     const out = { week, accepted: [], rejected: [] };
     let done = 0;
@@ -56,7 +63,8 @@ export default function Weeks() {
       for (const f of files) {
         try {
           const r = await api.upload(week, [f], {
-            forReport: forReport || undefined,
+            forReport: (as ? as.forReport : forReport) || undefined,
+            asSource: as?.key,
             onProgress: (p) => setProgress((done + p * f.size) / total),
           });
           out.accepted.push(...r.accepted);
@@ -71,7 +79,7 @@ export default function Weeks() {
       if (out.status) statusLoad.setData(out.status);
       await weeksLoad.reload();
     } catch (e) { setError(e); }
-    finally { setProgress(null); }
+    finally { setProgress(null); setSendingAs(null); }
   }
 
   async function build(reportKey) {
@@ -144,7 +152,7 @@ export default function Weeks() {
                       ...REPORT_OPTIONS.map((r) => (
                         { value: r.key, label: `${r.short} · ${r.sendDay}` })),
                     ]} />
-            {uploaded > 0 && user.is_admin && (
+            {uploaded > 0 && user.is_admin && user.uploads_all && (
               <DeleteButton
                 label={`Delete ${week}`}
                 onConfirm={removeWeek}
@@ -184,6 +192,14 @@ export default function Weeks() {
             </>
           )}
         </div>
+
+        {!user.uploads_all && (
+          <div className="small muted" style={{ marginTop: 12 }}>
+            Your account uploads only: {(user.uploads ?? []).length
+              ? labels.filter(([k]) => mine.has(k)).map(([, l]) => l).join(", ")
+              : "no files yet - ask a system admin"}. Any other file is refused.
+          </div>
+        )}
 
         {!forReport && (
           <div className="small muted" style={{ marginTop: 12 }}>
@@ -252,6 +268,7 @@ export default function Weeks() {
                               title="A build read this file. Delete that build to remove it.">
                           used by a build
                         </span>
+                      : !mine.has(h.source_key) ? null
                       : <DeleteButton size="sm" label="Remove"
                                       confirm="Confirm remove"
                                       onConfirm={() => removeFile(h.id)}
@@ -265,10 +282,22 @@ export default function Weeks() {
                   <h3>Not in yet</h3>
                   <div className="small muted" style={{ marginBottom: 6 }}>
                     You can build without these: the parts that need them show no data.
+                    {user.is_admin && r.missing_files
+                      && " Upload one under any name: its sheets and columns are checked first."}
                   </div>
-                  {r.missing.map((m) => (
-                    <div key={m} className="small muted">{m}</div>
-                  ))}
+                  {r.missing_files && user.is_admin
+                    ? r.missing_files.map((m) => (
+                      <MissingFile key={m.key} file={m} disabled={progress != null}
+                                   allowed={mine.has(m.key)}
+                                   busy={sendingAs === m.key}
+                                   onPick={(f) => send([f], {
+                                     key: m.key,
+                                     forReport: m.per_report ? key : undefined,
+                                   })} />
+                    ))
+                    : r.missing.map((m) => (
+                      <div key={m} className="small muted">{m}</div>
+                    ))}
                 </div>
               )}
             </Card>
@@ -278,5 +307,34 @@ export default function Weeks() {
         <div className="empty">Type a week as 2026-W38.</div>
       )}
     </>
+  );
+}
+
+// One input that is not in yet, with a button to send a file as it whatever its name.
+function MissingFile({ file, onPick, busy, disabled, allowed }) {
+  const input = useRef();
+  if (!allowed) {
+    return (
+      <div className="spread" style={{ padding: "4px 0" }}>
+        <span className="small muted">{file.label}</span>
+        <span className="small muted">another admin uploads this</span>
+      </div>
+    );
+  }
+  return (
+    <div className="spread" style={{ padding: "4px 0" }}>
+      <span className="small muted">{file.label}</span>
+      <input ref={input} type="file" hidden accept={file.exts.join(",")}
+             onChange={(e) => {
+               const f = e.target.files?.[0];
+               e.target.value = "";
+               if (f) onPick(f);
+             }} />
+      <Button size="sm" disabled={disabled} busy={busy} busyLabel="Checking…"
+              onClick={() => input.current.click()}
+              title={`Choose the ${file.label} file, whatever it is called`}>
+        Upload
+      </Button>
+    </div>
   );
 }

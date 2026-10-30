@@ -9,10 +9,12 @@ from ...common import i64
 MONEY = r"[,$%\s]"
 
 
-def settlement_grids(comb: pl.DataFrame, gfs_cases: pl.DataFrame, prov: pl.DataFrame,
-                     period: Period) -> dict:
-    """Phase 5: settlement amount and % by group, per past month and per week
-    of this month."""
+LOCATIONS = {"In House": "in house", "Board": "board"}
+
+
+def settled_rows(comb: pl.DataFrame, gfs_cases: pl.DataFrame, prov: pl.DataFrame,
+                 period: Period) -> pl.DataFrame:
+    """The GFS Delta rows of the reporting year, up to the reporting week, with a group."""
     d = comb.with_columns(
         i64("Case_ID").alias("Case_ID"), i64("Provider_ID").alias("Provider_ID"),
         pl.col("Date").cast(pl.Date, strict=False).alias("D"),
@@ -25,17 +27,25 @@ def settlement_grids(comb: pl.DataFrame, gfs_cases: pl.DataFrame, prov: pl.DataF
     p = (prov.select(i64("BUSINESSREGID").alias("Provider_ID"),
                      pl.col("Provider Group").alias("Group"))
              .unique(subset=["Provider_ID"], keep="first"))
-    d = (d.join(p, on="Provider_ID", how="left")
-           .filter(pl.col("D").dt.year() == period.year)
-           .filter(pl.col("D") <= period.last_day)
-           .filter(pl.col("Group").is_not_null())
-           .filter(pl.col("Type") == "GFS"))
+    return (d.join(p, on="Provider_ID", how="left")
+             .filter(pl.col("D").dt.year() == period.year)
+             .filter(pl.col("D") <= period.last_day)
+             .filter(pl.col("Group").is_not_null())
+             .filter(pl.col("Type") == "GFS"))
+
+
+def settlement_grids(comb: pl.DataFrame, gfs_cases: pl.DataFrame, prov: pl.DataFrame,
+                     period: Period, d: pl.DataFrame | None = None) -> dict:
+    """Phase 5: settlement amount and % by group, per past month and per week
+    of this month. `d` is settled_rows(), when the caller already has it."""
+    if d is None:
+        d = settled_rows(comb, gfs_cases, prov, period)
     d = d.with_columns(
         pl.when(pl.col("D").dt.month() == period.month)
           .then(pl.lit("W") + week_index_expr("D", period).cast(pl.Utf8))
           .otherwise(pl.lit("M") + pl.col("D").dt.month().cast(pl.Utf8)).alias("Bucket"))
     out = {}
-    for key, label in [("in house", "In House"), ("board", "Board")]:
+    for label, key in LOCATIONS.items():
         x = d.filter(pl.col("loc") == key)
         a = (x.group_by(["Group", "Bucket"])
                .agg(pl.col("Settlement_Amount").sum().alias("amt"),

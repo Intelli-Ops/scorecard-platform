@@ -1,20 +1,54 @@
 // The Settlement High-Level tab.
-import { useMemo } from "react";
-import { bucketLabel, money } from "./api";
+import { useMemo, useState } from "react";
+import { bucketLabel, money, weekDays } from "./api";
 import { TOTAL, amountPctPair, assemble, col } from "./columns";
-import { Stat, Stats, TableCard } from "./ui";
-import { monthToDate, paceTotals, pivot, pivotPace, sortBlocks } from "./settlement-model";
+import { Stat, Stats, TableCard, WeekHead } from "./ui";
+import { bucketNum, monthToDate, paceTotals, pivot, pivotPace, sortBlocks,
+         withMonthWeeks } from "./settlement-model";
 
 const GROUP = col.label("group", "Group", { width: 186, className: "sticky" });
 
-function Block({ title, sub, rows, totals, block, monthLabel, pace }) {
-  const p = useMemo(() => pivot(rows, totals, block), [rows, totals, block]);
+function Block({ title, sub, rows, totals, block, monthLabel, pace, monthWeeks,
+                 spans: weekSpans, currentMonth }) {
+  const p = useMemo(() => withMonthWeeks(pivot(rows, totals, block), monthWeeks, block),
+                    [rows, totals, block, monthWeeks]);
   const paced = useMemo(() => pivotPace(pace, block), [pace, block]);
+  const [open, setOpen] = useState(() => new Set());
+
+  const toggle = (m) => setOpen((was) => {
+    const next = new Set(was);
+    if (next.has(m)) next.delete(m); else next.add(m);
+    return next;
+  });
 
   const { columns, spans } = useMemo(() => {
+    const week = (w, month) => (
+      <WeekHead label={bucketLabel(w)} days={weekDays(weekSpans, month, bucketNum(w))} />);
+    const monthHead = (m) => {
+      const weeks = p.weeksOf[m];
+      if (!weeks?.length) return bucketLabel(m);
+      const shut = !open.has(m);
+      return (
+        <>
+          {bucketLabel(m)}{shut ? "" : " total"}
+          <button type="button" className="expand-month" onClick={() => toggle(m)}
+                  aria-expanded={!shut}
+                  title={shut ? `Open ${bucketLabel(m)} into its weeks`
+                              : `Close ${bucketLabel(m)} back to its total`}>
+            {shut ? "+" : "−"}
+          </button>
+        </>
+      );
+    };
     const parts = [
-      ...p.months.map((m) => amountPctPair(m, bucketLabel(m))),
-      ...p.weeks.map((w) => amountPctPair(w, bucketLabel(w), { current: true })),
+      ...p.months.flatMap((m) => [
+        ...(open.has(m) ? p.weeksOf[m] ?? [] : []).map((w) => {
+          const pair = amountPctPair(`${m}${w}`, week(w, bucketNum(m)));
+          return { ...pair, span: { ...pair.span, className: "opened" } };
+        }),
+        amountPctPair(m, monthHead(m)),
+      ]),
+      ...p.weeks.map((w) => amountPctPair(w, week(w, currentMonth), { current: true })),
     ];
     if (p.weeks.length) {
       parts.push({
@@ -27,12 +61,15 @@ function Block({ title, sub, rows, totals, block, monthLabel, pace }) {
       column: col.strong("_total", "Year to date"),
     });
     return assemble(GROUP, parts);
-  }, [p, monthLabel]);
+  }, [p, monthLabel, open, weekSpans, currentMonth]);
 
   const paceColumns = useMemo(() => [
     GROUP,
-    ...paced.weeks.map((w) => col.money(w, bucketLabel(w), { className: "current" })),
-  ], [paced.weeks]);
+    ...paced.weeks.map((w) => col.money(w, (
+      <WeekHead label={bucketLabel(w)}
+                days={weekDays(weekSpans, currentMonth, bucketNum(w))} />
+    ), { className: "current" })),
+  ], [paced.weeks, weekSpans, currentMonth]);
 
   return (
     <>
@@ -49,7 +86,8 @@ function Block({ title, sub, rows, totals, block, monthLabel, pace }) {
   );
 }
 
-export default function Settlement({ settlement, totals, pace, cp, monthLabel }) {
+export default function Settlement({ settlement, totals, pace, cp, monthLabel,
+                                     monthWeeks, spans, currentMonth }) {
   const blocks = useMemo(
     () => sortBlocks(new Set(settlement.map((r) => r.block))), [settlement]);
 
@@ -69,9 +107,13 @@ export default function Settlement({ settlement, totals, pace, cp, monthLabel })
         <Block key={b} block={b} title={`Settlements (${b})`}
                sub={monthLabel
                  ? `Closed months are single totals; ${monthLabel} is opened out into its weeks.`
+                   + (monthWeeks?.length
+                     ? " From October 2026, + beside a closed month opens it into its weeks."
+                     : "")
                  : "Monthly totals for the year so far."}
                rows={settlement} totals={totals} pace={pace}
-               monthLabel={monthLabel} />
+               monthLabel={monthLabel} monthWeeks={monthWeeks}
+               spans={spans} currentMonth={currentMonth} />
       ))}
 
       <TableCard

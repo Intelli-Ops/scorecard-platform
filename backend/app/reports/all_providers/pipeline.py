@@ -9,7 +9,8 @@ import polars as pl
 from ..notes import Note, sort_notes
 from ..pacing import pace_grid
 from ..partial import absent, empty, missing_books, waiting
-from ..period import reporting_period, week_index_expr
+from ..closed_weeks import settlement_month_weeks
+from ..period import Period, reporting_period, week_index_expr
 from ..review_notes import add_new_providers, review_notes, week_label
 from .core.case_ar import build_raw_data, build_case_ar
 from .core.collections import build_collections
@@ -50,6 +51,8 @@ class RunResult:
     settlement_pace: dict = field(default_factory=dict)
     collections_pace: dict = field(default_factory=dict)
     year: int = 0
+    settlement_month_weeks: list = field(default_factory=list)
+    period: Period | None = None
 
     notes: list[Note] = field(default_factory=list)
     seconds: float = 0.0
@@ -83,6 +86,7 @@ def run(src: ApSources, rules: dict, as_of: dt.date | None = None,
     books = missing_books(rules, src.delta_sheets)
     if not src.delta_sheets:
         delta, grids, drep = empty(EMPTY["delta_comparison"]), {}, DeltaReport()
+        month_weeks = []
         notes.append(waiting("Delta Comparison or Settlement", books))
     else:
         if books:
@@ -90,6 +94,7 @@ def run(src: ApSources, rules: dict, as_of: dt.date | None = None,
         comb, drep = combine_delta(src.delta_sheets, rules)
         dd, drep = prepare(comb, src.providers, rules, year, drep)
         grids = settlement_grids(dd, rules, period, drep)
+        month_weeks = settlement_month_weeks(dd, rules["delta"]["locations"], period)
         delta = delta_comparison(dd, rules, drep)
 
     if src.hearing_noi is None:
@@ -134,6 +139,7 @@ def run(src: ApSources, rules: dict, as_of: dt.date | None = None,
         raw_data=raw, case_ar=case_ar, delta_comparison=delta, collections=coll,
         settlement_grids=grids, cp_settled=cp, kpi=kpi, current_month=month,
         settlement_pace=paced, collections_pace=collections_paced, year=year,
+        settlement_month_weeks=month_weeks, period=period,
         notes=sort_notes(notes),
         seconds=time.perf_counter() - t0,
     )

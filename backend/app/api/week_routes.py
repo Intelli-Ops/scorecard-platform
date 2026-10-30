@@ -17,7 +17,7 @@ from ..db.session import session
 from ..reports import CASE_AR_KEYS, REPORTS, load_rules
 from ..service import audit, runner
 from ..service.holidays import with_holidays
-from ..service.ingest import ingest, too_long, week_status
+from ..service.ingest import ingest, source, too_long, week_status
 from ..storage.files import FileStore
 from .deps import current_user, require_admin, valid_week as _week
 
@@ -26,6 +26,17 @@ router = APIRouter(prefix="/api", dependencies=[Depends(current_user)])
 
 def _store() -> FileStore:
     return FileStore(settings.object_dir)
+
+
+def _refuse(request: Request, user, action: str, target: str, why: str):
+    """403 for an input this admin has not been given, logged as denied."""
+    audit.record(action, request=request, user=user, target=target,
+                 outcome="denied", detail={"reason": why})
+    raise HTTPException(403, why)
+
+
+NOT_YOURS = ("A system admin has not given your account {label} to upload - "
+             "ask one, or an admin who has it")
 
 
 @router.get("/reports", dependencies=[Depends(require_admin)])
@@ -62,6 +73,10 @@ def delete_week(week: str, request: Request,
                 user=Depends(require_admin)) -> dict:
     """Delete a week: its builds, and every file uploaded for it."""
     _week(week)
+    if not user.uploads_all:
+        _refuse(request, user, "week.delete", week,
+                "Deleting a week takes every file in it, and your account may "
+                "upload only some of them. Ask an admin who may upload them all.")
     with session() as s:
         known = s.execute(select(Upload.id).where(Upload.week == week)
                           .limit(1)).scalar_one_or_none()
@@ -95,11 +110,18 @@ def _save_upload(f: UploadFile, dest: Path, limit: int) -> None:
 def upload(week: str, request: Request,
            files: list[UploadFile] = File(...),
            for_report: str | None = Form(None),
+           as_source: str | None = Form(None),
            user=Depends(require_admin)) -> dict:
-    """Receive this week's files."""
+    """Receive this week's files - as the inputs their names say, or all as
+    `as_source` whatever they are called."""
     _week(week)
     if for_report and for_report not in REPORTS:
         raise HTTPException(400, f"unknown report {for_report!r}")
+    if as_source and source(as_source) is None:
+        raise HTTPException(400, f"unknown input {as_source!r}")
+    if as_source and as_source not in user.uploads:
+        _refuse(request, user, "upload.files", week,
+                NOT_YOURS.format(label=source(as_source).label) + ".")
 
     with tempfile.TemporaryDirectory() as tmp:
         landed: list[Path] = []
@@ -118,7 +140,8 @@ def upload(week: str, request: Request,
 
         with session() as s:
             result = ingest(s, _store(), week, landed, for_report=for_report,
-                            uploaded_by=user.email)
+                            uploaded_by=user.email, as_source=as_source,
+                            may_upload=None if user.uploads_all else set(user.uploads))
             out = {
                 "week": week,
                 "accepted": [{"source_key": a.source_key, "label": a.label,
@@ -132,7 +155,7 @@ def upload(week: str, request: Request,
             }
             audit.record(
                 "upload.files", db=s, request=request, user=user, target=week,
-                detail={"for_report": for_report,
+                detail={"for_report": for_report, "as_source": as_source,
                         "accepted": [{"file": a["filename"], "sha256": a["sha256"],
                                       "bytes": a["size_bytes"]}
                                      for a in out["accepted"]],
@@ -150,6 +173,13 @@ def remove_upload(week: str, upload_id: int, request: Request,
         row = s.get(Upload, upload_id)
         if row is None or row.week != week:
             raise HTTPException(404, "No such file in this week.")
+        if row.source_key not in user.uploads:
+            spec = source(row.source_key)
+            label = spec.label if spec else row.source_key
+            s.rollback()
+            _refuse(request, user, "upload.delete", week,
+                    NOT_YOURS.format(label=label)
+                    + ", so it cannot take this file back either.")
         try:
             gone = runner.remove_upload(s, row)
         except ValueError as e:

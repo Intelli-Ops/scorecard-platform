@@ -14,6 +14,17 @@ const FIELDS = [
   ["provider_group", "Provider group", {}],
 ];
 
+// Whose paper each provider's cases are, by BUSINESSREGID. Shown here only: the builds never read it.
+const PAPER = {
+  ...Object.fromEntries([335, 331, 302, 251, 248, 246, 245, 238, 237, 235, 234, 233]
+    .map((id) => [id, "GFS"])),
+  257: "Russman", 259: "Russman",
+  344: "Dr. Naderi", 341: "Dr. Naderi", 332: "Dr. Naderi", 303: "Dr. Naderi",
+  380: "Dorian", 379: "Dorian", 377: "Dorian",
+  376: "Ronco",
+};
+const paper = (p) => PAPER[Number(p.regid)] ?? "Other Client";
+
 const toBody = (row) => ({ ...row, regid: Number(row.regid) });
 const ready = (row) => Number(row.regid) >= 1 && row.provider_id.trim()
   && row.provider_group.trim();
@@ -41,7 +52,7 @@ export default function AdminProviders() {
 
   const q = filter.trim().toLowerCase();
   const rows = q
-    ? providers.filter((p) => [p.regid, p.provider_id, p.name, p.provider_group]
+    ? providers.filter((p) => [p.regid, p.provider_id, p.name, p.provider_group, paper(p)]
         .some((v) => String(v ?? "").toLowerCase().includes(q)))
     : providers;
   const isEditing = (p) => editing?.from === p.regid;
@@ -82,6 +93,9 @@ export default function AdminProviders() {
           columns={[
             ...FIELDS.map(([key, label, opts]) => (
               { key, label, strong: key === "regid", render: cell(key, opts) })),
+            { key: "paper", label: "Paper",
+              render: (p) => (paper(p) === "Other Client"
+                ? <span className="muted">Other Client</span> : paper(p)) },
             { key: "set_by", label: "Changed",
               render: (p) => (p.set_by
                 ? <span className="small muted">{p.set_by.split("@")[0]} · {stamp(p.set_at)}</span>

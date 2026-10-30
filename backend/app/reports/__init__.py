@@ -93,6 +93,11 @@ REPORTS: dict[str, ReportType] = {
 }
 
 
+def input_keys() -> list[str]:
+    """Every input any report reads, once each, in the order the reports list them."""
+    return list(dict.fromkeys(s.key for r in REPORTS.values() for s in r.sources))
+
+
 def get(key: str) -> ReportType:
     if key not in REPORTS:
         raise KeyError(f"unknown report type {key!r}; "

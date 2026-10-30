@@ -451,6 +451,21 @@ thead tr th.sticky { position: sticky; left: 0; z-index: 4; }
 thead tr.spans th.span.current { color: var(--teal); }
 thead tr.spans + tr th { top: 31px; }
 
+/* A week's days beside its name, on the same line so the span row keeps its height. */
+.week-days {
+  margin-left: 6px; font-weight: 500; text-transform: none;
+  letter-spacing: 0; color: var(--text-3);
+}
+.expand-month {
+  margin: -2px 0 -2px 6px; width: 16px; height: 16px; padding: 0;
+  border: 1px solid var(--line-2); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text);
+  font-weight: 700; font-size: 12px; line-height: 13px;
+  cursor: pointer; vertical-align: middle;
+}
+.expand-month:hover { border-color: var(--teal); color: var(--teal); }
+th.span.opened { color: var(--teal); }
+
 td.current, th.current { background: var(--green-soft); }
 tbody tr:hover td.current { background: var(--green-soft); }
 tr.total td.current { background: var(--green-mid); }
@@ -950,6 +965,7 @@ select.picker.on.has-x { padding-right: 53.5px; }
 select.picker.role { padding: 5px 30px 5px 12px; font-size: 12.5px; }
 
 .chips { display: inline-flex; gap: 6px; flex-wrap: nowrap; }
+.chips.wrap { flex-wrap: wrap; max-width: 440px; }
 .chip {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 4px 11px; font-size: 12px; font-weight: 550; border-radius: 999px;

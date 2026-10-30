@@ -29,6 +29,23 @@ export const bucketLabel = (b) =>
 
 export const monthName = (m) => MONTHS[m] ?? String(m);
 
+// Two ISO dates as the days between them: "1 to 9 Oct", "28 Sep to 2 Oct".
+export function daySpan(first, last) {
+  const [a, b] = [first, last].map((d) => new Date(`${d}T00:00:00Z`));
+  const day = (d) => d.getUTCDate();
+  const mon = (d) => MONTHS[d.getUTCMonth() + 1];
+  if (first === last) return `${day(a)} ${mon(a)}`;
+  return a.getUTCMonth() === b.getUTCMonth()
+    ? `${day(a)} to ${day(b)} ${mon(b)}`
+    : `${day(a)} ${mon(a)} to ${day(b)} ${mon(b)}`;
+}
+
+// The days week `n` of `month` covers, from a run's week spans; "" if not known.
+export function weekDays(spans, month, n) {
+  const w = spans?.[String(month)]?.find((s) => s.week === Number(n));
+  return w ? daySpan(w.first, w.last) : "";
+}
+
 // A browser's self-description, reduced to what a person recognises.
 export function device(ua) {
   if (!ua) return "Unknown device";

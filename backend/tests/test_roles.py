@@ -445,3 +445,64 @@ def test_a_viewer_cannot_change_the_provider_list(client):
     viewer = account(client, "v@appedology.com", "APD-0100", reports="gfs")
     assert client.get("/api/admin/providers", headers=viewer).status_code == 403
     assert client.delete("/api/admin/providers/218", headers=viewer).status_code == 403
+
+
+# Which files each admin may upload.
+
+def _upload(client, headers, name, body=b"stand-in", **form):
+    return client.post("/api/weeks/2026-W38/uploads", headers=headers,
+                       files=[("files", (name, body, "application/octet-stream"))],
+                       data=form)
+
+
+def _me(client, headers):
+    return client.get("/api/me", headers=headers).json()
+
+
+def test_admins_upload_every_file_until_a_system_admin_narrows_them(client, root, admin):
+    aid = _id(client, root, "admin@appedology.com")
+    assert _me(client, admin)["uploads_all"]
+    r = client.post(f"/api/admin/users/{aid}/uploads", headers=root,
+                    json={"inputs": ["delta_wc", "delta_mlcr"]})
+    assert r.status_code == 200, r.text
+    me = _me(client, admin)
+    assert not me["uploads_all"] and me["uploads"] == ["delta_wc", "delta_mlcr"]
+
+    r = _upload(client, admin, "Hearing Calendar.xlsx").json()
+    assert not r["accepted"]
+    assert "not been given this file" in r["rejected"][0]["reason"]
+    assert _upload(client, admin, "Master Settlement & Collection Delta WC.xlsb"
+                   ).json()["accepted"]
+    assert _upload(client, admin, "x.xlsx", as_source="hearing_calendar").status_code == 403
+
+    assert client.post(f"/api/admin/users/{aid}/uploads", headers=root,
+                       json={"inputs": None}).status_code == 200
+    assert _me(client, admin)["uploads_all"]
+
+
+def test_a_narrowed_admin_cannot_take_back_or_wipe_other_admins_files(client, root, admin):
+    hid = _upload(client, root, "Hearing Calendar.xlsx").json()["status"]
+    hid = hid["reports"]["gfs"]["have"][0]["id"]
+    aid = _id(client, root, "admin@appedology.com")
+    client.post(f"/api/admin/users/{aid}/uploads", headers=root, json={"inputs": ["delta_wc"]})
+    assert client.delete(f"/api/weeks/2026-W38/uploads/{hid}",
+                         headers=admin).status_code == 403
+    assert client.delete("/api/weeks/2026-W38", headers=admin).status_code == 403
+    assert client.delete(f"/api/weeks/2026-W38/uploads/{hid}",
+                         headers=root).status_code == 200
+
+
+def test_only_a_system_admin_sets_upload_access_and_only_for_admins(client, root, admin):
+    make_account("other@appedology.com", "APD-0200", role="admin")
+    make_account("v@appedology.com", "APD-0100")
+    oid = _id(client, root, "other@appedology.com")
+    vid = _id(client, root, "v@appedology.com")
+    rid = _id(client, admin, "root@appedology.com")
+    assert client.post(f"/api/admin/users/{oid}/uploads", headers=admin,
+                       json={"inputs": []}).status_code == 403
+    assert client.post(f"/api/admin/users/{vid}/uploads", headers=root,
+                       json={"inputs": []}).status_code == 409
+    assert client.post(f"/api/admin/users/{oid}/uploads", headers=root,
+                       json={"inputs": ["nonsense"]}).status_code == 409
+    assert client.post(f"/api/admin/users/{rid}/uploads", headers=root,
+                       json={"inputs": []}).status_code == 403     # their own account

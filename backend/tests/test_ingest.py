@@ -194,3 +194,65 @@ def test_a_build_made_without_some_files_names_them(db, store, tmp_path):
     missing = runner.missing_inputs(run)
     assert "Combined Owner Case AR" in missing and "Hearing Calendar" not in missing
     assert any(m.startswith("KPI numbers") for m in missing)
+
+
+# Uploading a file as one input, whatever it is called.
+
+SQL_HEADER = b"ProviderID,Type,DocumentMonth,DocumentType,#ofcases\n"
+
+
+def test_a_file_of_any_name_is_taken_as_the_input_it_was_sent_as(db, store, tmp_path):
+    f = make(tmp_path / "in", "export from superset.csv", SQL_HEADER + b"233,GFS,2026-10,BillingDocs,4\n")
+    assert classify(f) is None                      # its name alone says nothing
+    r = ingest(db, store, WEEK, [f], as_source="document_log")
+    assert [a.source_key for a in r.accepted] == ["document_log"]
+    assert latest_uploads(db, get("gfs"), WEEK)["document_log"].filename == f.name
+
+
+def test_a_file_missing_the_columns_the_build_reads_is_refused_and_says_which(db, store, tmp_path):
+    f = make(tmp_path / "in", "export.csv", b"ProviderID,type,DocumentMonth\n1,GFS,2026-10\n")
+    r = ingest(db, store, WEEK, [f], as_source="document_log")
+    assert not r.accepted
+    (_, why), = r.rejected
+    assert "'DocumentType'" in why and "'#ofcases'" in why
+    assert "'Type' (the file has 'type')" in why
+    assert not db.query(Upload).count()
+
+
+def test_the_wrong_kind_of_file_is_refused_before_it_is_opened(db, store, tmp_path):
+    f = make(tmp_path / "in", "hearings.csv", SQL_HEADER)
+    (_, why), = ingest(db, store, WEEK, [f], as_source="hearing_calendar").rejected
+    assert "must be a .xlsx or .xlsb file" in why
+
+
+def test_a_damaged_workbook_is_refused(db, store, tmp_path):
+    f = make(tmp_path / "in", "hearings.xlsx", b"not a workbook")
+    (_, why), = ingest(db, store, WEEK, [f], as_source="hearing_calendar").rejected
+    assert "could not be opened as a spreadsheet" in why
+
+
+def test_every_input_has_sheets_to_check():
+    from app.reports import REPORTS, templates
+    for report in REPORTS.values():
+        for spec in report.sources:
+            assert templates.requirements(spec.key, report.key), spec.key
+    assert "Lien Filed" in templates.requirements("custom_case_ar", "gfs")["Sheet1"]
+    assert "Lien Filed" not in templates.requirements("custom_case_ar", "all_providers")["Sheet1"]
+
+
+def test_the_upload_screen_names_each_missing_input_by_key(db):
+    missing = week_status(db, WEEK)["reports"]["gfs"]["missing_files"]
+    keys = {m["key"] for m in missing}
+    assert {"document_log", "owner_case_ar", "delta_wc_comments"} <= keys
+    assert next(m for m in missing if m["key"] == "owner_case_ar")["per_report"]
+
+
+def test_the_owner_case_ar_needs_its_owner_column_for_either_report():
+    from app.reports import templates
+    for report in ("gfs", "all_providers"):
+        assert "OWNER NAME" in templates.requirements("owner_case_ar", report)["Sheet1"]
+    banned, providers = templates._delta_checks("delta_wc", None)
+    assert "Med-Legal Delta" in banned
+    assert providers["WC Delta"][2] == {300, 309, 239}
+    _, providers = templates._delta_checks("delta_mlcr", None)
+    assert providers["Med-Legal Delta"][1] == {300, 309}
