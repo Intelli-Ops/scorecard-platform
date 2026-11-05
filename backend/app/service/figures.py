@@ -1,6 +1,8 @@
 """Flattens a build's grid results into rows the dashboard can draw."""
 from __future__ import annotations
 
+from ..reports.closed_weeks import week_spans
+
 
 def _split(value):
     """The two pipelines hand back different grid shapes."""
@@ -90,6 +92,20 @@ def all_figures(result) -> dict[str, list[dict]]:
             getattr(result, "collections_pace", {}) or {}),
         "cp_settled": cp_settled_records(result.cp_settled),
         "kpi": kpi_records(result.kpi),
+        "settlement_month_weeks": getattr(result, "settlement_month_weeks", []) or [],
         "meta": [{"current_month": result.current_month,
-                  "year": getattr(result, "year", None)}],
+                  "year": getattr(result, "year", None),
+                  **period_meta(getattr(result, "period", None))}],
+    }
+
+
+def period_meta(period) -> dict:
+    """The days each week covers, and the working days each week's pace divides by."""
+    if period is None:
+        return {}
+    return {
+        "week_spans": week_spans(period),
+        "business_days": period.business_days,
+        "pace_days": [{"week": i, "elapsed": period.pace_divisor(i)}
+                      for i in range(1, period.weeks_so_far + 1)],
     }

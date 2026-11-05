@@ -82,6 +82,8 @@ export const api = {
     post(`/api/admin/users/${id}/approve`, reports ? { reports } : {}),
   setRole: (id, role) => post(`/api/admin/users/${id}/role`, { role }),
   setAccess: (id, reports) => post(`/api/admin/users/${id}/access`, { reports }),
+  // `inputs` null: every input.
+  setUploadAccess: (id, inputs) => post(`/api/admin/users/${id}/uploads`, { inputs }),
   deleteUser: (id) => json(`/api/admin/users/${id}`, { method: "DELETE" }),
   setActive: (id, active) => post(`/api/admin/users/${id}/active`, { active }),
   unlockUser: (id) => post(`/api/admin/users/${id}/unlock`),
@@ -111,10 +113,11 @@ export const api = {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ working_days: days }) }),
 
-  upload(week, files, { forReport, onProgress } = {}) {
+  upload(week, files, { forReport, asSource, onProgress } = {}) {
     const body = new FormData();
     for (const f of files) body.append("files", f, f.name);
     if (forReport) body.append("for_report", forReport);
+    if (asSource) body.append("as_source", asSource);
 
     return new Promise((resolve, reject) => {
       const x = new XMLHttpRequest();

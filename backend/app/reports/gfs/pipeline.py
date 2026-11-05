@@ -9,11 +9,12 @@ from .core.case_ar import build_raw_data, build_case_ar
 from .core.collections import build_collections
 from .core.delta import DeltaReport, attach_comments, combine_delta, build_delta
 from .core.kpi import KpiReport, build_kpi_sql, build_kpi_scorecard
-from .core.settlement import settlement_grids, cp_settled
+from .core.settlement import LOCATIONS, settled_rows, settlement_grids, cp_settled
+from ..closed_weeks import settlement_month_weeks
 from ..notes import Note, info, sort_notes, warning
 from ..pacing import pace_grid
 from ..partial import absent, empty, missing_books, waiting
-from ..period import reporting_period, week_index_expr
+from ..period import Period, reporting_period, week_index_expr
 from ..review_notes import add_new_providers, review_notes, week_label
 from .readers import GfsSources
 
@@ -61,6 +62,8 @@ class RunResult:
 
     collections_pace: dict = field(default_factory=dict)
     year: int = 0
+    settlement_month_weeks: list = field(default_factory=list)
+    period: Period | None = None
 
     notes: list[Note] = field(default_factory=list)
     seconds: float = 0.0
@@ -119,14 +122,16 @@ def run(src: GfsSources, rules: dict, as_of: dt.date | None = None,
     comb = None
     gone = absent(owner_case_ar=src.owner_ar, delta=src.delta_sheets)
     if gone:
-        delta, grids = empty(EMPTY["delta_comparison"]), {}
+        delta, grids, month_weeks = empty(EMPTY["delta_comparison"]), {}, []
         notes.append(waiting("Delta Comparison or Settlement",
                              [k for k in gone if k != "delta"] + books))
     else:
         if books:
             notes.append(waiting("part of Delta Comparison and Settlement", books))
         comb, drep = combine_delta(src.delta_sheets, rules)
-        grids = settlement_grids(comb, src.gfs_cases, src.providers, period)
+        settled = settled_rows(comb, src.gfs_cases, src.providers, period)
+        grids = settlement_grids(comb, src.gfs_cases, src.providers, period, settled)
+        month_weeks = settlement_month_weeks(settled, LOCATIONS, period, with_pct=True)
         if src.custom_ar is None:
             delta = empty(EMPTY["delta_comparison"])
             notes.append(waiting("Delta Comparison", ["custom_case_ar"]))
@@ -179,7 +184,7 @@ def run(src: GfsSources, rules: dict, as_of: dt.date | None = None,
         raw_data=raw, case_ar=case_ar, delta_comparison=delta, collections=coll,
         settlement_grids=grids, cp_settled=cp, kpi=kpi, current_month=period.month,
         settlement_pace=paced, collections_pace=collections_paced,
-        year=period.year,
+        year=period.year, settlement_month_weeks=month_weeks, period=period,
         notes=sort_notes(notes),
         seconds=time.perf_counter() - t0,
     )

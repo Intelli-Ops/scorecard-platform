@@ -417,6 +417,7 @@ def permissions(db: DbSession, actor: User, target: User) -> dict:
     return {
         "approve": m and target.pending and bool(target.email_verified_at),
         "access": m and target.role == "viewer",
+        "uploads": m and actor.is_system_admin and target.role == "admin",
         "roles": list(ROLES) if m and actor.is_system_admin else [],
         "disable": i and target.is_active and not target.pending,
         "enable": i and not target.is_active and not target.pending,
@@ -460,6 +461,27 @@ def clean_reports(keys) -> str:
     if unknown:
         raise AdminError(f"Unknown report {unknown[0]!r}.")
     return ",".join(k for k in REPORTS if k in keys)        # registry order
+
+
+def set_upload_access(db: DbSession, actor: User, target: User, inputs) -> User:
+    """Which inputs an admin may upload; None for every one."""
+    from ..reports import input_keys
+    _manage(actor, target)
+    _require(actor.is_system_admin,
+             "Only a system admin chooses which files an admin may upload.")
+    if target.role != "admin":
+        raise AdminError("Upload access is set for admins: system admins upload "
+                         "everything, and viewers upload nothing.")
+    if inputs is None:
+        target.upload_access = None
+    else:
+        known = input_keys()
+        unknown = [k for k in inputs if k not in known]
+        if unknown:
+            raise AdminError(f"Unknown input {unknown[0]!r}.")
+        target.upload_access = ",".join(k for k in known if k in inputs)
+    db.flush()
+    return target
 
 
 def set_role(db: DbSession, actor: User, target: User, role: str) -> User:
@@ -569,6 +591,7 @@ def as_dict(user: User) -> dict:
             "role": user.role, "role_label": ROLE_LABELS.get(user.role, user.role),
             "is_admin": user.is_admin, "is_system_admin": user.is_system_admin,
             "reports": user.reports,
+            "uploads": user.uploads, "uploads_all": user.uploads_all,
             "status": user.status,
             "must_change_password": bool(user.must_change_password),
             "email_verified": bool(user.email_verified_at),

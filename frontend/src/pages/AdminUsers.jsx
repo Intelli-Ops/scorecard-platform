@@ -55,7 +55,8 @@ export default function AdminUsers() {
         <h1>Users</h1>
         <div className="sub">
           Viewers read the scorecards they are given. Admins upload, build and
-          approve. Only a system admin can make or change an admin.
+          approve; a system admin can narrow which files each admin may upload.
+          Only a system admin can make or change an admin.
         </div>
       </div>
 
@@ -100,6 +101,8 @@ export default function AdminUsers() {
               render: (u) => <RoleCell u={u} act={act} /> },
             { key: "reports", label: "Scorecards",
               render: (u) => <AccessCell u={u} reports={reports} act={act} /> },
+            { key: "uploads", label: "Uploads",
+              render: (u) => <UploadsCell u={u} reports={reports} act={act} /> },
             { key: "status", label: "Status",
               render: (u) => {
                 const [tone, word] = STATUS[u.status] ?? ["", u.status];
@@ -171,6 +174,63 @@ function AccessCell({ u, reports, act }) {
         );
       })}
       {!u.reports.length && !u.can.access && <span className="muted small">None</span>}
+    </span>
+  );
+}
+
+// The input names, short enough for a chip.
+const INPUT_SHORT = {
+  delta_wc: "Delta WC", delta_mlcr: "Delta MLCR",
+  delta_wc_comments: "Delta WC comments", delta_mlcr_comments: "Delta MLCR comments",
+  payment_detail: "Payment Detail", hearing_calendar: "Hearing Calendar",
+  document_log: "Document log", kpi_numbers: "KPI numbers",
+  owner_case_ar: "Owner Case AR", custom_case_ar: "Custom Case AR",
+};
+
+// Which files an admin may upload: all of them, none, or the ones a system admin chose, by name.
+function UploadsCell({ u, reports, act }) {
+  const [open, setOpen] = useState(false);
+  if (!u.is_admin) return <span className="muted small">None</span>;
+  const inputs = [...new Map(reports.flatMap((r) => r.sources)
+    .map((s) => [s.key, s])).values()];
+  const none = !u.uploads_all && !u.uploads.length;
+  const summary = u.uploads_all ? "All files" : none ? "No files"
+    : inputs.filter((s) => u.uploads.includes(s.key))
+        .map((s) => INPUT_SHORT[s.key] ?? s.label).join(", ");
+  if (!u.can.uploads) {
+    return <span className={`small${none ? " muted" : ""}`}>{summary}</span>;
+  }
+
+  const set = (next) => act(() => api.setUploadAccess(
+    u.id, next.length === inputs.length ? null : next));
+  return (
+    <span className="who-cell">
+      <span className="row tight">
+        <span className={`small${none ? " muted" : ""}`}>{summary}</span>
+        <Button size="sm" tone="quiet" onClick={() => setOpen(!open)}
+                aria-expanded={open}>{open ? "Done" : "Choose"}</Button>
+      </span>
+      {open && (
+        <span className="chips wrap" style={{ marginTop: 6 }}>
+          <button type="button" className={`chip${u.uploads_all ? " on" : ""}`}
+                  aria-pressed={u.uploads_all} onClick={act(() => api.setUploadAccess(u.id, null))}
+                  title="Every file, now and any added later">All files</button>
+          <button type="button" className={`chip${none ? " on" : ""}`}
+                  aria-pressed={none} onClick={act(() => api.setUploadAccess(u.id, []))}
+                  title="This admin uploads nothing until files are chosen">No files</button>
+          {inputs.map((s) => {
+            const on = !u.uploads_all && u.uploads.includes(s.key);
+            const base = u.uploads_all ? [] : u.uploads;
+            const next = on ? base.filter((k) => k !== s.key) : [...base, s.key];
+            return (
+              <button key={s.key} type="button" className={`chip${on ? " on" : ""}`}
+                      aria-pressed={on} title={s.label} onClick={set(next)}>
+                {INPUT_SHORT[s.key] ?? s.label}
+              </button>
+            );
+          })}
+        </span>
+      )}
     </span>
   );
 }

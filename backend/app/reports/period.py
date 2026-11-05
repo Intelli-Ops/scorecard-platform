@@ -97,6 +97,12 @@ def reporting_period(week: str, holidays: list | None,
                   int(days) if days else None)
 
 
+def month_period(year: int, month: int, holidays=frozenset()) -> Period:
+    """A whole month, every week of it passed - a closed month opened into its weeks."""
+    spans = month_weeks(year, month)
+    return Period(year, month, spans, len(spans), spans[-1][1], frozenset(holidays))
+
+
 def week_index_expr(col: str, period: Period) -> pl.Expr:
     """1-based week of the month for a date column: the last week whose Monday
     is on or before the date."""

@@ -107,6 +107,18 @@ delta:
     Med-Legal Delta: [F&F]
 
   # PHASE 5 - Location splits the Settlement grids.
+  # Upload check, for a file sent with a missing input's Upload button. The WC and
+  # MLCR workbooks are nearly alike - the MLCR one carries a WC Delta sheet too - so
+  # the WC one must not have the MLCR sheets, and each sheet may hold only its own
+  # providers (ProviderID, as in the October 2026 files).
+  upload_check:
+    not_sheets:
+      wc: [Med-Legal Delta, IMR Delta]
+    providers:
+      Med-Legal Delta: {only: [300, 309]}     # Med-Legal Services LLC, Defense Pro LLC
+      IMR Delta: {only: [239]}                # Ideal Medical Records Service Inc
+      WC Delta: {never: [300, 309, 239]}
+
   locations:
     In House: in house
     Board: board

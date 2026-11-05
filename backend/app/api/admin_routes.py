@@ -29,6 +29,10 @@ class Access(BaseModel):
     reports: list[str]
 
 
+class UploadAccess(BaseModel):
+    inputs: list[str] | None = None          # None: every input
+
+
 class Approval(BaseModel):
     reports: list[str] | None = None
 
@@ -140,6 +144,14 @@ def change_access(user_id: int, body: Access, request: Request,
     return _change(request, admin, user_id, "admin.access",
                    lambda s, a, t: auth.set_access(s, a, t, body.reports) and None,
                    lambda t: {"reports": t.reports})
+
+
+@router.post("/users/{user_id}/uploads")
+def change_upload_access(user_id: int, body: UploadAccess, request: Request,
+                         admin: User = Depends(require_admin)) -> dict:
+    return _change(request, admin, user_id, "admin.upload_access",
+                   lambda s, a, t: auth.set_upload_access(s, a, t, body.inputs) and None,
+                   lambda t: {"inputs": None if t.uploads_all else t.uploads})
 
 
 @router.post("/users/{user_id}/active")

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db.session import after_commit
-from ..reports import CASE_AR_KEYS, REPORTS, ReportType, SourceFile
+from ..reports import CASE_AR_KEYS, REPORTS, ReportType, SourceFile, templates
 from ..reports.locate import matches
 from ..storage.files import FileStore
 from ..db.models import RunInput, Upload
@@ -73,18 +73,43 @@ def classify(path: Path) -> SourceFile | None:
     return None
 
 
+def source(key: str) -> SourceFile | None:
+    return next((s for s in _all_sources() if s.key == key), None)
+
+
+def _refuse_as(spec: SourceFile, path: Path, for_report: str | None) -> str | None:
+    """Why `path`, whatever it is called, cannot be taken as `spec`; None if it can."""
+    if path.suffix.lower() not in spec.exts:
+        return (f"{spec.label} must be a {' or '.join(spec.exts)} file, "
+                f"not {path.suffix or 'a file with no extension'}")
+    problems = templates.check(spec.key, path,
+                               for_report if spec.key in CASE_AR_KEYS else None)
+    if problems:
+        return f"does not match {spec.label}: " + "; ".join(problems)
+    return None
+
+
 def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
            for_report: str | None = None,
-           uploaded_by: str | None = None) -> IngestResult:
-    """Store and record a batch of uploaded files."""
+           uploaded_by: str | None = None,
+           as_source: str | None = None,
+           may_upload=None) -> IngestResult:
+    """Store and record a batch of uploaded files. With `as_source`, each file is
+    taken as that input whatever its name, once its sheets and columns check out.
+    `may_upload` is the input keys the uploader has been given; None for all."""
     result = IngestResult()
 
     for path in paths:
         path = Path(path)
-        spec = classify(path)
+        spec = source(as_source) if as_source else classify(path)
         if spec is None:
             result.rejected.append((path.name, NO_LONGER_UPLOADED.get(
                 _no_longer(path), "not one of the report inputs")))
+            continue
+
+        if may_upload is not None and spec.key not in may_upload:
+            result.rejected.append((path.name, f"{spec.label}: your account has not "
+                                               f"been given this file to upload"))
             continue
 
         if too_long(path.name):
@@ -95,6 +120,10 @@ def ingest(session: Session, store: FileStore, week: str, paths: list[Path],
             result.rejected.append(
                 (path.name, f"{spec.label} differs per report - say which report "
                             f"this copy is for"))
+            continue
+
+        if as_source and (why := _refuse_as(spec, path, for_report)):
+            result.rejected.append((path.name, why))
             continue
 
         report_key = for_report if spec.key in CASE_AR_KEYS else None
@@ -202,6 +231,11 @@ def week_status(session: Session, week: str) -> dict:
                                         key=lambda ku: ku[1].filename.lower())],
             "missing": sorted((s.label for s in report.sources
                                if s.key not in uploads and s.required), key=str.lower),
+            "missing_files": sorted(
+                ({"key": s.key, "label": s.label, "exts": list(s.exts),
+                  "per_report": s.key in CASE_AR_KEYS}
+                 for s in report.sources if s.key not in uploads and s.required),
+                key=lambda f: f["label"].lower()),
             # Any file is enough to build; missing files make it partial.
             "ready": any(s.key in uploads for s in report.sources),
             "complete": all(s.key in uploads for s in report.sources if s.required),

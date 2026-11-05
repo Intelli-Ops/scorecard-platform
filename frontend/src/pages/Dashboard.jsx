@@ -9,6 +9,7 @@ import Collections, { CollectionsTiles } from "../collections";
 import Delta from "../delta";
 import Kpi from "../kpi";
 import CaseAr from "../caseAr";
+import PaceFormula from "../pace";
 import { Button, LinkButton } from "../buttons";
 import { DownloadIcon } from "../icons";
 import { useLoad } from "../hooks";
@@ -18,7 +19,7 @@ import { useLoad } from "../hooks";
 function useDashboard(runId) {
   const { data, error } = useLoad(async () => {
     const [run, settlement, totals, pace, cp, kpi, meta,
-           collections, collectionsPace, delta] = await Promise.all([
+           collections, collectionsPace, delta, monthWeeks] = await Promise.all([
       api.run(runId),
       api.figures(runId, "settlement"),
       api.figures(runId, "settlement_totals"),
@@ -31,9 +32,10 @@ function useDashboard(runId) {
       api.figures(runId, "collections_pace").catch(() => []),
       api.table(runId, "delta_comparison", { limit: 5000 })
          .then((t) => t.data).catch(() => []),
+      api.figures(runId, "settlement_month_weeks").catch(() => []),
     ]);
     return { run, settlement, totals, pace, cp, kpi, meta,
-             collections, collectionsPace, delta };
+             collections, collectionsPace, delta, monthWeeks };
   }, [runId]);
   if (error) return { error, loading: false };
   return data ? { ...data, loading: false } : { loading: true };
@@ -129,13 +131,14 @@ export default function Dashboard() {
 // The scorecard itself - tiles, tabs and tables - for any run.
 export function ScorecardView({ id, header }) {
   const { run, settlement, totals, pace, cp, kpi, meta, collections,
-          collectionsPace, delta, loading, error } = useDashboard(id);
+          collectionsPace, delta, monthWeeks, loading, error } = useDashboard(id);
   const [tab, setTab] = useState("settlement");
 
   const currentMonth = meta?.[0]?.current_month;
   const monthLabel = currentMonth
     ? `${monthName(currentMonth)}${meta[0].year ? ` ${meta[0].year}` : ""}`
     : null;
+  const spans = meta?.[0]?.week_spans;
 
   if (loading) return <Loading what="Loading the scorecard" />;
   if (error) return <ErrorBox error={error} />;
@@ -155,6 +158,10 @@ export function ScorecardView({ id, header }) {
       {header(run)}
       <PartialNotice missing={run.run.missing} />
 
+      <div className="spread" style={{ marginBottom: 18 }}>
+        <Segmented options={tabs} value={tab} onChange={setTab} />
+      </div>
+
       {tab === "settlement" ? (
         <SettlementTiles settlement={settlement} pace={pace} cp={cp}
                          monthLabel={monthLabel} currentMonth={currentMonth} />
@@ -165,13 +172,10 @@ export function ScorecardView({ id, header }) {
         null
       )}
 
-      <div className="spread" style={{ marginBottom: 18 }}>
-        <Segmented options={tabs} value={tab} onChange={setTab} />
-      </div>
-
       {tab === "settlement" && (
         <Settlement settlement={settlement} totals={totals} pace={pace}
-                    cp={cp} monthLabel={monthLabel} />
+                    cp={cp} monthLabel={monthLabel} monthWeeks={monthWeeks}
+                    spans={spans} currentMonth={currentMonth} />
       )}
 
       {tab === "kpi" && <Kpi kpi={kpi} monthLabel={monthLabel} />}
@@ -180,7 +184,12 @@ export function ScorecardView({ id, header }) {
 
       {tab === "collections" && (
         <Collections rows={collections} pace={collectionsPace}
-                     monthLabel={monthLabel} />
+                     monthLabel={monthLabel} spans={spans}
+                     currentMonth={currentMonth} />
+      )}
+
+      {["settlement", "collections"].includes(tab) && (
+        <PaceFormula meta={meta} monthLabel={monthLabel} />
       )}
 
       {tab === "case_ar" && <CaseAr runId={id} />}

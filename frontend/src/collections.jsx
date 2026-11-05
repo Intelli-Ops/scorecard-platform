@@ -1,8 +1,8 @@
 // The Collection High-Level tab.
 import { useMemo } from "react";
-import { money } from "./api";
+import { money, weekDays } from "./api";
 import { assemble, col } from "./columns";
-import { Stat, Stats, TableCard } from "./ui";
+import { Stat, Stats, TableCard, WeekHead } from "./ui";
 import {
   collectionsPaceTotal, collectionsToDate, paymentTypeTotals,
   pivotCollections, pivotCollectionsPace, TOTAL, weekLabel,
@@ -10,13 +10,16 @@ import {
 
 const GROUP = col.label("group", "Group", { width: 186, className: "sticky" });
 
-export default function Collections({ rows, pace, monthLabel }) {
+export default function Collections({ rows, pace, monthLabel, spans: weekSpans,
+                                      currentMonth }) {
   const grid = useMemo(() => pivotCollections(rows), [rows]);
   const paced = useMemo(() => pivotCollectionsPace(pace), [pace]);
 
   const { columns, spans } = useMemo(() => {
     const parts = grid.weeks.map((w) => ({
-      span: { label: weekLabel(w), span: grid.types.length + 1, className: "current" },
+      span: { label: <WeekHead label={weekLabel(w)}
+                               days={weekDays(weekSpans, currentMonth, w)} />,
+              span: grid.types.length + 1, className: "current" },
       columns: [
         ...grid.types.map((t) =>
           col.money(`w${w}_${t}`, t, { className: "current" })),
@@ -28,13 +31,15 @@ export default function Collections({ rows, pace, monthLabel }) {
       column: col.strong("_total", "Month total"),
     });
     return assemble(GROUP, parts);
-  }, [grid, monthLabel]);
+  }, [grid, monthLabel, weekSpans, currentMonth]);
 
   const paceColumns = useMemo(() => [
     GROUP,
     ...paced.weeks.map((w) =>
-      col.money(w, weekLabel(w.slice(1)), { className: "current" })),
-  ], [paced.weeks]);
+      col.money(w, <WeekHead label={weekLabel(w.slice(1))}
+                             days={weekDays(weekSpans, currentMonth, w.slice(1))} />,
+                { className: "current" })),
+  ], [paced.weeks, weekSpans, currentMonth]);
 
   return (
     <>

@@ -99,3 +99,33 @@ test("month to date counts weeks only, per block", () => {
   assert.equal(Math.round(mtd["In House"] * 100) / 100, 102443.07);
   assert.equal(mtd["Board"], undefined);   // no weekly rows for Board here
 });
+
+import { withMonthWeeks } from "./settlement-model.js";
+
+test("a closed month's weeks join its rows without touching the totals", () => {
+  const monthRows = [
+    { block: "In House", group: "A", bucket: "M10", amount: 30 },
+    { block: "In House", group: "B", bucket: "M10", amount: 5 },
+  ];
+  const weeks = [
+    { block: "In House", month: 10, bucket: "W1", group: "A", amount: 10, settlement_pct: 0.5 },
+    { block: "In House", month: 10, bucket: "W2", group: "A", amount: 20, settlement_pct: 0.25 },
+    { block: "In House", month: 10, bucket: "W1", group: "B", amount: 5, settlement_pct: 1 },
+    { block: "In House", month: 10, bucket: "W1", group: null, amount: 15, settlement_pct: 0.6 },
+    { block: "Board", month: 10, bucket: "W1", group: "A", amount: 99 },
+  ];
+  const p = withMonthWeeks(pivot(monthRows, [], "In House"), weeks, "In House");
+  assert.deepEqual(p.weeksOf, { M10: ["W1", "W2"] });
+  const a = p.rows.find((r) => r.group === "A");
+  assert.equal(a.M10W1, 10);
+  assert.equal(a.M10W2_pct, 0.25);
+  const total = p.rows.find((r) => r.group === "Total");
+  assert.equal(total.M10W1, 15);
+  assert.equal(total.M10W1_pct, 0.6);       // the Total row's own %, not a sum
+  assert.equal(total._total, 35);           // year to date is unchanged
+});
+
+test("a run without closed-month weeks has nothing to open", () => {
+  const p = withMonthWeeks(pivot([], [], "In House"), undefined, "In House");
+  assert.deepEqual(p.weeksOf, {});
+});

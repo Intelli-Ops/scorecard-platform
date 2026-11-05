@@ -51,6 +51,36 @@ export function pivot(rows, totals, block) {
   return { months, weeks, rows: [...body, total] };
 }
 
+// A closed month's weeks, for the months kept week by week: each row of `p` gains M10W1, M10W1_pct and so on, and `weeksOf` names each month's weeks.
+export function withMonthWeeks(p, monthWeeks, block) {
+  const mine = (monthWeeks ?? []).filter((r) => r.block === block);
+  const weeksOf = {};
+  for (const r of mine) (weeksOf[`M${r.month}`] ??= new Set()).add(r.bucket);
+  for (const m of Object.keys(weeksOf)) {
+    weeksOf[m] = [...weeksOf[m]].sort((a, b) => bucketNum(a) - bucketNum(b));
+  }
+  if (!mine.length) return { ...p, weeksOf };
+
+  const byGroup = Object.fromEntries(p.rows.map((r) => [r.group, { ...r }]));
+  const total = byGroup[TOTAL];
+  for (const r of mine) {
+    const key = `M${r.month}${r.bucket}`;
+    const row = r.group == null ? total : byGroup[r.group];
+    if (!row) continue;
+    if (r.group != null) row[key] = (row[key] ?? 0) + r.amount;
+    if (r.settlement_pct != null) row[`${key}_pct`] = r.settlement_pct;
+  }
+  if (total) {
+    for (const [m, weeks] of Object.entries(weeksOf)) {
+      for (const w of weeks) {
+        total[`${m}${w}`] = p.rows.reduce(
+          (s, g) => (g.group === TOTAL ? s : s + (byGroup[g.group][`${m}${w}`] ?? 0)), 0);
+      }
+    }
+  }
+  return { ...p, weeksOf, rows: p.rows.map((r) => byGroup[r.group]) };
+}
+
 // The Pace block: one row per group, one cell per week of the current month.
 export function pivotPace(pace, block) {
   const mine = (pace ?? []).filter((r) => r.block === block);
