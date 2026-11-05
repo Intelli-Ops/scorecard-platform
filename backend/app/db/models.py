@@ -358,6 +358,18 @@ class Holiday(Base):
     set_at: Mapped[dt.datetime] = mapped_column(UtcDateTime(), default=utcnow)
 
 
+class CollectionHistory(Base):
+    """One provider's collections for one month before the app kept collections
+    itself: January to September 2026, loaded by migration 0008."""
+    __tablename__ = "collection_history"
+
+    year: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    month: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    regid: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    provider: Mapped[str | None] = mapped_column(String(255))     # as the file named it
+    amount: Mapped[float] = mapped_column(Float)
+
+
 class Provider(Base):
     """A provider and the group its cases count under."""
     __tablename__ = "provider"

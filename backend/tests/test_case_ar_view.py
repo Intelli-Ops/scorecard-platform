@@ -62,6 +62,21 @@ def test_all_providers_filters_on_group_and_validity_only():
     assert out["rows"][-1]["File Status"] == "Grand Total"
 
 
+def test_all_providers_case_ar_has_the_sheets_headings_highest_outstanding_first():
+    ap_rules = yaml.safe_load(get_report("all_providers").rules_path.read_text())
+    headers = ap_rules["case_ar"]["raw_data_headers"]
+    rows = [[1, "Dr A", 10, "Artheon", "WC", "x", "Valid", "Closed", 50.0, 49.0, 0.0, 0.0, 1.0],
+            [2, "Dr A", 10, "Artheon", "WC", "x", "Valid", "Verified", 90.0, 0.0, 0.0, 0.0, 90.0],
+            [3, "Dr A", 10, "Artheon", "WC", "x", "Valid", "Open", 20.0, 0.0, 0.0, 0.0, 20.0]]
+    out = case_ar(pl.DataFrame(rows, schema=headers, orient="row"), ap_rules,
+                  "all_providers", {})
+    assert out["columns"] == ["File Status", "Count of Cases", "BILLED", "Paid",
+                              "Write Off", "Advance", "Outstanding"]
+    assert [r["File Status"] for r in out["rows"]] == ["Verified", "Open", "Closed",
+                                                       "Grand Total"]
+    assert out["rows"][-1]["Outstanding"] == 111.0
+
+
 def test_nothing_matching_is_an_empty_table(rules):
     out = case_ar(raw(), rules, "gfs", {"group": "Nobody"})
     assert out["rows"] == [] and out["matched"] == 0

@@ -156,6 +156,7 @@ export const api = {
     json(`/api/weeks/${w}/uploads/${id}`, { method: "DELETE" }),
   figures: (id, name) => json(`/api/runs/${id}/figures/${name}`),
   caseAr: (id, filters = {}) => json(`/api/runs/${id}/case-ar${query(filters)}`),
+  collectionsHistory: (id) => json(`/api/runs/${id}/collections-history`),
   table: (id, name, { limit = 100, offset = 0 } = {}) =>
     json(`/api/runs/${id}/tables/${name}?limit=${limit}&offset=${offset}`),
 

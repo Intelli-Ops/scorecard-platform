@@ -8,12 +8,12 @@ import {
   pivotCollections, pivotCollectionsPace, TOTAL, weekLabel,
 } from "./collections-model";
 
-const GROUP = col.label("group", "Group", { width: 186, className: "sticky" });
+const GROUP = col.label("group", "Group", { width: 186, className: "sticky", sortable: true });
 
 export default function Collections({ rows, pace, monthLabel, spans: weekSpans,
-                                      currentMonth }) {
-  const grid = useMemo(() => pivotCollections(rows), [rows]);
-  const paced = useMemo(() => pivotCollectionsPace(pace), [pace]);
+                                      currentMonth, order }) {
+  const grid = useMemo(() => pivotCollections(rows, order), [rows, order]);
+  const paced = useMemo(() => pivotCollectionsPace(pace, order), [pace, order]);
 
   const { columns, spans } = useMemo(() => {
     const parts = grid.weeks.map((w) => ({
@@ -45,7 +45,7 @@ export default function Collections({ rows, pace, monthLabel, spans: weekSpans,
     <>
       <TableCard
         title="Collections"
-        sub={`Each week of ${monthLabel ?? "the current month"} opened into its payment types. The closed months January to July are not shown: the pipeline builds this grid for the current month only.`}
+        sub={`Each week of ${monthLabel ?? "the current month"} opened into its payment types. Earlier months are in Collections history at the bottom of this tab.`}
         empty="No collections for this run."
         columns={columns} spans={spans} rows={grid.rows} />
 

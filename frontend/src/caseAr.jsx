@@ -21,7 +21,7 @@ export default function CaseAr({ runId }) {
   const columns = useMemo(() => (table?.columns ?? []).map((c, i) => {
     const kind = data.kinds[c];
     if (kind === "text") {
-      return i === 0 ? col.label(c, c, { className: "sticky full" }) : col.text(c, c);
+      return i === 0 ? col.label(c, c, { className: "sticky full", sortable: true }) : col.text(c, c);
     }
     return kind === "int" || isCount(c) ? col.count(c, c) : col.money(c, c);
   }), [table, data]);

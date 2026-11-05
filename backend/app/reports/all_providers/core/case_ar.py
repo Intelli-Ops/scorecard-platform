@@ -114,13 +114,18 @@ def clean_closing_order(case_ar_rules: dict, column: str = "Closing Order") -> p
 
 
 def build_case_ar(raw: pl.DataFrame, rules: dict) -> pl.DataFrame:
-    """Raw Data -> the Case AR sheet: one row per File Status, six measures."""
-    h = rules["case_ar"]["raw_data_headers"]
+    """Raw Data -> the Case AR sheet: one row per File Status, the case count and
+    five measures under the sheet's headings, highest Outstanding first."""
+    ca = rules["case_ar"]
+    h = ca["raw_data_headers"]
     status, measures = h[7], h[8:]
+    names = ca.get("case_ar_headers") or [m.strip() for m in measures]
+    by = ca.get("case_ar_sort")
     out = (raw.group_by(status)
               .agg(pl.len().alias("Count of Cases"),
-                   *[pl.col(m).sum().alias(m.strip()) for m in measures])
-              .sort(status))
+                   *[pl.col(m).sum().alias(n) for m, n in zip(measures, names)]))
+    out = (out.sort([by, status], descending=[True, False]) if by
+           else out.sort(status))
     total = out.select([pl.lit("Grand Total").alias(status),
                         *[pl.col(c).sum().alias(c) for c in out.columns[1:]]])
     return pl.concat([out, total], how="vertical_relaxed")

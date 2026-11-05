@@ -7,6 +7,9 @@ import { col } from "../columns";
 import Settlement, { SettlementTiles } from "../settlement";
 import Collections, { CollectionsTiles } from "../collections";
 import Delta from "../delta";
+import DeltaComparison from "../deltaComparison";
+import CollectionsHistory from "../collectionsHistory";
+import { rowsOf } from "../layout";
 import Kpi from "../kpi";
 import CaseAr from "../caseAr";
 import PaceFormula from "../pace";
@@ -19,7 +22,7 @@ import { useLoad } from "../hooks";
 function useDashboard(runId) {
   const { data, error } = useLoad(async () => {
     const [run, settlement, totals, pace, cp, kpi, meta,
-           collections, collectionsPace, delta, monthWeeks] = await Promise.all([
+           collections, collectionsPace, delta, monthWeeks, layout] = await Promise.all([
       api.run(runId),
       api.figures(runId, "settlement"),
       api.figures(runId, "settlement_totals"),
@@ -33,9 +36,10 @@ function useDashboard(runId) {
       api.table(runId, "delta_comparison", { limit: 5000 })
          .then((t) => t.data).catch(() => []),
       api.figures(runId, "settlement_month_weeks").catch(() => []),
+      api.figures(runId, "layout").catch(() => []),     // builds before it have none
     ]);
     return { run, settlement, totals, pace, cp, kpi, meta,
-             collections, collectionsPace, delta, monthWeeks };
+             collections, collectionsPace, delta, monthWeeks, layout };
   }, [runId]);
   if (error) return { error, loading: false };
   return data ? { ...data, loading: false } : { loading: true };
@@ -131,7 +135,7 @@ export default function Dashboard() {
 // The scorecard itself - tiles, tabs and tables - for any run.
 export function ScorecardView({ id, header }) {
   const { run, settlement, totals, pace, cp, kpi, meta, collections,
-          collectionsPace, delta, monthWeeks, loading, error } = useDashboard(id);
+          collectionsPace, delta, monthWeeks, layout, loading, error } = useDashboard(id);
   const [tab, setTab] = useState("settlement");
 
   const currentMonth = meta?.[0]?.current_month;
@@ -143,11 +147,14 @@ export function ScorecardView({ id, header }) {
   if (loading) return <Loading what="Loading the scorecard" />;
   if (error) return <ErrorBox error={error} />;
 
+  // All Providers: its Delta tab is already the whole Delta Comparison sheet, so there
+  // is no raw data behind it to show, and its settlement has no Settlement %.
+  const allProviders = run.run.report_key === "all_providers";
   const tabs = [
     { value: "settlement", label: "Settlement" },
     { value: "collections", label: "Collections" },
     { value: "delta", label: "Delta" },
-    { value: "delta_comparison", label: "Delta raw data" },
+    ...(allProviders ? [] : [{ value: "delta_comparison", label: "Delta raw data" }]),
     { value: "kpi", label: "KPI" },
     { value: "case_ar", label: "Case AR" },
     { value: "raw_data", label: "Raw data" },
@@ -175,22 +182,28 @@ export function ScorecardView({ id, header }) {
       {tab === "settlement" && (
         <Settlement settlement={settlement} totals={totals} pace={pace}
                     cp={cp} monthLabel={monthLabel} monthWeeks={monthWeeks}
-                    spans={spans} currentMonth={currentMonth} />
+                    spans={spans} currentMonth={currentMonth}
+                    layout={layout} year={meta?.[0]?.year} pct={!allProviders} />
       )}
 
-      {tab === "kpi" && <Kpi kpi={kpi} monthLabel={monthLabel} />}
+      {tab === "kpi" && <Kpi kpi={kpi} monthLabel={monthLabel} layout={layout} />}
 
-      {tab === "delta" && <Delta rows={delta} />}
+      {tab === "delta" && (allProviders
+        ? <DeltaComparison rows={delta} order={rowsOf(layout, "delta")}
+                           currentMonth={currentMonth} year={meta?.[0]?.year} />
+        : <Delta rows={delta} />)}
 
       {tab === "collections" && (
         <Collections rows={collections} pace={collectionsPace}
                      monthLabel={monthLabel} spans={spans}
-                     currentMonth={currentMonth} />
+                     currentMonth={currentMonth} order={rowsOf(layout, "collections")} />
       )}
 
       {["settlement", "collections"].includes(tab) && (
         <PaceFormula meta={meta} monthLabel={monthLabel} />
       )}
+
+      {tab === "collections" && <CollectionsHistory runId={id} />}
 
       {tab === "case_ar" && <CaseAr runId={id} />}
 

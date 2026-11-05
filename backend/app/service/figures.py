@@ -62,6 +62,12 @@ def kpi_records(kpi: dict) -> list[dict]:
     return sorted(out, key=lambda r: (r["block"], r["group"]))
 
 
+def layout_records(layout: dict) -> list[dict]:
+    """{block: rows} -> one row per row of the client's sheet, with its place."""
+    return [{"section": section, "row": row, "order": i}
+            for section, rows in layout.items() for i, row in enumerate(rows)]
+
+
 def settlement_pace_records(paced: dict) -> list[dict]:
     """{block: {(group, week): paced}} -> one row per cell."""
     return sorted(
@@ -93,6 +99,7 @@ def all_figures(result) -> dict[str, list[dict]]:
         "cp_settled": cp_settled_records(result.cp_settled),
         "kpi": kpi_records(result.kpi),
         "settlement_month_weeks": getattr(result, "settlement_month_weeks", []) or [],
+        "layout": layout_records(getattr(result, "layout", None) or {}),
         "meta": [{"current_month": result.current_month,
                   "year": getattr(result, "year", None),
                   **period_meta(getattr(result, "period", None))}],

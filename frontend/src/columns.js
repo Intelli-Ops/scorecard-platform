@@ -51,6 +51,15 @@ export function amountPctPair(bucket, label, { current = false } = {}) {
   };
 }
 
+// A month's amount alone, shaped like amountPctPair, for a report with no Settlement %.
+export function amountOnly(bucket, label, { current = false } = {}) {
+  const className = current ? "current" : undefined;
+  return {
+    span: { label, span: 1, className },
+    columns: [col.money(bucket, "Amount", { className })],
+  };
+}
+
 // Assemble a list of pairs (and any plain columns) into the two rows a grouped-header table needs.
 export function assemble(lead, parts) {
   const columns = [lead];

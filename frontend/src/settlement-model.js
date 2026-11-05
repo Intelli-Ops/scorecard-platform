@@ -1,4 +1,6 @@
 // Settlement High-Level arithmetic, without React.
+import { inSheetOrder } from "./layout.js";
+
 export const TOTAL = "Total";
 
 const BLOCK_ORDER = ["in house", "board"];
@@ -21,8 +23,9 @@ export function splitBuckets(rows) {
   };
 }
 
-// One row per provider group, one cell per bucket, plus the two totals.
-export function pivot(rows, totals, block) {
+// One row per provider group, one cell per bucket, plus the two totals. Biggest first,
+// or the workbook's `order` (see layout.js) when the build recorded one.
+export function pivot(rows, totals, block, order = []) {
   const inBlock = rows.filter((r) => r.block === block);
   const { months, weeks } = splitBuckets(inBlock);
 
@@ -34,7 +37,9 @@ export function pivot(rows, totals, block) {
     g._total += r.amount;
     if (isWeek(r.bucket)) g._month += r.amount;
   }
-  const body = Object.values(byGroup).sort((a, b) => b._total - a._total);
+  const body = inSheetOrder(
+    Object.values(byGroup).sort((a, b) => b._total - a._total), order,
+    (group) => ({ group, _month: 0, _total: 0 }));
 
   const pctFor = {};
   for (const t of totals ?? []) {
@@ -82,7 +87,7 @@ export function withMonthWeeks(p, monthWeeks, block) {
 }
 
 // The Pace block: one row per group, one cell per week of the current month.
-export function pivotPace(pace, block) {
+export function pivotPace(pace, block, order = []) {
   const mine = (pace ?? []).filter((r) => r.block === block);
   if (!mine.length) return { weeks: [], rows: [] };
 
@@ -92,10 +97,30 @@ export function pivotPace(pace, block) {
   for (const r of mine) (byGroup[r.group] ??= { group: r.group })[r.bucket] = r.pace;
 
   const last = weeks[weeks.length - 1];
-  const body = Object.values(byGroup).sort((a, b) => (b[last] ?? 0) - (a[last] ?? 0));
+  const body = inSheetOrder(
+    Object.values(byGroup).sort((a, b) => (b[last] ?? 0) - (a[last] ?? 0)), order,
+    (group) => ({ group }));
   const total = { group: TOTAL };
   for (const w of weeks) total[w] = body.reduce((s, g) => s + (g[w] ?? 0), 0);
   return { weeks, rows: [...body, total] };
+}
+
+// CP Settled Cases as the All Providers workbook lays it out: one row, called `label`,
+// with each month across the top as # of Cases, Outstanding and Settlement Amount, then
+// the year's totals.
+export function cpAcross(cp, label) {
+  const mine = [...(cp ?? [])].sort((a, b) => a.month - b.month);
+  if (!mine.length) return { months: [], rows: [] };
+  const row = { group: label, _cases: 0, _outstanding: 0, _settled: 0 };
+  for (const r of mine) {
+    row[`m${r.month}_cases`] = r.cases;
+    row[`m${r.month}_outstanding`] = r.outstanding;
+    row[`m${r.month}_settled`] = r.settled;
+    row._cases += r.cases;
+    row._outstanding += r.outstanding;
+    row._settled += r.settled;
+  }
+  return { months: mine.map((r) => r.month), rows: [row] };
 }
 
 // Where the month is heading, per block, for the tiles.

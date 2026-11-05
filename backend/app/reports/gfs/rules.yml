@@ -168,7 +168,7 @@ delta:   # Phases 4 and 6 -> the Delta Comparison sheet
 # -
 collections:   # Phase 7 -> the Collection High-Level 2026 sheet
   # Verified against week 2026-W35.
-  sheet: "  Detail Payment Report"     # note the two leading spaces
+  sheet: "Detail Payment Report"       # spaces around a sheet name are ignored
   drop_case_types: [PI]
   gfs_type_value: gfs
   other_type_value: other client

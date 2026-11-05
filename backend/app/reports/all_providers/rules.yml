@@ -37,6 +37,11 @@ case_ar:
                      Closing Order, Validity, File Status,
                      " BILLED", " PAID", WRITEOFF, ADVANCE, OUTSTANDING]
 
+  # The Case AR sheet: one row per File Status, highest Outstanding first, and
+  # the client's own heading for each measure above (in the same order).
+  case_ar_headers: [BILLED, Paid, Write Off, Advance, Outstanding]
+  case_ar_sort: Outstanding
+
 # -
 delta:
   # PHASE 4 - the 15 combine columns.
@@ -129,7 +134,7 @@ delta:
 
 # -
 collections:
-  sheet: "  Detail Payment Report"     # note the two leading spaces
+  sheet: "Detail Payment Report"       # spaces around a sheet name are ignored
   # Case types left out of Collections.
   drop_case_types: []
   # "in payment type make 'board reps' & 'in house rep', 'settlement'" = fold them into settlement, not rename them alongside it.
@@ -380,6 +385,158 @@ kpi:
       - "Dorian Chiropractic 2"
       - "One & Only Chiro"
 
+# -
+# The screens' row order, block by block, as the client's Week-41 workbook has it:
+# Collection High-Level-2026 (In House, Board, Collections) and Delta Comparison-2026.
+# A group with figures and no row here is added at the end of its block.
+layout:
+  "In House":
+    - "Med-Legal"
+    - "Medvantage"
+    - "Artheon"
+    - "MH Express"
+    - "POS"
+    - "Pro Ivy"
+    - "United"
+    - "BayCo"
+    - "A Miles"
+    - "Southern California"
+    - "Russman"
+    - "DDM"
+    - "Desert Care"
+    - "IMR"
+    - "Basem A Attum"
+    - "T Curtis"
+    - "Mesa Care"
+    - "Concierge"
+    - "Life Pharmacy"
+    - "Lakewood"
+    - "Tulip Radiology"
+    - "Inland Empire Wellness"
+    - "JL Calpar Inc"
+    - "Accumen Healthcare"
+    - "Medbridge Pharmacy"
+    - "One & Only Chiro"
+    - "Credit Point"
+    - "365 Medical"
+    - "Alexander Pharmacy"
+    - "SUPPORT CLAIMS WEST"
+    - "United Services Plus"
+    - "Prospice Med"
+    - "Advance MD"
+    - "Dr Dorian"
+    - "Coastal Care"
+  "Board":
+    - "Med-Legal"
+    - "Medvantage"
+    - "Artheon"
+    - "MH Express"
+    - "POS"
+    - "United"
+    - "BayCo"
+    - "A Miles"
+    - "Southern California"
+    - "Russman"
+    - "DDM"
+    - "Desert Care"
+    - "IMR"
+    - "Basem A Attum"
+    - "T Curtis"
+    - "Mesa Care"
+    - "Concierge"
+    - "Life Pharmacy"
+    - "Lakewood"
+    - "Tulip Radiology"
+    - "Inland Empire Wellness"
+    - "JL Calpar Inc"
+    - "Accumen Healthcare"
+    - "Credit Point"
+    - "365 Medical"
+    - "Alexander Pharmacy"
+    - "Advance MD"
+    - "One & Only Chiro"
+    - "SUPPORT CLAIMS WEST"
+    - "United Services Plus"
+    - "BHIP"
+    - "Prospice Med"
+    - "Dr Dorian"
+  "collections":
+    - "Russman"
+    - "Medvantage"
+    - "Advance Care"
+    - "Artheon"
+    - "IMR"
+    - "Med-Legal"
+    - "A Miles"
+    - "Concierge"
+    - "DDM"
+    - "Mesa Care"
+    - "Desert Care"
+    - "T Curtis"
+    - "Basem A Attum"
+    - "JL Calpar Inc"
+    - "Lakewood"
+    - "Tulip Radiology"
+    - "Life Pharmacy"
+    - "Medbridge Pharmacy"
+    - "MH Express"
+    - "One & Only Chiro"
+    - "Bayco"
+    - "POS"
+    - "Inland Empire Wellness"
+    - "Accumen Healthcare"
+    - "United"
+    - "Credit Point"
+    - "Advance MD"
+    - "365 Medical"
+    - "Alexander Pharmacy"
+    - "Pro Ivy"
+    - "Southern California"
+    - "SUPPORT CLAIMS WEST"
+    - "United Services Plus"
+    - "Form and Function Physical Therapy P.C."
+    - "BHIP"
+    - "Prospice Med"
+    - "Coastal Care"
+    - "Dr Dorian"
+  "delta":
+    - "365 Medical"
+    - "Accumen Healthcare"
+    - "Alexander Pharmacy"
+    - "A Miles"
+    - "Artheon"
+    - "Basem A Attum"
+    - "Bayco"
+    - "Concierge"
+    - "Credit Point"
+    - "DDM"
+    - "Desert Care"
+    - "IMR"
+    - "Inland Empire Wellness"
+    - "JL Calpar Inc"
+    - "Lakewood"
+    - "Life Pharmacy"
+    - "Medbridge Pharmacy"
+    - "Med-Legal"
+    - "Medvantage"
+    - "Mesa Care"
+    - "MH Express"
+    - "One & Only Chiro"
+    - "POS"
+    - "Pro Ivy"
+    - "Russman"
+    - "Southern California"
+    - "T Curtis"
+    - "Tulip Radiology"
+    - "United"
+    - "SUPPORT CLAIMS WEST"
+    - "United Services Plus"
+    - "Prospice Med"
+    - "Coastal Care"
+    - "Dr Dorian"
+  # The one row of the CP Settled Cases block.
+  "cp":
+    - "Med-Legal"
 # -
 template:
   # Sheet names in the delivered workbook.

@@ -6,6 +6,7 @@ import fastexcel
 import polars as pl
 
 from . import REPORTS, load_rules
+from .reading import column_key, find_sheet, name_key
 
 CSV = ""                          # the sheet name a CSV's one table goes by
 # Raw Data columns the builds work out themselves rather than read from the Owner Case AR.
@@ -101,8 +102,10 @@ def _delta_checks(source_key: str, report_key: str | None):
 
 
 def _provider_ids(book, sheet: str, column: str) -> set[int]:
-    values = (book.load_sheet(sheet, header_row=0, use_columns=[column],
-                              dtypes={column: "string"}).to_polars()[column])
+    df = book.load_sheet(sheet, header_row=0, dtypes="string",
+                         use_columns=lambda c: column_key(c.name) == column_key(column)
+                         ).to_polars()
+    values = df[df.columns[0]]
     out = set()
     for v in values.drop_nulls().unique().to_list():
         try:
@@ -114,20 +117,26 @@ def _provider_ids(book, sheet: str, column: str) -> set[int]:
 
 def _near(name: str, names) -> str | None:
     """`name` as the file has it, if only the case or spaces differ."""
-    k = " ".join(str(name).split()).lower()
-    return next((n for n in names if " ".join(str(n).split()).lower() == k), None)
+    k = name_key(name)
+    return next((n for n in names if name_key(n) == k), None)
 
 
 def _open(path: Path, sheets):
-    """(the workbook or None for a CSV, its sheet names, the header row of each of
-    `sheets` it has)."""
+    """(the workbook or None for a CSV, its sheet names, {each of `sheets` it has:
+    (the name the file gives it, its header row)}). A sheet whose name differs
+    only in case or spaces counts as there, and the headings come back with the
+    spaces round them taken off, as the builds read them (reading.tidy_columns)."""
     if path.suffix.lower() == ".csv":
-        return None, [CSV], {CSV: pl.read_csv(path, n_rows=1, infer_schema=False).columns}
+        return None, [CSV], {CSV: (CSV, [column_key(c) for c in
+                                         pl.read_csv(path, n_rows=1,
+                                                     infer_schema=False).columns])}
     book = fastexcel.read_excel(str(path))
     names = list(book.sheet_names)
-    return book, names, {s: list(book.load_sheet(s, header_row=0, n_rows=1)
-                                 .to_polars().columns)
-                         for s in sheets if s in names}
+    found = {s: find_sheet(names, s) for s in sheets}
+    return book, names, {s: (f, [column_key(c) for c in
+                                 book.load_sheet(f, header_row=0, n_rows=1)
+                                 .to_polars().columns])
+                         for s, f in found.items() if f is not None}
 
 
 def check(source_key: str, path: Path, report_key: str | None = None) -> list[str]:
@@ -138,24 +147,21 @@ def check(source_key: str, path: Path, report_key: str | None = None) -> list[st
     except Exception as e:                    # not a workbook, or a damaged one
         return [f"the file could not be opened as a spreadsheet ({type(e).__name__})"]
     banned, providers = _delta_checks(source_key, report_key)
-    extra = [s for s in banned if s in names]
+    extra = [f for s in banned if (f := find_sheet(names, s)) is not None]
     if extra:
         return [f"it has the sheet(s) {', '.join(repr(s) for s in extra)}, so it looks like "
                 f"the MLCR workbook, not the WC one"]
     if source_key in LOOKS_LIKE and "Sheet1" in headers:
         cols, other = LOOKS_LIKE[source_key]
-        if all(c in headers["Sheet1"] for c in cols):
+        if all(c in headers["Sheet1"][1] for c in cols):
             return [f"it has {', '.join(repr(c) for c in cols)}, so it looks like {other}"]
     problems = []
     for sheet, cols in need.items():
         if sheet not in headers:
-            near = _near(sheet, names)
-            problems.append(
-                f"no sheet named '{sheet}'"
-                + (f" (there is '{near}' - rename it exactly)" if near else
-                   f" (the file has: {', '.join(repr(n) for n in names[:8])})"))
+            problems.append(f"no sheet named '{sheet}' (the file has: "
+                            f"{', '.join(repr(n) for n in names[:8])})")
             continue
-        have = headers[sheet]
+        have = headers[sheet][1]
         missing = [c for c in cols if c not in have]
         if missing:
             hints = [f"'{c}'" + (f" (the file has '{n}')" if (n := _near(c, have)) else "")
@@ -166,7 +172,7 @@ def check(source_key: str, path: Path, report_key: str | None = None) -> list[st
         return problems
     for sheet, (column, only, never) in providers.items():
         try:
-            ids = _provider_ids(book, sheet, column)
+            ids = _provider_ids(book, headers[sheet][0], column)
         except Exception as e:
             problems.append(f"the {column} column of '{sheet}' could not be read "
                             f"({type(e).__name__})")

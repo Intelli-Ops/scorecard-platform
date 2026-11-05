@@ -1,12 +1,15 @@
 // Collection High-Level arithmetic, without React.
+import { inSheetOrder } from "./layout.js";
+
 export const TOTAL = "Total";
 
 export const PAYMENT_TYPES = ["BILLING", "REBILLING", "APPEAL", "SETTLEMENT"];
 
 export { weekLabel } from "./format.js";
 
-// Rows arrive as Group x Week x PaymentType x Payment.
-export function pivotCollections(rows) {
+// Rows arrive as Group x Week x PaymentType x Payment. Biggest first, or the
+// workbook's `order` (see layout.js) when the build recorded one.
+export function pivotCollections(rows, order = []) {
   const weeks = [...new Set((rows ?? []).map((r) => Number(r.Week)))]
     .sort((a, b) => a - b);
   const types = PAYMENT_TYPES.filter((t) =>
@@ -21,8 +24,10 @@ export function pivotCollections(rows) {
     g._total += payment;
   }
 
-  const body = Object.values(byGroup).sort((a, b) => b._total - a._total);
-  if (!body.length) return { weeks, types, rows: [] };
+  if (!Object.keys(byGroup).length) return { weeks, types, rows: [] };
+  const body = inSheetOrder(
+    Object.values(byGroup).sort((a, b) => b._total - a._total), order,
+    (group) => ({ group, _total: 0 }));
 
   const total = { group: TOTAL, _total: 0 };
   for (const w of weeks) {
@@ -36,7 +41,7 @@ export function pivotCollections(rows) {
 }
 
 // The Collections Pace block.
-export function pivotCollectionsPace(pace) {
+export function pivotCollectionsPace(pace, order = []) {
   const rows = pace ?? [];
   if (!rows.length) return { weeks: [], rows: [] };
 
@@ -46,7 +51,9 @@ export function pivotCollectionsPace(pace) {
   for (const r of rows) (byGroup[r.group] ??= { group: r.group })[r.bucket] = r.pace;
 
   const last = weeks[weeks.length - 1];
-  const body = Object.values(byGroup).sort((a, b) => (b[last] ?? 0) - (a[last] ?? 0));
+  const body = inSheetOrder(
+    Object.values(byGroup).sort((a, b) => (b[last] ?? 0) - (a[last] ?? 0)), order,
+    (group) => ({ group }));
   const total = { group: TOTAL };
   for (const w of weeks) total[w] = body.reduce((s, g) => s + (g[w] ?? 0), 0);
   return { weeks, rows: [...body, total] };

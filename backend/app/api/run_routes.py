@@ -282,6 +282,16 @@ def get_case_ar(run_id: int, request: Request, group: str | None = None,
         _heavy.release()
 
 
+@router.get("/runs/{run_id}/collections-history")
+def get_collections_history(run_id: int, request: Request,
+                            user=Depends(current_user)) -> dict:
+    """The year's collections month by month, for under the Collections tab."""
+    from ..service import collection_history
+    with session() as s:
+        run = _readable(s.get(Run, run_id), user, request)
+        return collection_history.for_run(s, run)
+
+
 @router.get("/runs/{run_id}/tables/{name}/csv")
 def download_table(run_id: int, name: str, request: Request,
                    user=Depends(current_user)):

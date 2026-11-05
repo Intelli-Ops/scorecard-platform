@@ -482,6 +482,23 @@ thead tr.spans th.span.current .week-days { color: var(--green-hi); opacity: .8;
 .expand-month.open { background: var(--green); border-color: var(--green); color: #fff; }
 .expand-month.open:hover { background: var(--green-hi); border-color: var(--green-hi); }
 
+/* The A-Z button in a name column's heading: pale while the table is in its usual
+   order, filled while it is sorted A to Z. */
+.sort-head { display: inline-flex; align-items: center; gap: 8px; }
+.sort-az {
+  flex: none; padding: 0 7px; height: 18px; border-radius: 999px;
+  font: inherit; font-size: 10px; font-weight: 700; letter-spacing: .04em; line-height: 16px;
+  background: var(--green-soft); border: 1px solid var(--green-line); color: var(--green-hi);
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease,
+              transform .12s var(--ease);
+}
+.sort-az:hover { background: var(--green); border-color: var(--green); color: #fff; }
+.sort-az:active { transform: scale(.94); }
+.sort-az:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.sort-az.on { background: var(--green); border-color: var(--green); color: #fff; }
+.sort-az.on:hover { background: var(--green-hi); border-color: var(--green-hi); }
+
 /* A closed month opened into its weeks: one quiet tint, so the weeks read as a group. */
 th.span.opened { color: var(--teal); background: #EEF5F2; }
 thead th.opened { background: #EEF5F2; }

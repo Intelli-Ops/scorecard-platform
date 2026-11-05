@@ -2,13 +2,12 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 
-import fastexcel
 import polars as pl
 
 from ..cache import Cache
 from ..locate import SourceSet
 from ..notes import Note, info, warning
-from ..reading import FileRead, provider_list, timed_reader
+from ..reading import FileRead, load_sheet, provider_list, timed_reader
 from .core.case_ar import gfs_case_ids
 
 
@@ -40,15 +39,14 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
 
     owner_path = sources.optional("owner_case_ar")
     owner_ar = timed("owner_case_ar", "Combined Owner Case AR", owner_path,
-                     lambda: fastexcel.read_excel(str(owner_path))
-                     .load_sheet("Sheet1", header_row=0).to_polars())
+                     lambda: load_sheet(owner_path, "Sheet1", header_row=0))
 
     custom_path = sources.optional("custom_case_ar")
     custom_ar = timed("custom_case_ar", "Combined Custom Case AR", custom_path,
-                      lambda: fastexcel.read_excel(str(custom_path)).load_sheet(
-                          "Sheet1", header_row=0,
+                      lambda: load_sheet(
+                          custom_path, "Sheet1", header_row=0,
                           use_columns=["CASEID", "Closing Order", "Case_Validity",
-                                       "FileStatus", "Lien Filed"]).to_polars())
+                                       "FileStatus", "Lien Filed"]))
 
     providers = provider_list(rules)
     gfs_cases = None if owner_ar is None else gfs_case_ids(owner_ar, rules)
@@ -66,8 +64,8 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
         cols = list(spec["columns"].values())
         df = timed(
             f"delta_{sheet}", sheet, book,
-            lambda b=book, s=sheet, c=cols: fastexcel.read_excel(str(b)).load_sheet(
-                s, header_row=0, use_columns=c).to_polars(),
+            lambda b=book, s=sheet, c=cols: load_sheet(
+                b, s, header_row=0, use_columns=c),
             source_key=f"delta_{spec['workbook']}")
         if df is not None:
             delta_sheets[sheet] = df
@@ -80,21 +78,21 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
             continue
         delta_comments[src_sheet] = timed(
             f"delta_{book}_comments", f"{in_sheet} (comments)", path,
-            lambda p=path, s=in_sheet: fastexcel.read_excel(str(p)).load_sheet(
-                s, header_row=0,
-                use_columns=[ccfg["key"], *ccfg["columns"]]).to_polars())
+            lambda p=path, s=in_sheet: load_sheet(
+                p, s, header_row=0,
+                use_columns=[ccfg["key"], *ccfg["columns"]]))
 
     pay_path = sources.optional("payment_detail")
     payments = timed("payment_detail", "Payment Detail Report", pay_path,
-                     lambda: fastexcel.read_excel(str(pay_path)).load_sheet(
-                         rules["collections"]["sheet"], header_row=0).to_polars())
+                     lambda: load_sheet(
+                         pay_path, rules["collections"]["sheet"], header_row=0))
 
     hc_path = sources.optional("hearing_calendar")
     hearing_noi = timed("hearing_calendar", "Hearing Calendar", hc_path,
-                        lambda: fastexcel.read_excel(str(hc_path)).load_sheet(
-                            "NOI, CP Settlements", header_row=0,
+                        lambda: load_sheet(
+                            hc_path, "NOI, CP Settlements", header_row=0,
                             use_columns=["Hearing Date", "Outstanding",
-                                         "Settlement Amount"]).to_polars())
+                                         "Settlement Amount"]))
 
     sql_path = sources.optional("document_log")
     sql_doc = timed("document_log", "SQL document log", sql_path,
@@ -111,8 +109,8 @@ def read_gfs(sources: SourceSet, rules: dict, cache: Cache | None = None) -> Gfs
             "this week"))
     else:
         scorecard = timed("kpi_numbers", "KPI numbers", sc_path,
-                          lambda: fastexcel.read_excel(str(sc_path)).load_sheet(
-                              sc_cfg.get("sheet", 0), header_row=None).to_polars())
+                          lambda: load_sheet(
+                              sc_path, sc_cfg.get("sheet", 0), header_row=None))
 
     return GfsSources(owner_ar=owner_ar, custom_ar=custom_ar, gfs_cases=gfs_cases,
                       providers=providers, delta_sheets=delta_sheets,

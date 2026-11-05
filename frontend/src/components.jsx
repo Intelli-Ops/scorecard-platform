@@ -1,6 +1,7 @@
 // Shared components: password fields, cards, tiles, filters, tables, status labels and the pop-up window.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CapsIcon, CrossIcon, EyeIcon, EyeOffIcon } from "./icons";
+import { sortAtoZ } from "./sort-model";
 
 // Every password box in the app.
 export function PasswordInput({ onKeyDown, onKeyUp, onBlur, ...props }) {
@@ -207,6 +208,26 @@ export function DataTable({ columns, rows, empty = "Nothing to show",
   }, [spans, rows?.length, spanRows.length]);
   const top = (i) => (tops[i] != null ? { top: tops[i] } : undefined);
 
+  // A sortable column (`sortable: true`) has an A-Z button in its heading: on, its rows
+  // go A to Z, the Total and any section rows staying put; off, back to the order given.
+  const [sortKey, setSortKey] = useState(null);
+  const shown = sortKey && rows?.length
+    ? sortAtoZ(rows, sortKey, (r) => Boolean(isTotal?.(r) || section?.(r) || r._kind))
+    : rows;
+  const heading = (c) => {
+    if (!c.sortable) return c.label;
+    const on = sortKey === c.key;
+    const say = on ? "Back to the usual order" : "Sort A to Z";
+    return (
+      <span className="sort-head">
+        <span>{c.label}</span>
+        <button type="button" className={`sort-az${on ? " on" : ""}`} aria-pressed={on}
+                aria-label={say} title={say}
+                onClick={() => setSortKey(on ? null : c.key)}>A-Z</button>
+      </span>
+    );
+  };
+
   if (!rows?.length) return <div className="empty">{empty}</div>;
   return (
     <div className="scroll">
@@ -224,21 +245,21 @@ export function DataTable({ columns, rows, empty = "Nothing to show",
           <tr>{columns.map((c) => (
             <th key={c.key} className={cellClass(c)}
                 style={{ ...(c.width ? { width: c.width } : {}),
-                         ...(spanRows.length ? top(spanRows.length) : {}) }}>{c.label}</th>
+                         ...(spanRows.length ? top(spanRows.length) : {}) }}>{heading(c)}</th>
           ))}</tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => {
-            const heading = section?.(r);
-            if (heading) {
+          {shown.map((r, i) => {
+            const title = section?.(r);
+            if (title) {
               return (
                 <tr key={`section-${i}`}
                     className={["section", rowClass?.(r, i) ?? ""].filter(Boolean).join(" ")}>
-                  <td colSpan={columns.length}><div className="section-inner">{heading}</div></td>
+                  <td colSpan={columns.length}><div className="section-inner">{title}</div></td>
                 </tr>
               );
             }
-            const newGroup = groupBy && i > 0 && groupBy(r) !== groupBy(rows[i - 1]);
+            const newGroup = groupBy && i > 0 && groupBy(r) !== groupBy(shown[i - 1]);
             const cls = [isTotal?.(r) ? "total" : "",
                          newGroup ? "group-start" : "",
                          rowClass?.(r, i) ?? ""].filter(Boolean).join(" ");

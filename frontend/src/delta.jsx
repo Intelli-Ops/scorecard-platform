@@ -22,7 +22,7 @@ export default function Delta({ rows }) {
   const all = rows?.length ?? 0;
 
   const columns = useMemo(() => [
-    col.label("group", "Group", { width: 190, className: "sticky" }),
+    col.label("group", "Group", { width: 190, className: "sticky", sortable: true }),
     ...grid.buckets.map((b) => col.money(b, b)),
     col.strong("_total", "Grand Total"),
     total(col.count("_cases", "Cases")),

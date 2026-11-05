@@ -28,12 +28,22 @@ EMPTY = {
                  " PAID": pl.Float64, "WRITEOFF": pl.Float64, "ADVANCE": pl.Float64,
                  "OUTSTANDING": pl.Float64},
     "case_ar": {"File Status": pl.Utf8, "Count of Cases": pl.UInt32, "BILLED": pl.Float64,
-                "PAID": pl.Float64, "WRITEOFF": pl.Float64, "ADVANCE": pl.Float64,
-                "OUTSTANDING": pl.Float64},
+                "Paid": pl.Float64, "Write Off": pl.Float64, "Advance": pl.Float64,
+                "Outstanding": pl.Float64},
     "delta_comparison": {"Group": pl.Utf8, "Month": pl.Int8, "Total Settlement": pl.Float64,
                          "Pay Received - YES": pl.Float64, "Pay Received - NO": pl.Float64},
     "collections": {"Group": pl.Utf8, "Week": pl.Int32, "PT": pl.Utf8, "Payment": pl.Float64},
 }
+
+
+def sheet_layout(rules: dict, kpi_blocks: dict) -> dict[str, list[str]]:
+    """Each block's rows in the order the client's workbook lists them, for the
+    screens: rules.yml `layout`, then the KPI blocks (`kpi`) and each one's rows
+    (`kpi/SBR` and so on)."""
+    out = {k: [str(r) for r in rows or []] for k, rows in (rules.get("layout") or {}).items()}
+    out["kpi"] = list(kpi_blocks)
+    out.update({f"kpi/{name}": list(b.rows) for name, b in kpi_blocks.items()})
+    return out
 
 
 @dataclass
@@ -53,6 +63,7 @@ class RunResult:
     year: int = 0
     settlement_month_weeks: list = field(default_factory=list)
     period: Period | None = None
+    layout: dict = field(default_factory=dict)      # {block: its rows, in the sheet's order}
 
     notes: list[Note] = field(default_factory=list)
     seconds: float = 0.0
@@ -140,6 +151,7 @@ def run(src: ApSources, rules: dict, as_of: dt.date | None = None,
         settlement_grids=grids, cp_settled=cp, kpi=kpi, current_month=month,
         settlement_pace=paced, collections_pace=collections_paced, year=year,
         settlement_month_weeks=month_weeks, period=period,
+        layout=sheet_layout(rules, kpi_blocks),
         notes=sort_notes(notes),
         seconds=time.perf_counter() - t0,
     )
