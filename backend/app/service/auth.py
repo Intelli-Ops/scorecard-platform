@@ -2,10 +2,12 @@
 from __future__ import annotations
 import base64
 import datetime as dt
+import functools
 import hashlib
 import hmac
 import re
 import secrets
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
@@ -15,8 +17,12 @@ from ..config import settings
 from ..db.models import ROLE_LABELS, ROLES, OneTimeCode, Session, User
 from . import emails, mail, ratelimit
 
-EMAIL_DOMAIN = "@appedology.com"
-EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@appedology\.com$", re.IGNORECASE)
+# Any organisation's email - the group's companies each have their own domain. What
+# keeps strangers out is the code sent to the address and an admin's approval;
+# temporary inboxes are refused at sign-up (disposable_domains.txt).
+EMAIL_RE = re.compile(
+    r"^[a-z0-9._%+'-]+@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+EMAIL_MAX = 254
 APD_RE = re.compile(r"^APD-\d{4}$")
 
 MIN_PASSWORD = 8
@@ -60,12 +66,31 @@ class LoginRefused(AuthError):
         self.reason, self.locked_now = reason, locked_now
 
 
+@functools.lru_cache(maxsize=1)
+def _disposable() -> frozenset[str]:
+    """The temporary-email domains, read once."""
+    path = Path(__file__).with_name("disposable_domains.txt")
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return frozenset(d.strip().lower() for d in lines if d.strip() and not d.startswith("#"))
+
+
+def is_disposable(email: str) -> bool:
+    """Whether the address is at a temporary-email provider, or a subdomain of one."""
+    domain = email.rpartition("@")[2].lower()
+    blocked = _disposable() | settings.blocked_email_domains
+    labels = domain.split(".")
+    return any(".".join(labels[i:]) in blocked for i in range(len(labels) - 1))
+
+
 def clean_email(raw: str) -> str:
     email = (raw or "").strip().lower()
     if not email:
         raise AuthError("Enter your work email address.")
-    if not EMAIL_RE.match(email):
-        raise AuthError(f"Use your Appedology email - it must end {EMAIL_DOMAIN}.")
+    if len(email) > EMAIL_MAX or not EMAIL_RE.match(email):
+        raise AuthError("That does not look like an email address - check it for typos.")
+    if is_disposable(email):
+        raise AuthError("Temporary email addresses cannot be used. Sign up with your "
+                        "work email.")
     return email
 
 

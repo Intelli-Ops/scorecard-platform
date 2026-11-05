@@ -436,7 +436,7 @@ def test_the_current_scorecard_is_the_latest_approved_one(client):
     cards = {c["key"]: c for c in client.get("/api/scorecards/current").json()}
     gfs = cards["gfs"]
     assert gfs["run"]["id"] == old and gfs["run"]["week"] == "2026-W35"
-    assert gfs["run"]["approver_name"] == "tester"
+    assert gfs["run"]["approver_name"] == "Tester"          # named from the email, as the website shows it
     assert gfs["waiting"]["week"] == "2026-W36"
     assert cards["all_providers"]["run"] is None
 

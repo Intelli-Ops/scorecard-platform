@@ -65,7 +65,7 @@ def _too_many(key: str, rule: tuple[int, int], what: str) -> None:
 def rules() -> dict:
     """What the sign-up form should tell people before they get it wrong."""
     return {
-        "email_domain": auth.EMAIL_DOMAIN,
+        "email": "any work email; temporary addresses are refused",
         "apd_format": "APD-1234",
         "min_password": auth.MIN_PASSWORD,
     }

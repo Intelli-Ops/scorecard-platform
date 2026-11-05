@@ -36,3 +36,13 @@ test("a week of the month is written as the days it covers", () => {
   assert.equal(weekDays(spans, 10, 2), "");
   assert.equal(weekDays(undefined, 10, 1), "");      // a run built before week spans
 });
+
+import { personName } from "./format.js";
+
+test("a name is made from a work email when none is chosen", () => {
+  assert.equal(personName("ali.asghar@appedology.com"), "Ali Asghar");
+  assert.equal(personName("ASVA.KAMAL@appedology.com"), "Asva Kamal");
+  assert.equal(personName("sara_khan-2@appedology.com"), "Sara Khan 2");
+  assert.equal(personName("omar@appedology.com"), "Omar");
+  assert.equal(personName(null), "");
+});

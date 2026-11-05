@@ -11,6 +11,14 @@ export const pct = (n) =>
 export const count = (n) =>
   n == null ? "" : n.toLocaleString();
 
+// A person's name from their work email, the same way the server makes one:
+// "ali.asghar@appedology.com" is "Ali Asghar".
+export function personName(email) {
+  const local = String(email ?? "").split("@")[0];
+  const words = local.split(/[._\-+\s]+/).filter(Boolean);
+  return words.map((w) => w[0].toUpperCase() + w.slice(1).toLowerCase()).join(" ") || local;
+}
+
 export const bytes = (n) =>
   n < 1e6 ? `${(n / 1e3).toFixed(0)} KB` : `${(n / 1e6).toFixed(1)} MB`;
 

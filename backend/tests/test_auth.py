@@ -49,26 +49,50 @@ def auth(client, **over):
 
 
 @pytest.mark.parametrize("email", [
-    "someone@gmail.com",
-    "someone@appedology.co",
-    "someone@notappedology.com",
-    "someone@appedology.com.attacker.net",
     "no-at-sign",
     "",
+    "someone@",
+    "someone@localhost",              # no top-level domain
+    "two@at@signs.com",
+    "someone@-starts-with-a-dash.com",
+    "a" * 250 + "@lienedge.com",      # longer than an address can be
 ])
-def test_only_appedology_emails_are_accepted(client, email):
+def test_what_is_not_an_email_address_is_refused(client, email):
     r = signup(client, email=email)
     assert r.status_code == 400
-    assert "appedology.com" in r.json()["detail"].lower() or "email" in r.json()["detail"].lower()
+    assert "email" in r.json()["detail"].lower()
+
+
+@pytest.mark.parametrize("email", [
+    "someone@mailinator.com",
+    "someone@yopmail.com",
+    "someone@10minutemail.com",
+    "someone@guerrillamail.com",
+    "SOMEONE@Temp-Mail.org",          # any case
+    "someone@inbox.mailinator.com",   # a subdomain of one
+])
+def test_temporary_email_addresses_are_refused(client, email):
+    r = signup(client, email=email)
+    assert r.status_code == 400 and "Temporary email" in r.json()["detail"]
 
 
 @pytest.mark.parametrize("email", [
     "ali.asghar@appedology.com",
-    "ALI.ASGHAR@APPEDOLOGY.COM",       # case does not matter
+    "ALI.ASGHAR@APPEDOLOGY.COM",      # case does not matter
     "first+tag@appedology.com",
+    "sara.khan@lienedge.com",         # the group's other companies
+    "omar@mlm.co.uk",
+    "someone@gmail.com",              # a real inbox: an admin still approves it
 ])
-def test_appedology_emails_in_any_case_are_accepted(client, email):
-    assert signup(client, email=email).status_code == 200
+def test_any_real_email_can_sign_up(client, email):
+    assert signup(client, email=email).status_code == 200, signup(client, email=email).text
+
+
+def test_a_domain_can_be_refused_from_the_server_settings(client, monkeypatch):
+    monkeypatch.setattr(settings, "blocked_email_domains", frozenset({"newtempmail.com"}))
+    r = signup(client, email="someone@newtempmail.com")
+    assert r.status_code == 400 and "Temporary email" in r.json()["detail"]
+    assert signup(client, email="someone@lienedge.com").status_code == 200
 
 
 @pytest.mark.parametrize("apd", [
@@ -345,3 +369,12 @@ def test_signed_in_you_can_reach_the_app(client):
     headers = auth(client)
     assert client.get("/api/scorecards/current", headers=headers).status_code == 200
     assert client.get("/api/weeks", headers=headers).status_code == 403
+
+
+def test_a_name_is_made_from_the_work_email_until_one_is_chosen():
+    from app.db.models import User, name_from_email
+    assert name_from_email("ali.asghar@appedology.com") == "Ali Asghar"
+    assert name_from_email("ASVA.KAMAL@appedology.com") == "Asva Kamal"
+    assert name_from_email("omar@appedology.com") == "Omar"
+    assert User(email="ali.asghar@appedology.com").name == "Ali Asghar"
+    assert User(email="ali.asghar@appedology.com", display_name="Ali A.").name == "Ali A."

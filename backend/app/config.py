@@ -56,6 +56,12 @@ class Settings:
 
         self.require_https = os.environ.get("SCORECARD_REQUIRE_HTTPS", "0") == "1"
 
+        # Email domains sign-up refuses on top of the bundled temporary-email list,
+        # comma separated: SCORECARD_BLOCKED_EMAIL_DOMAINS=newtempmail.com,another.net
+        self.blocked_email_domains = frozenset(
+            d.strip().lower().lstrip("@") for d in
+            os.environ.get("SCORECARD_BLOCKED_EMAIL_DOMAINS", "").split(",") if d.strip())
+
         migrate_url = os.environ.get("SCORECARD_MIGRATE_DB", "").strip()
         self.migrate_database_url = database_url(migrate_url) if migrate_url else None
         self.auto_migrate = os.environ.get("SCORECARD_AUTO_MIGRATE", "1") == "1"

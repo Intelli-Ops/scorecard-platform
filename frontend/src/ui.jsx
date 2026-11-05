@@ -28,10 +28,15 @@ export function TableCard({ title, sub, right, columns, rows, spans,
   );
 }
 
-// A week's heading, with the days it covers beside it when they are known.
+// A week's heading, with the days it covers on a line of their own beneath it.
 export function WeekHead({ label, days }) {
   if (!days) return label;
-  return <>{label}<span className="week-days">{days}</span></>;
+  return (
+    <span className="week-head">
+      <span className="week-name">{label}</span>
+      <span className="week-days">{days}</span>
+    </span>
+  );
 }
 
 export { Stat };

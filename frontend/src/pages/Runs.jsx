@@ -1,7 +1,7 @@
 // Build history.
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api, when } from "../api";
+import { api, personName, when } from "../api";
 import { useAuth } from "../auth";
 import { useLoad } from "../hooks";
 import { REPORT_OPTIONS } from "../reports";
@@ -75,7 +75,7 @@ export default function Runs() {
               { key: "approved_by", label: "Approved by", nowrap: true,
                 render: (r) => r.approved_by
                   ? <span title={r.approved_by}>
-                      {r.approved_by.split("@")[0]}
+                      {personName(r.approved_by)}
                     </span>
                   : "-" },
               { key: "open", label: "Open", width: 96,

@@ -651,19 +651,75 @@ def test_a_wrong_file_can_be_taken_back(client):
     assert client.delete("/api/weeks/2026-W39/uploads/1").status_code == 404
 
 
-def test_a_file_a_build_has_read_cannot_be_taken_back(client, stand_in_pipeline):
-    """That build's record of what it was made from has to stay true."""
+def _have(client, report, key):
+    return next((h for h in client.get(f"/api/weeks/{WEEK}").json()["reports"][report]["have"]
+                 if h["source_key"] == key), None)
+
+
+def test_a_file_both_scorecards_were_built_from_can_be_deleted_and_the_builds_stay(
+        client, stand_in_pipeline):
+    """It leaves the week for both scorecards; the builds made from it keep saying
+    truly what they read, and the file is gone for good only once they are."""
+    hashes = upload_everything(client, "gfs") | upload_everything(client, "all_providers")
+    gfs = client.post(f"/api/runs?report=gfs&week={WEEK}").json()["run_id"]
+    _wait(client, gfs)
+    ap = client.post(f"/api/runs?report=all_providers&week={WEEK}").json()["run_id"]
+    _wait(client, ap)
+    hearing = _have(client, "gfs", "hearing_calendar")
+    assert hearing["read_by_a_build"] and hearing["builds"] == 2 and hearing["shared"]
+
+    viewer = account(client, "reader@appedology.com", "APD-0002")
+    assert client.delete(f"/api/weeks/{WEEK}/uploads/{hearing['id']}",
+                         headers=viewer).status_code == 403
+
+    r = client.delete(f"/api/weeks/{WEEK}/uploads/{hearing['id']}")
+    assert r.status_code == 200, r.text
+    assert r.json()["kept_for_builds"] == [gfs, ap] and r.json()["file_removed"] is False
+    for report in ("gfs", "all_providers"):
+        assert _have(client, report, "hearing_calendar") is None
+        assert "Hearing Calendar" in client.get(f"/api/weeks/{WEEK}").json()[
+            "reports"][report]["missing"]
+    assert log("upload.delete")[-1].detail["kept_for_builds"] == [gfs, ap]
+    assert client.delete(f"/api/weeks/{WEEK}/uploads/{hearing['id']}").status_code == 404
+
+    # The builds are untouched and still name the file they read.
+    review = client.get(f"/api/runs/{gfs}").json()
+    assert review["run"]["status"] == "review"
+    assert hashes["hearing_calendar"] in {i["sha256"] for i in review["inputs"]}
+    assert list(settings.object_dir.rglob(f"{hashes['hearing_calendar']}*"))
+
+    # A new copy goes in as usual; the next build reads it.
+    fresh = upload(client, "Hearing Calendar.xlsx", body=b"the right one")
+    assert _have(client, "gfs", "hearing_calendar")["sha256"] == fresh
+
+    # Once no build reads the deleted copy, it is gone for good.
+    assert client.delete(f"/api/runs/{gfs}").status_code == 200
+    assert client.delete(f"/api/runs/{ap}").status_code == 200
+    assert not list(settings.object_dir.rglob(f"{hashes['hearing_calendar']}*"))
+
+
+def test_deleting_a_case_ar_takes_it_from_its_own_scorecard_only(client, stand_in_pipeline):
+    upload_everything(client, "gfs")
+    upload_everything(client, "all_providers")
+    mine = _have(client, "gfs", "owner_case_ar")
+    assert not mine["shared"]
+    assert client.delete(f"/api/weeks/{WEEK}/uploads/{mine['id']}").status_code == 200
+    assert _have(client, "gfs", "owner_case_ar") is None
+    assert _have(client, "all_providers", "owner_case_ar") is not None
+
+
+def test_an_older_copy_a_build_read_does_not_come_back_when_the_newer_is_deleted(
+        client, stand_in_pipeline):
     upload_everything(client)
     run_id = client.post(f"/api/runs?report=gfs&week={WEEK}").json()["run_id"]
     _wait(client, run_id)
-    have = client.get(f"/api/weeks/{WEEK}").json()["reports"]["gfs"]["have"]
-    assert all(h["read_by_a_build"] for h in have)
-    r = client.delete(f"/api/weeks/{WEEK}/uploads/{have[0]['id']}")
-    assert r.status_code == 409 and f"build {run_id}" in r.json()["detail"]
+    upload(client, "Hearing Calendar.xlsx", body=b"a second copy")   # the build read the first
+    newer = _have(client, "gfs", "hearing_calendar")
+    assert not newer["read_by_a_build"]
 
-    viewer = account(client, "reader@appedology.com", "APD-0002")
-    assert client.delete(f"/api/weeks/{WEEK}/uploads/{have[0]['id']}",
-                         headers=viewer).status_code == 403
+    r = client.delete(f"/api/weeks/{WEEK}/uploads/{newer['id']}")
+    assert r.status_code == 200 and r.json()["kept_for_builds"] == [run_id]
+    assert _have(client, "gfs", "hearing_calendar") is None          # not the first copy back
 
 
 def test_a_file_name_too_long_to_store_is_refused_with_a_reason(client):

@@ -3,11 +3,11 @@ import { useState } from "react";
 import { api, stamp, when } from "../api";
 import { useAuth } from "../auth";
 import { useLoad } from "../hooks";
-import { Card, DataTable, ErrorBox, Loading } from "../components";
+import { Card, DataTable, ErrorBox, Loading, Modal } from "../components";
 import { Button, ConfirmButton, ConfirmPair, DeleteButton } from "../buttons";
 import { Stat, Stats } from "../ui";
-import { CheckIcon, CrossIcon, KeyIcon, LeaveIcon, PauseIcon, PlayIcon,
-         UnlockIcon } from "../icons";
+import { CheckIcon, CrossIcon, KeyIcon, LeaveIcon, PauseIcon, PlayIcon, SlidersIcon,
+         UnlockIcon, UploadRightsIcon } from "../icons";
 
 const STATUS = {
   unverified: ["", "Email not confirmed"],
@@ -93,8 +93,12 @@ export default function AdminUsers() {
             { key: "name", label: "Person", strong: true,
               render: (u) => (
                 <span className="who-cell">
-                  <span>{u.name}{u.id === me.id && <span className="muted"> · you</span>}</span>
-                  <span className="small muted">{u.email} · {u.apd_id}</span>
+                  <span title={`${u.name} · ${u.apd_id}`}>
+                    {u.name}
+                    <span className="muted small"> · {u.apd_id}</span>
+                    {u.id === me.id && <span className="muted"> · you</span>}
+                  </span>
+                  <span className="small muted" title={u.email}>{u.email}</span>
                 </span>
               ) },
             { key: "role", label: "Role",
@@ -102,7 +106,7 @@ export default function AdminUsers() {
             { key: "reports", label: "Scorecards",
               render: (u) => <AccessCell u={u} reports={reports} act={act} /> },
             { key: "uploads", label: "Uploads",
-              render: (u) => <UploadsCell u={u} reports={reports} act={act} /> },
+              render: (u) => <UploadsCell u={u} reports={reports} onSaved={reload} /> },
             { key: "status", label: "Status",
               render: (u) => {
                 const [tone, word] = STATUS[u.status] ?? ["", u.status];
@@ -178,7 +182,7 @@ function AccessCell({ u, reports, act }) {
   );
 }
 
-// The input names, short enough for a chip.
+// The input names, short enough for a tag.
 const INPUT_SHORT = {
   delta_wc: "Delta WC", delta_mlcr: "Delta MLCR",
   delta_wc_comments: "Delta WC comments", delta_mlcr_comments: "Delta MLCR comments",
@@ -186,52 +190,190 @@ const INPUT_SHORT = {
   document_log: "Document log", kpi_numbers: "KPI numbers",
   owner_case_ar: "Owner Case AR", custom_case_ar: "Custom Case AR",
 };
+const short = (s) => INPUT_SHORT[s.key] ?? s.label;
 
-// Which files an admin may upload: all of them, none, or the ones a system admin chose, by name.
-function UploadsCell({ u, reports, act }) {
+// How the upload rights window groups the files; any file not named here goes under "Other files".
+const FILE_GROUPS = [
+  ["Delta workbooks", ["delta_wc", "delta_mlcr", "delta_wc_comments", "delta_mlcr_comments"]],
+  ["Case ARs", ["owner_case_ar", "custom_case_ar"]],
+];
+
+// Every input once, with the scorecards that read it.
+function inputsOf(reports) {
+  const seen = new Map();
+  for (const r of reports) {
+    for (const s of r.sources) {
+      const x = seen.get(s.key) ?? { ...s, reports: [] };
+      x.reports.push(r);
+      seen.set(s.key, x);
+    }
+  }
+  return [...seen.values()];
+}
+
+function groupsOf(inputs) {
+  const byKey = new Map(inputs.map((s) => [s.key, s]));
+  const named = new Set(FILE_GROUPS.flatMap(([, keys]) => keys));
+  return [
+    ...FILE_GROUPS.map(([title, keys]) => [title, keys.map((k) => byKey.get(k)).filter(Boolean)]),
+    ["Other files", inputs.filter((s) => !named.has(s.key))],
+  ].filter(([, list]) => list.length);
+}
+
+// Which files an admin may upload, shown in the table: All files, No files, or the files by name.
+function UploadsSummary({ u, inputs }) {
+  if (u.uploads_all) return <span className="pill good">All files</span>;
+  if (!u.uploads.length) return <span className="pill">No files</span>;
+  return (
+    <span className="file-tags">
+      {inputs.filter((s) => u.uploads.includes(s.key)).map((s) => (
+        <span key={s.key} className="file-tag" title={s.label}>{short(s)}</span>
+      ))}
+    </span>
+  );
+}
+
+function UploadsCell({ u, reports, onSaved }) {
   const [open, setOpen] = useState(false);
   if (!u.is_admin) return <span className="muted small">None</span>;
-  const inputs = [...new Map(reports.flatMap((r) => r.sources)
-    .map((s) => [s.key, s])).values()];
-  const none = !u.uploads_all && !u.uploads.length;
-  const summary = u.uploads_all ? "All files" : none ? "No files"
-    : inputs.filter((s) => u.uploads.includes(s.key))
-        .map((s) => INPUT_SHORT[s.key] ?? s.label).join(", ");
-  if (!u.can.uploads) {
-    return <span className={`small${none ? " muted" : ""}`}>{summary}</span>;
+  const inputs = inputsOf(reports);
+  if (!u.can.uploads) return <UploadsSummary u={u} inputs={inputs} />;
+  return (
+    <span className="uploads-cell">
+      <UploadsSummary u={u} inputs={inputs} />
+      <Button size="sm" tone="quiet" icon={<SlidersIcon />} onClick={() => setOpen(true)}
+              title={`Choose which files ${u.name || u.email} may upload`}>
+        Edit
+      </Button>
+      {open && <UploadRights u={u} inputs={inputs} onSaved={onSaved}
+                             onClose={() => setOpen(false)} />}
+    </span>
+  );
+}
+
+const MODES = [
+  { value: "all", title: "All files",
+    text: "Every file the scorecards read, and any added later." },
+  { value: "some", title: "Chosen files", text: "Only the files you tick below." },
+  { value: "none", title: "No files",
+    text: "Uploads nothing. Building and approving stay as they are." },
+];
+
+// The upload rights window: all files, none, or the ones ticked. Nothing changes until Save.
+function UploadRights({ u, inputs, onClose, onSaved }) {
+  const [mode, setMode] = useState(u.uploads_all ? "all" : u.uploads.length ? "some" : "none");
+  const [picked, setPicked] = useState(() => new Set(u.uploads_all ? [] : u.uploads));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const who = u.name || u.email;
+
+  // What Save sends: null for every file, [] for none, otherwise the ticked keys.
+  const ticked = inputs.filter((s) => picked.has(s.key)).map((s) => s.key);
+  const sends = mode === "all" ? null : mode === "none" ? []
+    : ticked.length === inputs.length ? null : ticked;
+  const before = u.uploads_all ? null
+    : inputs.filter((s) => u.uploads.includes(s.key)).map((s) => s.key);
+  const changed = JSON.stringify(sends) !== JSON.stringify(before);
+
+  const tick = (keys, on) => setPicked((was) => {
+    const next = new Set(was);
+    for (const k of keys) { if (on) next.add(k); else next.delete(k); }
+    return next;
+  });
+
+  async function save() {
+    setBusy(true); setError(null);
+    try { await api.setUploadAccess(u.id, sends); await onSaved(); onClose(); }
+    catch (e) { setError(e); setBusy(false); }
   }
 
-  const set = (next) => act(() => api.setUploadAccess(
-    u.id, next.length === inputs.length ? null : next));
+  const note = mode === "all" ? `${who} can upload every file.`
+    : mode === "none" ? `${who} will not be able to upload any file.`
+    : !ticked.length ? "Nothing is ticked, so this saves as No files."
+    : ticked.length === inputs.length ? "Every file is ticked, so this saves as All files."
+    : `${who} can upload only the ${ticked.length === 1 ? "file" : "files"} ticked.`;
+
   return (
-    <span className="who-cell">
-      <span className="row tight">
-        <span className={`small${none ? " muted" : ""}`}>{summary}</span>
-        <Button size="sm" tone="quiet" onClick={() => setOpen(!open)}
-                aria-expanded={open}>{open ? "Done" : "Choose"}</Button>
-      </span>
-      {open && (
-        <span className="chips wrap" style={{ marginTop: 6 }}>
-          <button type="button" className={`chip${u.uploads_all ? " on" : ""}`}
-                  aria-pressed={u.uploads_all} onClick={act(() => api.setUploadAccess(u.id, null))}
-                  title="Every file, now and any added later">All files</button>
-          <button type="button" className={`chip${none ? " on" : ""}`}
-                  aria-pressed={none} onClick={act(() => api.setUploadAccess(u.id, []))}
-                  title="This admin uploads nothing until files are chosen">No files</button>
-          {inputs.map((s) => {
-            const on = !u.uploads_all && u.uploads.includes(s.key);
-            const base = u.uploads_all ? [] : u.uploads;
-            const next = on ? base.filter((k) => k !== s.key) : [...base, s.key];
+    <Modal title="Upload rights" icon={<UploadRightsIcon />} width={600}
+           sub={<>{u.name && <strong>{u.name}</strong>}{u.name && " · "}{u.email}</>}
+           onClose={onClose} locked={busy}
+           footer={<>
+             <span className="modal-note">{note}</span>
+             <Button tone="quiet" onClick={onClose} disabled={busy}>Cancel</Button>
+             <Button tone="primary" onClick={save} disabled={!changed} busy={busy}
+                     busyLabel="Saving…">Save</Button>
+           </>}>
+      {error && <div className="modal-error">{String(error.message ?? error)}</div>}
+
+      <div className="choice-grid" role="radiogroup" aria-label="Which files">
+        {MODES.map((m) => (
+          <button key={m.value} type="button" role="radio" aria-checked={mode === m.value}
+                  className={`choice${mode === m.value ? " on" : ""}`}
+                  onClick={() => setMode(m.value)}>
+            <span className="choice-top">
+              <span className="choice-dot" aria-hidden="true" />
+              <span className="choice-title">{m.title}</span>
+            </span>
+            <span className="choice-text">{m.text}</span>
+          </button>
+        ))}
+      </div>
+
+      {mode === "some" && (
+        <div className="pick-files">
+          <div className="pick-bar">
+            <span className="small muted">
+              {ticked.length ? `${ticked.length} ticked` : "Tick the files this admin uploads"}
+            </span>
+            <span className="row tight">
+              <Button tone="link" size="sm" onClick={() => tick(inputs.map((s) => s.key), true)}>
+                Tick all
+              </Button>
+              <span className="muted">·</span>
+              <Button tone="link" size="sm" onClick={() => setPicked(new Set())}>Clear</Button>
+            </span>
+          </div>
+          {groupsOf(inputs).map(([title, list]) => {
+            const all = list.every((s) => picked.has(s.key));
             return (
-              <button key={s.key} type="button" className={`chip${on ? " on" : ""}`}
-                      aria-pressed={on} title={s.label} onClick={set(next)}>
-                {INPUT_SHORT[s.key] ?? s.label}
-              </button>
+              <div key={title} className="pick-group">
+                <div className="pick-group-head">
+                  <h3>{title}</h3>
+                  <Button tone="link" size="sm"
+                          onClick={() => tick(list.map((s) => s.key), !all)}>
+                    {all ? "Untick these" : "Tick these"}
+                  </Button>
+                </div>
+                {list.map((s) => {
+                  const on = picked.has(s.key);
+                  return (
+                    <label key={s.key} className={`check-row${on ? " on" : ""}`}>
+                      <input type="checkbox" checked={on}
+                             onChange={(e) => tick([s.key], e.target.checked)} />
+                      <span className="check-box" aria-hidden="true">
+                        <svg width="10" height="10" viewBox="0 0 10 10">
+                          <path d="M2 5.2 4.1 7.3 8 3" fill="none" stroke="currentColor"
+                                strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                      <span className="check-text">
+                        <span className="check-name">{short(s)}</span>
+                        <span className="check-sub">{s.label}</span>
+                      </span>
+                      <span className="check-tags">
+                        {s.reports.map((r) => (
+                          <span key={r.key} className={`tagline ${r.key}`}>{r.short}</span>
+                        ))}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
             );
           })}
-        </span>
+        </div>
       )}
-    </span>
+    </Modal>
   );
 }
 

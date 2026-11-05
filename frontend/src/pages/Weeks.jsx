@@ -4,10 +4,11 @@ import { useNavigate } from "react-router-dom";
 import { api, bytes, when } from "../api";
 import { useAuth } from "../auth";
 import WorkingDays from "../WorkingDays";
-import { Card, DataTable, ErrorBox, Loading, Picker }
+import { Card, DataTable, ErrorBox, Loading, Modal, Picker }
   from "../components";
 import { Button, DeleteButton } from "../buttons";
-import { REPORT_OPTIONS } from "../reports";
+import { LockIcon, TrashIcon, UploadIcon } from "../icons";
+import { REPORT_OPTIONS, reportShort } from "../reports";
 import { useLoad } from "../hooks";
 
 // Uploading a week.
@@ -31,6 +32,7 @@ export default function Weeks() {
   const [over, setOver] = useState(false);
   const [building, setBuilding] = useState(null);
   const [sendingAs, setSendingAs] = useState(null);
+  const [deleting, setDeleting] = useState(null);     // the file the delete window asks about
   const fileInput = useRef();
   const validWeek = WEEK_RE.test(week);
   const mine = new Set(user.uploads ?? []);       // the inputs this account may upload
@@ -104,15 +106,18 @@ export default function Weeks() {
     } catch (e) { setError(e); }
   }
 
+  // Throws, so the confirmation window can say what went wrong.
   async function removeFile(id) {
-    try {
-      setError(null);
-      const r = await api.removeUpload(week, id);
-      setResult(null);
-      statusLoad.setData(r.status);
-      await weeksLoad.reload();
-    } catch (e) { setError(e); }
+    setError(null);
+    const r = await api.removeUpload(week, id);
+    setResult(null);
+    statusLoad.setData(r.status);
+    await weeksLoad.reload();
   }
+
+  // The scorecards a file is listed under - both, for a shared file.
+  const listedIn = (id) => Object.entries(status?.reports ?? {})
+    .filter(([, r]) => r.have.some((h) => h.id === id)).map(([k]) => reportShort(k));
 
   return (
     <>
@@ -262,42 +267,51 @@ export default function Weeks() {
                     render: (h) => when(h.uploaded_at) },
                   { key: "size_bytes", label: "Size", num: true,
                     render: (h) => bytes(h.size_bytes) },
-                  { key: "id", label: "",
-                    render: (h) => (h.read_by_a_build
-                      ? <span className="small muted"
-                              title="A build read this file. Delete that build to remove it.">
-                          used by a build
-                        </span>
-                      : !mine.has(h.source_key) ? null
-                      : <DeleteButton size="sm" label="Remove"
-                                      confirm="Confirm remove"
-                                      onConfirm={() => removeFile(h.id)}
-                                      title={`Remove ${h.filename} from ${week}`} />) },
+                  { key: "id", label: "", width: 52,
+                    render: (h) => (mine.has(h.source_key) && (
+                      <button type="button" className="icon-btn danger"
+                              aria-label={`Delete ${h.filename}`}
+                              title={`Delete ${h.filename} from ${week}`}
+                              onClick={() => setDeleting(h)}>
+                        <TrashIcon />
+                      </button>
+                    )) },
                 ]}
                 rows={r.have}
                 empty="Nothing uploaded for this week yet."
               />
               {r.missing.length > 0 && (
-                <div style={{ padding: "14px 22px", borderTop: "1px solid var(--line)" }}>
-                  <h3>Not in yet</h3>
-                  <div className="small muted" style={{ marginBottom: 6 }}>
-                    You can build without these: the parts that need them show no data.
-                    {user.is_admin && r.missing_files
-                      && " Upload one under any name: its sheets and columns are checked first."}
+                <div className="missing">
+                  <div className="missing-head">
+                    <h3>Not in yet <span className="missing-count">{r.missing.length}</span></h3>
+                    <div className="small muted">
+                      You can build without these: the parts that need them show no data.
+                      {user.is_admin && r.missing_files
+                        && " Upload one under any name, or drop it on its row: its sheets and columns are checked first."}
+                    </div>
                   </div>
-                  {r.missing_files && user.is_admin
-                    ? r.missing_files.map((m) => (
-                      <MissingFile key={m.key} file={m} disabled={progress != null}
-                                   allowed={mine.has(m.key)}
-                                   busy={sendingAs === m.key}
-                                   onPick={(f) => send([f], {
-                                     key: m.key,
-                                     forReport: m.per_report ? key : undefined,
-                                   })} />
-                    ))
-                    : r.missing.map((m) => (
-                      <div key={m} className="small muted">{m}</div>
-                    ))}
+                  <ul className="missing-list">
+                    {r.missing_files && user.is_admin
+                      ? r.missing_files.map((m) => (
+                        <MissingFile key={m.key} file={m} reportShort={reportShort(key)}
+                                     disabled={progress != null}
+                                     allowed={mine.has(m.key)}
+                                     busy={sendingAs === m.key}
+                                     progress={sendingAs === m.key ? progress : null}
+                                     onPick={(f) => send([f], {
+                                       key: m.key,
+                                       forReport: m.per_report ? key : undefined,
+                                     })} />
+                      ))
+                      : r.missing.map((m) => (
+                        <li key={m} className="missing-row">
+                          <FileBadge exts={[]} />
+                          <span className="missing-text">
+                            <span className="missing-name">{m}</span>
+                          </span>
+                        </li>
+                      ))}
+                  </ul>
                 </div>
               )}
             </Card>
@@ -306,35 +320,141 @@ export default function Weeks() {
       ) : validWeek ? <Loading what="Checking the week" /> : (
         <div className="empty">Type a week as 2026-W38.</div>
       )}
+
+      {deleting && (
+        <DeleteFile file={deleting} week={week} listedIn={listedIn(deleting.id)}
+                    onDelete={() => removeFile(deleting.id)}
+                    onClose={() => setDeleting(null)} />
+      )}
     </>
   );
 }
 
-// One input that is not in yet, with a button to send a file as it whatever its name.
-function MissingFile({ file, onPick, busy, disabled, allowed }) {
+// Asks before a file is deleted, and says plainly what will and will not change.
+function DeleteFile({ file, week, listedIn, onDelete, onClose }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const where = listedIn.length > 1 ? `${listedIn.join(" and ")} scorecards`
+    : `${listedIn[0] ?? "its"} scorecard`;
+  const n = file.builds ?? 0;
+
+  async function go() {
+    setBusy(true); setError(null);
+    try { await onDelete(); onClose(); }
+    catch (e) { setError(e); setBusy(false); }
+  }
+
+  return (
+    <Modal title="Delete this file?" icon={<TrashIcon />} tone="danger" width={520}
+           sub={file.filename} onClose={onClose} locked={busy}
+           footer={<>
+             <span className="modal-note" />
+             <Button tone="quiet" onClick={onClose} disabled={busy}>Cancel</Button>
+             <Button tone="danger" solid icon={<TrashIcon />} onClick={go}
+                     busy={busy} busyLabel="Deleting…">Delete file</Button>
+           </>}>
+      {error && <div className="modal-error">{String(error.message ?? error)}</div>}
+      <ul className="facts">
+        <li className="fact gone">
+          <span className="fact-mark" aria-hidden="true">−</span>
+          <span>
+            Removed from the <strong>{where}</strong> for {week}.
+            {listedIn.length > 1 && " Both use this one file."}
+          </span>
+        </li>
+        <li className="fact">
+          <span className="fact-mark" aria-hidden="true">↑</span>
+          <span>It moves to <strong>Not in yet</strong>, so the right one can be uploaded in
+            its place. The next build will not use it.</span>
+        </li>
+        <li className="fact kept">
+          <span className="fact-mark" aria-hidden="true">✓</span>
+          <span>
+            {n
+              ? <><strong>{n === 1 ? "The scorecard" : `The ${n} scorecards`} already built
+                  from it</strong> {n === 1 ? "stays" : "stay"} exactly as {n === 1 ? "it is" : "they are"},
+                  approved ones included. Build again to use a new file.</>
+              : "No scorecard has been built from it yet."}
+          </span>
+        </li>
+      </ul>
+    </Modal>
+  );
+}
+
+// The file's kind as a small coloured badge: XLS for a workbook, CSV for a table.
+function FileBadge({ exts }) {
+  const csv = exts.length > 0 && exts.every((x) => x === ".csv");
+  const kind = !exts.length ? "file" : csv ? "csv" : "xls";
+  return (
+    <span className={`file-badge ${kind}`} aria-hidden="true">
+      <span>{kind === "file" ? "" : kind.toUpperCase()}</span>
+    </span>
+  );
+}
+
+const extList = (exts) => exts.map((x) => x.slice(1).toUpperCase()).join(" or ");
+
+// One input that is not in yet: its name, what kind of file it takes, and an Upload button -
+// or drop the file on the row. Either way the file is taken as this input, whatever it is called.
+function MissingFile({ file, reportShort, onPick, busy, progress, disabled, allowed }) {
   const input = useRef();
+  const [over, setOver] = useState(false);
+  const meta = [`${extList(file.exts)} file`,
+                file.per_report ? `${reportShort}'s own copy` : null,
+                "any file name"].filter(Boolean).join(" · ");
+
   if (!allowed) {
     return (
-      <div className="spread" style={{ padding: "4px 0" }}>
-        <span className="small muted">{file.label}</span>
-        <span className="small muted">another admin uploads this</span>
-      </div>
+      <li className="missing-row locked">
+        <FileBadge exts={file.exts} />
+        <span className="missing-text">
+          <span className="missing-name">{file.label}</span>
+          <span className="missing-meta">{meta}</span>
+        </span>
+        <span className="missing-lock" title="A system admin has given this file to another admin">
+          <LockIcon /> Another admin uploads this
+        </span>
+      </li>
     );
   }
+
+  const drop = !disabled ? {
+    onDragOver: (e) => { e.preventDefault(); setOver(true); },
+    onDragLeave: () => setOver(false),
+    onDrop: (e) => {
+      e.preventDefault(); setOver(false);
+      const f = e.dataTransfer.files?.[0];
+      if (f) onPick(f);
+    },
+  } : {};
+
   return (
-    <div className="spread" style={{ padding: "4px 0" }}>
-      <span className="small muted">{file.label}</span>
+    <li className={`missing-row${over ? " over" : ""}${busy ? " busy" : ""}`} {...drop}>
+      <FileBadge exts={file.exts} />
+      <span className="missing-text">
+        <span className="missing-name">{file.label}</span>
+        <span className="missing-meta">
+          {busy ? "Checking its sheets and columns…" : over ? "Drop to upload it as this file" : meta}
+        </span>
+      </span>
       <input ref={input} type="file" hidden accept={file.exts.join(",")}
              onChange={(e) => {
                const f = e.target.files?.[0];
                e.target.value = "";
                if (f) onPick(f);
              }} />
-      <Button size="sm" disabled={disabled} busy={busy} busyLabel="Checking…"
+      <Button size="sm" tone="go" icon={busy ? <span className="spinner" /> : <UploadIcon />}
+              disabled={disabled} busy={busy} busyLabel="Checking…"
               onClick={() => input.current.click()}
               title={`Choose the ${file.label} file, whatever it is called`}>
         Upload
       </Button>
-    </div>
+      {busy && progress != null && (
+        <span className="missing-progress" aria-hidden="true">
+          <span style={{ width: `${Math.max(progress, 0.04) * 100}%` }} />
+        </span>
+      )}
+    </li>
   );
 }

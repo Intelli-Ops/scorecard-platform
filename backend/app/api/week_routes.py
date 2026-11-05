@@ -57,7 +57,8 @@ def list_weeks() -> list[dict]:
     """Every week that has had anything uploaded, newest first."""
     with session() as s:
         weeks = [w for (w,) in s.execute(
-            select(Upload.week).distinct().order_by(Upload.week.desc()))]
+            select(Upload.week).where(Upload.withdrawn_at.is_(None))
+            .distinct().order_by(Upload.week.desc()))]
         return [week_status(s, w) for w in weeks]
 
 
@@ -166,12 +167,12 @@ def upload(week: str, request: Request,
 @router.delete("/weeks/{week}/uploads/{upload_id}")
 def remove_upload(week: str, upload_id: int, request: Request,
                   user=Depends(require_admin)) -> dict:
-    """Take back one uploaded file - the wrong one, sent by mistake - without
-    deleting the week."""
+    """Delete one file from the week - from both scorecards when they share it -
+    without deleting the week. Scorecards already built from it stay as they are."""
     _week(week)
     with session() as s:
         row = s.get(Upload, upload_id)
-        if row is None or row.week != week:
+        if row is None or row.week != week or row.withdrawn_at is not None:
             raise HTTPException(404, "No such file in this week.")
         if row.source_key not in user.uploads:
             spec = source(row.source_key)
@@ -181,12 +182,13 @@ def remove_upload(week: str, upload_id: int, request: Request,
                     NOT_YOURS.format(label=label)
                     + ", so it cannot take this file back either.")
         try:
-            gone = runner.remove_upload(s, row)
+            gone = runner.remove_upload(s, row, by=user.email)
         except ValueError as e:
             raise HTTPException(409, str(e))
         audit.record("upload.delete", db=s, request=request, user=user,
                      target=week, detail={"file": gone["filename"],
-                                          "sha256": gone["sha256"]})
+                                          "sha256": gone["sha256"],
+                                          "kept_for_builds": gone["kept_for_builds"]})
         return gone | {"status": week_status(s, week)}
 
 

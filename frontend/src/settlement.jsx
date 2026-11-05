@@ -1,12 +1,14 @@
 // The Settlement High-Level tab.
 import { useMemo, useState } from "react";
 import { bucketLabel, money, weekDays } from "./api";
-import { TOTAL, amountPctPair, assemble, col } from "./columns";
+import { TOTAL, amountPctPair, col } from "./columns";
 import { Stat, Stats, TableCard, WeekHead } from "./ui";
 import { bucketNum, monthToDate, paceTotals, pivot, pivotPace, sortBlocks,
          withMonthWeeks } from "./settlement-model";
 
 const GROUP = col.label("group", "Group", { width: 186, className: "sticky" });
+const MONTH_FULL = ["", "January", "February", "March", "April", "May", "June", "July",
+                    "August", "September", "October", "November", "December"];
 
 function Block({ title, sub, rows, totals, block, monthLabel, pace, monthWeeks,
                  spans: weekSpans, currentMonth }) {
@@ -24,43 +26,69 @@ function Block({ title, sub, rows, totals, block, monthLabel, pace, monthWeeks,
   const { columns, spans } = useMemo(() => {
     const week = (w, month) => (
       <WeekHead label={bucketLabel(w)} days={weekDays(weekSpans, month, bucketNum(w))} />);
-    const monthHead = (m) => {
-      const weeks = p.weeksOf[m];
-      if (!weeks?.length) return bucketLabel(m);
+    const isOpen = (m) => open.has(m) && p.weeksOf[m]?.length > 0;
+
+    // A closed month's name, with the round + (or -) that opens it into its weeks.
+    const monthHead = (m, label) => {
+      if (!p.weeksOf[m]?.length) return label;
       const shut = !open.has(m);
+      const say = shut ? `Open ${MONTH_FULL[bucketNum(m)]} into its weeks`
+                       : `Close ${MONTH_FULL[bucketNum(m)]} back to its total`;
       return (
-        <>
-          {bucketLabel(m)}{shut ? "" : " total"}
-          <button type="button" className="expand-month" onClick={() => toggle(m)}
-                  aria-expanded={!shut}
-                  title={shut ? `Open ${bucketLabel(m)} into its weeks`
-                              : `Close ${bucketLabel(m)} back to its total`}>
-            {shut ? "+" : "−"}
+        <span className="month-head">
+          <span>{label}</span>
+          <button type="button" className={`expand-month${shut ? "" : " open"}`}
+                  onClick={() => toggle(m)} aria-expanded={!shut}
+                  aria-label={say} title={say}>
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+              <path d={shut ? "M5 1.8v6.4M1.8 5h6.4" : "M1.8 5h6.4"} fill="none"
+                    stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            </svg>
           </button>
-        </>
+        </span>
       );
     };
-    const parts = [
-      ...p.months.flatMap((m) => [
-        ...(open.has(m) ? p.weeksOf[m] ?? [] : []).map((w) => {
-          const pair = amountPctPair(`${m}${w}`, week(w, bucketNum(m)));
-          return { ...pair, span: { ...pair.span, className: "opened" } };
-        }),
-        amountPctPair(m, monthHead(m)),
-      ]),
-      ...p.weeks.map((w) => amountPctPair(w, week(w, currentMonth), { current: true })),
-    ];
-    if (p.weeks.length) {
-      parts.push({
-        spanLabel: monthLabel ?? "This month", spanClass: "current",
-        column: col.strong("_month", "Month total", { className: "current" }),
-      });
+
+    // With a month open, the headings take two rows: the month over all its weeks on
+    // the first, each week (and the month's total) beneath it on the second. Every
+    // other heading stands the height of both.
+    const twoRows = p.months.some(isOpen);
+    const tall = twoRows ? 2 : 1;
+    const columns = [GROUP];
+    const first = [{ label: "", span: 1, rowSpan: tall, className: "lead" }];
+    const second = [];
+    const add = ({ span, columns: cols }, extra = "") => {
+      columns.push(...cols);
+      first.push({ ...span, rowSpan: tall,
+                   className: [span.className, extra].filter(Boolean).join(" ") });
+    };
+
+    for (const m of p.months) {
+      if (!isOpen(m)) { add(amountPctPair(m, monthHead(m, bucketLabel(m)))); continue; }
+      const weeks = p.weeksOf[m];
+      first.push({ label: monthHead(m, `${MONTH_FULL[bucketNum(m)]}`),
+                   span: 2 * (weeks.length + 1), className: "opened month-group" });
+      for (const w of weeks) {
+        const pair = amountPctPair(`${m}${w}`, null);
+        columns.push(...pair.columns.map((c) => ({ ...c, className: "opened" })));
+        second.push({ label: week(w, bucketNum(m)), span: 2, className: "opened" });
+      }
+      const total = amountPctPair(m, null);
+      columns.push(...total.columns.map((c) => ({ ...c, className: "opened opened-total" })));
+      second.push({ label: `${bucketLabel(m)} total`, span: 2,
+                    className: "opened opened-total" });
     }
-    parts.push({
-      spanLabel: "Grand total",
-      column: col.strong("_total", "Year to date"),
-    });
-    return assemble(GROUP, parts);
+    for (const w of p.weeks) {
+      add(amountPctPair(w, week(w, currentMonth), { current: true }));
+    }
+    if (p.weeks.length) {
+      columns.push(col.strong("_month", "Month total", { className: "current" }));
+      first.push({ label: monthLabel ?? "This month", span: 1, rowSpan: tall,
+                   className: "current" });
+    }
+    columns.push(col.strong("_total", "Year to date"));
+    first.push({ label: "Grand total", span: 1, rowSpan: tall });
+    return { columns, spans: twoRows ? [first, second] : first };
   }, [p, monthLabel, open, weekSpans, currentMonth]);
 
   const paceColumns = useMemo(() => [

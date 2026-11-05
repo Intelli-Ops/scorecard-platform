@@ -264,19 +264,31 @@ def _next_seq(session: Session, run: Run) -> int:
 
 
 def remove_upload(session: Session, upload: Upload,
-                  objects: FileStore | None = None) -> dict:
-    """Take back one uploaded file - the wrong one, sent by mistake."""
-    readers = session.execute(
-        select(RunInput.run_id).where(RunInput.upload_id == upload.id)
-    ).scalars().all()
-    if readers:
-        raise ValueError(
-            f"{upload.filename} was read by build {readers[0]}. Delete that "
-            f"build first - its record of what it read has to stay true.")
+                  objects: FileStore | None = None, by: str | None = None) -> dict:
+    """Delete one file from its week - from both scorecards when they share it.
+
+    Every copy of that input held for the week goes, so an older copy cannot take
+    its place. A copy no build read is removed for good; one a build read is
+    withdrawn instead: gone from the week and from the next build, but kept so the
+    scorecards built from it still say truly what they read. Deleting those
+    builds later removes it for good."""
+    same = session.execute(select(Upload).where(
+        Upload.week == upload.week, Upload.source_key == upload.source_key,
+        Upload.report_key.is_(None) if upload.report_key is None
+        else Upload.report_key == upload.report_key,
+        Upload.withdrawn_at.is_(None))).scalars().all()
+    ids = [u.id for u in same]
+    kept_for = sorted(set(session.execute(
+        select(RunInput.run_id).where(RunInput.upload_id.in_(ids))).scalars()))
     out = {"upload_id": upload.id, "week": upload.week,
            "filename": upload.filename, "source_key": upload.source_key,
-           "sha256": upload.sha256}
-    _, blobs_gone = retire_uploads(session, [upload.id],
+           "report_key": upload.report_key, "sha256": upload.sha256,
+           "kept_for_builds": kept_for}
+    now = utcnow()
+    for u in same:
+        u.withdrawn_at, u.withdrawn_by = now, by
+    session.flush()
+    _, blobs_gone = retire_uploads(session, ids,
                                    objects or FileStore(settings.object_dir))
     return out | {"file_removed": bool(blobs_gone)}
 

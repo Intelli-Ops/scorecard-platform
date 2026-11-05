@@ -1,6 +1,7 @@
 """Database tables."""
 from __future__ import annotations
 import datetime as dt
+import re
 
 from sqlalchemy import (BigInteger, String, Integer, Float, Date, DateTime, ForeignKey,
                         Text, UniqueConstraint, Index, JSON, Boolean, event, text)
@@ -41,6 +42,13 @@ ROLES = ("viewer", "admin", "system_admin")
 ROLE_LABELS = {"viewer": "Viewer", "admin": "Admin", "system_admin": "System admin"}
 
 
+def name_from_email(email: str | None) -> str:
+    """A person's name from their work email: ali.asghar@appedology.com -> Ali Asghar."""
+    local = (email or "").split("@")[0]
+    words = re.split(r"[._\-+\s]+", local)
+    return " ".join(w[:1].upper() + w[1:].lower() for w in words if w) or local
+
+
 class User(Base):
     """An Appedology account."""
     __tablename__ = "user_account"
@@ -76,8 +84,8 @@ class User(Base):
 
     @property
     def name(self) -> str:
-        """What to call them: their chosen name, or the part before the @."""
-        return self.display_name or self.email.split("@")[0]
+        """What to call them: their chosen name, or one made from their email."""
+        return self.display_name or name_from_email(self.email)
 
     @property
     def is_admin(self) -> bool:
@@ -175,6 +183,10 @@ class Upload(Base):
     uploaded_at: Mapped[dt.datetime] = mapped_column(UtcDateTime(),
                                                      default=utcnow)
     uploaded_by: Mapped[str | None] = mapped_column(String(200))
+    # Deleted from its week after a build read it: hidden from the upload screen and
+    # from the next build, kept only for the builds that record reading it.
+    withdrawn_at: Mapped[dt.datetime | None] = mapped_column(UtcDateTime())
+    withdrawn_by: Mapped[str | None] = mapped_column(String(200))
 
     __table_args__ = (
         Index("ix_upload_lookup", "week", "report_key", "source_key",

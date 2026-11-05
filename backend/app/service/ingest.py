@@ -191,10 +191,10 @@ def _forget_parsed(week: str, sha: str):
 
 
 def _week_uploads(session: Session, week: str) -> list[Upload]:
-    """Every upload held for a week, newest first - one query, which each
-    report then picks its own files out of."""
+    """Every upload in a week, newest first - one query, which each report then
+    picks its own files out of. A file deleted after a build read it is not."""
     return list(session.execute(
-        select(Upload).where(Upload.week == week)
+        select(Upload).where(Upload.week == week, Upload.withdrawn_at.is_(None))
         .order_by(Upload.uploaded_at.desc(), Upload.id.desc())).scalars())
 
 
@@ -215,9 +215,12 @@ def latest_uploads(session: Session, report: ReportType, week: str,
 def week_status(session: Session, week: str) -> dict:
     """What the upload screen shows: which files are in, which are still needed."""
     rows = _week_uploads(session, week)
-    read = set(session.execute(
-        select(RunInput.upload_id).where(
-            RunInput.upload_id.in_([u.id for u in rows]))).scalars()) if rows else set()
+    builds: dict[int, set[int]] = {}             # upload id -> the builds that read it
+    if rows:
+        for upload_id, run_id in session.execute(
+                select(RunInput.upload_id, RunInput.run_id).where(
+                    RunInput.upload_id.in_([u.id for u in rows]))):
+            builds.setdefault(upload_id, set()).add(run_id)
     out = {"week": week, "files": len(rows), "reports": {}}
     for key, report in REPORTS.items():
         uploads = latest_uploads(session, report, week, rows)
@@ -226,7 +229,9 @@ def week_status(session: Session, week: str) -> dict:
             "send_day": report.send_day,
             "have": [{"id": u.id, "source_key": k, "filename": u.filename,
                       "uploaded_at": u.uploaded_at, "size_bytes": u.size_bytes,
-                      "sha256": u.sha256, "read_by_a_build": u.id in read}
+                      "sha256": u.sha256, "read_by_a_build": u.id in builds,
+                      "builds": len(builds.get(u.id, ())),
+                      "shared": u.report_key is None}
                      for k, u in sorted(uploads.items(),
                                         key=lambda ku: ku[1].filename.lower())],
             "missing": sorted((s.label for s in report.sources

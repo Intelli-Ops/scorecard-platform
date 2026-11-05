@@ -1,6 +1,6 @@
-// Shared components: password fields, cards, tiles, filters, tables and status labels.
-import { useLayoutEffect, useRef, useState } from "react";
-import { CapsIcon, EyeIcon, EyeOffIcon } from "./icons";
+// Shared components: password fields, cards, tiles, filters, tables, status labels and the pop-up window.
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { CapsIcon, CrossIcon, EyeIcon, EyeOffIcon } from "./icons";
 
 // Every password box in the app.
 export function PasswordInput({ onKeyDown, onKeyUp, onBlur, ...props }) {
@@ -186,22 +186,45 @@ function cellClass(c) {
 // `section(row)`, when it returns something, draws that row as one heading across the whole table rather than as cells.
 export function DataTable({ columns, rows, empty = "Nothing to show",
                             isTotal, rowClass, groupBy, spans, section }) {
+  // Heading rows above the column names: one row of spans, or several (a closed month
+  // opened into its weeks puts the month on one row and its weeks on the next). Each
+  // sticky row sits under the ones above it, however tall they grow.
+  const spanRows = !spans?.length ? [] : Array.isArray(spans[0]) ? spans : [spans];
+  const rowRefs = useRef([]);
+  const [tops, setTops] = useState([]);
+  useLayoutEffect(() => {
+    const rows = rowRefs.current.slice(0, spanRows.length).filter(Boolean);
+    if (!rows.length) return undefined;
+    const measure = () => {
+      const out = [0];
+      for (const r of rows) out.push(out[out.length - 1] + r.offsetHeight);
+      setTops((was) => (was.join() === out.join() ? was : out));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    rows.forEach((r) => ro.observe(r));
+    return () => ro.disconnect();
+  }, [spans, rows?.length, spanRows.length]);
+  const top = (i) => (tops[i] != null ? { top: tops[i] } : undefined);
+
   if (!rows?.length) return <div className="empty">{empty}</div>;
   return (
     <div className="scroll">
       <table className="grid-table">
         <thead>
-          {spans && (
-            <tr className="spans">
-              {spans.map((g, i) => (
-                <th key={i} colSpan={g.span ?? 1}
-                    className={`span ${g.className ?? ""}`}>{g.label}</th>
+          {spanRows.map((row, r) => (
+            <tr key={r} className={`spans${r ? " sub" : ""}`}
+                ref={(el) => { rowRefs.current[r] = el; }}>
+              {row.map((g, i) => (
+                <th key={i} colSpan={g.span ?? 1} rowSpan={g.rowSpan ?? 1}
+                    className={`span ${g.className ?? ""}`} style={top(r)}>{g.label}</th>
               ))}
             </tr>
-          )}
+          ))}
           <tr>{columns.map((c) => (
             <th key={c.key} className={cellClass(c)}
-                style={c.width ? { width: c.width } : undefined}>{c.label}</th>
+                style={{ ...(c.width ? { width: c.width } : {}),
+                         ...(spanRows.length ? top(spanRows.length) : {}) }}>{c.label}</th>
           ))}</tr>
         </thead>
         <tbody>
@@ -308,5 +331,49 @@ export function PartialNotice({ missing }) {
         Upload the rest and build again for the full scorecard.
       </span>
     </div>
+  );
+}
+
+// A window over the page: a heading, its body, and its buttons along the foot. Escape, the ×,
+// or a click on the dimmed page closes it - unless `locked`, while something is being saved.
+export function Modal({ title, sub, icon, tone, onClose, locked, footer, width, children }) {
+  const ref = useRef(null);
+  const latest = useRef({ onClose, locked });
+  useEffect(() => { latest.current = { onClose, locked }; });
+
+  useEffect(() => {
+    const d = ref.current;
+    d.showModal();
+    d.querySelector(".modal-box").focus();      // the window, not its × - Tab moves on from here
+    const cancel = (e) => {
+      e.preventDefault();
+      if (!latest.current.locked) latest.current.onClose();
+    };
+    d.addEventListener("cancel", cancel);
+    return () => { d.removeEventListener("cancel", cancel); if (d.open) d.close(); };
+  }, []);
+
+  return (
+    <dialog ref={ref} className="modal" aria-labelledby="modal-title"
+            style={width ? { "--modal-w": `${width}px` } : undefined}
+            onMouseDown={(e) => {
+              if (e.target === ref.current && !locked) onClose();
+            }}>
+      <div className="modal-box" tabIndex={-1}>
+        <div className="modal-head">
+          {icon && <span className={`modal-icon${tone ? ` ${tone}` : ""}`}>{icon}</span>}
+          <div className="modal-heading">
+            <div className="modal-title" id="modal-title">{title}</div>
+            {sub && <div className="modal-sub">{sub}</div>}
+          </div>
+          <button type="button" className="modal-x" onClick={onClose} disabled={locked}
+                  aria-label="Close" title="Close">
+            <CrossIcon />
+          </button>
+        </div>
+        <div className="modal-body">{children}</div>
+        {footer && <div className="modal-foot">{footer}</div>}
+      </div>
+    </dialog>
   );
 }

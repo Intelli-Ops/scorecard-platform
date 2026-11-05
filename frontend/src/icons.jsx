@@ -95,6 +95,42 @@ export const DownloadIcon = () => (
   </Icon>
 );
 
+// An arrow out of a tray - sending a file.
+export const UploadIcon = () => (
+  <Icon>
+    <path d="M7 9V2.8M4.6 5.1 7 2.7l2.4 2.4" {...S} />
+    <path d="M2.8 9.8v1a.9.9 0 0 0 .9.9h6.6a.9.9 0 0 0 .9-.9v-1" {...S} />
+  </Icon>
+);
+
+// A shut padlock - someone else's to do.
+export const LockIcon = () => (
+  <Icon>
+    <rect x="3" y="6.3" width="8" height="5.2" rx="1.2" {...S} />
+    <path d="M4.9 6.3V4.7a2.1 2.1 0 0 1 4.2 0v1.6" {...S} />
+  </Icon>
+);
+
+// Two sliders - choosing what is allowed.
+export const SlidersIcon = () => (
+  <Icon>
+    <path d="M2.5 4.5h3M8.5 4.5h3M2.5 9.5h6M11 9.5h.5" {...S} />
+    <circle cx="7" cy="4.5" r="1.4" {...S} />
+    <circle cx="9.7" cy="9.5" r="1.4" {...S} />
+  </Icon>
+);
+
+// A tray with an arrow out, larger - the heading of the upload rights window.
+export const UploadRightsIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M8 10.5V2.5M4.8 5.7 8 2.5l3.2 3.2" fill="none" stroke="currentColor"
+          strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M2.5 10.5v2a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2" fill="none"
+          stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+          strokeLinejoin="round" />
+  </svg>
+);
+
 const NAV = { fill: "none", stroke: "currentColor", strokeWidth: 1.6,
               strokeLinecap: "round", strokeLinejoin: "round" };
 

@@ -1,6 +1,6 @@
 // Your profile: name, password, sessions and recent activity.
 import { useState } from "react";
-import { api, device, stamp, when } from "../api";
+import { api, device, personName, stamp, when } from "../api";
 import { useAuth } from "../auth";
 import { useLoad } from "../hooks";
 import { reportShort } from "../reports";
@@ -79,7 +79,7 @@ function NameForm({ user, onSaved }) {
         <label htmlFor="display-name">Name</label>
         <div className="row tight">
           <input id="display-name" type="text" maxLength={120}
-                 placeholder={user.email.split("@")[0]} value={name}
+                 placeholder={personName(user.email)} value={name}
                  onChange={(e) => { setName(e.target.value); setSaved(false); }} />
           <Button type="submit" tone={changed ? "primary" : "plain"}
                   disabled={!changed} busy={busy} busyLabel="Saving…">

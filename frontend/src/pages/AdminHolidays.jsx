@@ -1,6 +1,6 @@
 // Admin: the days off pacing leaves out.
 import { useState } from "react";
-import { api, stamp } from "../api";
+import { api, personName, stamp } from "../api";
 import { useLoad } from "../hooks";
 import { Card, DataTable, ErrorBox, Loading } from "../components";
 import { Button, DeleteButton } from "../buttons";
@@ -48,7 +48,7 @@ export default function AdminHolidays() {
             { key: "month", label: "Takes a day off", render: (h) => monthOf(h.day) },
             { key: "set_by", label: "Added",
               render: (h) => (h.set_by
-                ? <span className="small muted">{h.set_by.split("@")[0]} · {stamp(h.set_at)}</span>
+                ? <span className="small muted">{personName(h.set_by)} · {stamp(h.set_at)}</span>
                 : <span className="small muted">Starting list</span>) },
             { key: "actions", label: "",
               render: (h) => <DeleteButton onConfirm={() => remove(h)} /> },

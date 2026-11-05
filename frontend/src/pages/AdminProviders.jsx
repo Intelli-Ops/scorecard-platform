@@ -1,6 +1,6 @@
 // Admin: the provider list - which group each provider's cases count under.
 import { useState } from "react";
-import { api, stamp } from "../api";
+import { api, personName, stamp } from "../api";
 import { useLoad } from "../hooks";
 import { Card, DataTable, ErrorBox, Loading } from "../components";
 import { Button, DeleteButton } from "../buttons";
@@ -98,7 +98,7 @@ export default function AdminProviders() {
                 ? <span className="muted">Other Client</span> : paper(p)) },
             { key: "set_by", label: "Changed",
               render: (p) => (p.set_by
-                ? <span className="small muted">{p.set_by.split("@")[0]} · {stamp(p.set_at)}</span>
+                ? <span className="small muted">{personName(p.set_by)} · {stamp(p.set_at)}</span>
                 : <span className="small muted">Starting list</span>) },
             { key: "actions", label: "",
               render: (p) => (isEditing(p)

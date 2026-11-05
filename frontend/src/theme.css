@@ -449,22 +449,64 @@ thead tr.spans th.span.lead { text-align: left; }
 thead tr.spans th.span.lead,
 thead tr th.sticky { position: sticky; left: 0; z-index: 4; }
 thead tr.spans th.span.current { color: var(--teal); }
-thead tr.spans + tr th { top: 31px; }
+thead tr.spans + tr th { top: var(--spans-h, 31px); }
+thead tr.spans th.span { vertical-align: middle; }
 
-/* A week's days beside its name, on the same line so the span row keeps its height. */
+/* A week's heading: its name, and beneath it the days it covers. */
+.week-head { display: inline-block; line-height: 1.25; vertical-align: middle; }
+.week-name { display: block; }
 .week-days {
-  margin-left: 6px; font-weight: 500; text-transform: none;
+  display: block; margin-top: 3px;
+  font-size: 11px; font-weight: 500; text-transform: none;
   letter-spacing: 0; color: var(--text-3);
 }
+thead tr.spans th.span.current .week-days { color: var(--green-hi); opacity: .8; }
+
+/* A closed month's heading, and the round + that opens it into its weeks. */
+.month-head { display: inline-flex; align-items: center; gap: 7px; vertical-align: middle; }
 .expand-month {
-  margin: -2px 0 -2px 6px; width: 16px; height: 16px; padding: 0;
-  border: 1px solid var(--line-2); border-radius: var(--r-sm);
-  background: var(--surface); color: var(--text);
-  font-weight: 700; font-size: 12px; line-height: 13px;
-  cursor: pointer; vertical-align: middle;
+  flex: none; display: inline-grid; place-items: center;
+  width: 20px; height: 20px; padding: 0; border-radius: 50%;
+  background: var(--green-soft); border: 1px solid var(--green-line); color: var(--green-hi);
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease,
+              box-shadow .2s ease, transform .12s var(--ease);
 }
-.expand-month:hover { border-color: var(--teal); color: var(--teal); }
-th.span.opened { color: var(--teal); }
+.expand-month svg { display: block; }
+.expand-month:hover {
+  background: var(--green); border-color: var(--green); color: #fff;
+  box-shadow: 0 3px 10px -4px rgba(33, 180, 126, .8);
+}
+.expand-month:active { transform: scale(.92); }
+.expand-month:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.expand-month.open { background: var(--green); border-color: var(--green); color: #fff; }
+.expand-month.open:hover { background: var(--green-hi); border-color: var(--green-hi); }
+
+/* A closed month opened into its weeks: one quiet tint, so the weeks read as a group. */
+th.span.opened { color: var(--teal); background: #EEF5F2; }
+thead th.opened { background: #EEF5F2; }
+td.opened { background: #F6FAF8; }
+tbody tr:hover td.opened { background: #EEF5F2; }
+tr.total td.opened { background: #E4EEEA; }
+
+/* The opened month's own heading, over all its weeks, and the weeks' row beneath it. */
+thead tr.spans th.span.month-group {
+  background: #E3EFEA; color: var(--teal); letter-spacing: .06em;
+  border-bottom: 1px solid var(--green-line);
+  border-left: 2px solid var(--green-line); border-right: 2px solid var(--green-line);
+}
+thead tr.spans.sub th.span { padding-top: 8px; padding-bottom: 8px; }
+/* The month's total closes the group: a touch deeper, and edged like it. */
+th.span.opened-total { background: #E6F0EC; }
+thead th.opened-total, td.opened-total { background: #EFF5F2; }
+tr.total td.opened-total { background: #DCE9E3; }
+/* Edges either side of the opened month, from its heading down through every row. */
+th:not(.opened) + th.opened, td:not(.opened) + td.opened,
+th.opened-total + th:not(.opened), td.opened-total + td:not(.opened) {
+  border-left: 2px solid var(--green-line);
+}
+thead tr.spans.sub th.span.opened:first-child { border-left: 2px solid var(--green-line); }
+thead tr.spans.sub th.span.opened-total { border-right: 2px solid var(--green-line); }
 
 td.current, th.current { background: var(--green-soft); }
 tbody tr:hover td.current { background: var(--green-soft); }
@@ -719,7 +761,12 @@ td.nowrap { white-space: nowrap; }
 
 /* Admin */
 
-.who-cell { display: inline-flex; flex-direction: column; line-height: 1.35; }
+/* A person over two lines - name, then email and APD ID. The cell is given room for a
+   long work email; past that, each line ends in its own "..." rather than the cell
+   clipping both lines and leaving one stray "..." beside the name. */
+.who-cell { display: flex; flex-direction: column; line-height: 1.35; min-width: 0; }
+.who-cell > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+tbody td:has(> .who-cell) { max-width: 320px; overflow: visible; }
 
 tbody tr.highlight td { background: #FBF6EA; }
 tbody tr.highlight:hover td { background: #F8F0DD; }
@@ -1020,6 +1067,239 @@ select.picker.role { padding: 5px 30px 5px 12px; font-size: 12.5px; }
 
 tbody td.actions { max-width: none; overflow: visible; white-space: normal; }
 tbody td.actions .row.tight { flex-wrap: wrap; row-gap: 6px; min-width: 270px; }
+
+/* Pop-up window */
+
+/* It may open from inside a table cell: none of the cell's text settings come in with it. */
+.modal {
+  padding: 0; border: 0; background: transparent; color: var(--text);
+  width: min(var(--modal-w, 560px), calc(100vw - 32px));
+  max-height: calc(100vh - 48px); overflow: visible;
+  white-space: normal; text-align: left; font: 14px/1.55 var(--sans);
+  letter-spacing: -0.006em; text-transform: none; vertical-align: baseline;
+}
+.modal-box:focus { outline: none; }
+.modal::backdrop {
+  background: rgba(14, 59, 53, .32);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  animation: fade-in .2s ease both;
+}
+.modal[open] .modal-box { animation: modal-in .32s var(--ease) both; }
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(16px) scale(.98); }
+  to   { opacity: 1; transform: none; }
+}
+.modal-box {
+  display: flex; flex-direction: column; max-height: calc(100vh - 48px);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
+  box-shadow: 0 28px 70px -18px rgba(14, 59, 53, .45), 0 2px 6px rgba(14, 59, 53, .08);
+  overflow: hidden;
+}
+.modal-head {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 22px 24px 18px; border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+}
+.modal-icon {
+  flex: none; width: 40px; height: 40px; border-radius: 12px;
+  display: grid; place-items: center;
+  background: var(--green-soft); color: var(--green-hi); border: 1px solid var(--green-line);
+}
+.modal-icon.danger { background: #FBEFEE; color: var(--alert); border-color: #F0D5D2; }
+.modal-icon svg { width: 18px; height: 18px; }
+.modal-heading { min-width: 0; flex: 1; }
+
+/* What a confirmation will and will not change, one line each. */
+.facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.fact {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 12px 14px; border-radius: var(--r-md);
+  background: var(--surface-2); border: 1px solid var(--line);
+  font-size: 13.5px; line-height: 1.5; color: var(--text-2);
+}
+.fact strong { color: var(--text); font-weight: 600; }
+.fact-mark {
+  flex: none; width: 22px; height: 22px; border-radius: 50%; margin-top: 0;
+  display: grid; place-items: center; font-size: 12px; font-weight: 700;
+  background: var(--surface); border: 1px solid var(--line-2); color: var(--text-3);
+}
+.fact.gone .fact-mark { background: #FBEFEE; border-color: #F0D5D2; color: var(--alert); }
+.fact.kept .fact-mark { background: var(--green-soft); border-color: var(--green-line);
+                        color: var(--green-hi); }
+
+/* A small square button holding just an icon - the bin beside each uploaded file. */
+.icon-btn {
+  display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0;
+  border: 1px solid transparent; border-radius: 8px; background: transparent;
+  color: var(--text-3);
+  transition: background .15s ease, color .15s ease, border-color .15s ease,
+              transform .12s var(--ease);
+}
+.icon-btn:active { transform: scale(.94); }
+.icon-btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.icon-btn.danger:hover { background: rgba(193, 84, 74, .08); border-color: #F0D5D2;
+                         color: var(--alert); }
+.modal-title { font-size: 17px; font-weight: 650; letter-spacing: -0.015em; line-height: 1.3; }
+.modal-sub { margin-top: 3px; font-size: 13px; color: var(--text-2);
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.modal-sub strong { color: var(--text); font-weight: 600; }
+.modal-x {
+  flex: none; width: 32px; height: 32px; margin: -4px -6px 0 0;
+  display: grid; place-items: center; border: 0; border-radius: 10px;
+  background: transparent; color: var(--text-3);
+  transition: background .15s ease, color .15s ease;
+}
+.modal-x:hover:not(:disabled) { background: rgba(14, 59, 53, .07); color: var(--text); }
+.modal-x:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.modal-body { padding: 20px 24px 22px; overflow: auto; }
+.modal-foot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 24px; border-top: 1px solid var(--line); background: var(--surface-2);
+}
+.modal-note { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-2); }
+.modal-error {
+  margin-bottom: 16px; padding: 10px 14px; border-radius: var(--r-md);
+  background: #FBEFEE; border: 1px solid #F0D5D2; color: var(--alert); font-size: 13px;
+}
+
+/* Upload rights: three choices, then the files to tick */
+
+.choice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (max-width: 560px) { .choice-grid { grid-template-columns: 1fr; } }
+.choice {
+  display: flex; flex-direction: column; gap: 6px; text-align: left;
+  padding: 13px 14px; border-radius: var(--r-md);
+  background: var(--surface); border: 1px solid var(--line-2);
+  transition: border-color .15s ease, background .15s ease, box-shadow .2s ease,
+              transform .12s var(--ease);
+}
+.choice:hover { border-color: var(--green-line); background: var(--hover); }
+.choice:active { transform: scale(.985); }
+.choice:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.choice.on {
+  border-color: var(--green); background: var(--green-soft);
+  box-shadow: 0 0 0 3px rgba(33, 180, 126, .12);
+}
+.choice-top { display: flex; align-items: center; gap: 8px; }
+.choice-title { font-weight: 600; font-size: 13.5px; color: var(--text); }
+.choice-text { font-size: 12px; line-height: 1.45; color: var(--text-2); }
+.choice-dot {
+  flex: none; width: 16px; height: 16px; border-radius: 50%;
+  border: 1.5px solid var(--line-2); background: var(--surface);
+  transition: border-color .15s ease, box-shadow .2s var(--ease);
+}
+.choice.on .choice-dot {
+  border-color: var(--green);
+  box-shadow: inset 0 0 0 3.5px var(--surface), inset 0 0 0 8px var(--green);
+}
+
+.pick-files { margin-top: 18px; animation: rise .3s var(--ease) both; }
+.pick-bar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-bottom: 10px; margin-bottom: 4px; border-bottom: 1px solid var(--line);
+}
+.pick-group { margin-top: 14px; }
+.pick-group-head { display: flex; justify-content: space-between; align-items: baseline; }
+.pick-group-head h3 { margin-bottom: 6px; }
+.check-row {
+  position: relative; display: flex; align-items: center; gap: 12px;
+  padding: 9px 12px; margin: 0 -12px; border-radius: var(--r-md); cursor: pointer;
+  transition: background .12s ease;
+}
+.check-row:hover { background: var(--hover); }
+.check-row input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.check-box {
+  flex: none; width: 18px; height: 18px; border-radius: 6px;
+  display: grid; place-items: center;
+  border: 1.5px solid var(--line-2); background: var(--surface); color: transparent;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.check-row:hover .check-box { border-color: var(--green-line); }
+.check-row.on .check-box { background: var(--green); border-color: var(--green); color: #fff; }
+.check-row.on .check-box svg { animation: pop .3s var(--ease) both; }
+.check-row input:focus-visible + .check-box { outline: 2px solid var(--green); outline-offset: 2px; }
+.check-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.35; }
+.check-name { font-weight: 550; font-size: 13.5px; }
+.check-sub { font-size: 12px; color: var(--text-3);
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.check-tags { display: flex; gap: 12px; flex: none; }
+.check-tags .tagline { font-size: 11.5px; color: var(--text-2); }
+
+/* Upload rights, in the Users table */
+
+.uploads-cell { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap;
+                min-width: 180px; max-width: 300px; }
+.file-tags { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.file-tag {
+  padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 550;
+  background: var(--green-soft); border: 1px solid var(--green-line); color: var(--green-hi);
+  white-space: nowrap;
+}
+
+/* Not in yet: one row per missing file */
+
+.missing { border-top: 1px solid var(--line); padding: 16px 22px 14px; }
+.missing-head { margin-bottom: 10px; }
+.missing-head h3 { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.missing-count {
+  min-width: 20px; padding: 1px 7px; border-radius: 999px; text-align: center;
+  font-size: 11px; letter-spacing: 0; background: #FBF3E3; color: var(--warn);
+  border: 1px solid #EEDFC0;
+}
+.missing-list { list-style: none; margin: 0 -10px; padding: 0; }
+.missing-row {
+  position: relative; display: flex; align-items: center; gap: 12px;
+  padding: 9px 10px; border-radius: var(--r-md); border: 1px dashed transparent;
+  transition: background .15s ease, border-color .15s ease;
+}
+.missing-row + .missing-row { margin-top: 2px; }
+.missing-row:hover { background: var(--hover); }
+.missing-row.over { background: var(--green-soft); border-color: var(--green); }
+.missing-row.busy { background: var(--green-soft); }
+.missing-row.busy .btn:disabled { opacity: 1; }
+.missing-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.35; }
+.missing-name { font-weight: 550; font-size: 13.5px; color: var(--text); }
+.missing-meta { font-size: 12px; color: var(--text-3); }
+.missing-row.over .missing-meta, .missing-row.busy .missing-meta { color: var(--green-hi); }
+.missing-row.locked .missing-name { color: var(--text-2); }
+.missing-lock {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  padding: 4px 10px; border-radius: 999px; font-size: 12px; color: var(--text-3);
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.missing-progress {
+  position: absolute; left: 10px; right: 10px; bottom: 3px; height: 2px;
+  border-radius: 2px; background: var(--green-line); overflow: hidden;
+}
+.missing-progress span { display: block; height: 100%; background: var(--green);
+                         transition: width .2s ease; }
+
+.file-badge {
+  flex: none; position: relative; width: 30px; height: 36px;
+  border-radius: 5px 10px 5px 5px; display: grid; place-items: end center;
+  padding-bottom: 5px; background: var(--surface-2); border: 1px solid var(--line-2);
+}
+.file-badge::after {
+  content: ""; position: absolute; top: -1px; right: -1px; width: 10px; height: 10px;
+  border-radius: 0 10px 0 4px; background: var(--line);
+}
+.file-badge span:not(:empty) {
+  font-size: 8.5px; font-weight: 750; letter-spacing: .04em; color: #fff;
+  padding: 1px 3px; border-radius: 3px; line-height: 1.2;
+}
+.file-badge.xls { background: #EFF8F3; border-color: var(--green-line); }
+.file-badge.xls::after { background: var(--green-line); }
+.file-badge.xls span { background: var(--green-hi); }
+.file-badge.csv { background: #EEF4F9; border-color: #D2E1EE; }
+.file-badge.csv::after { background: #D2E1EE; }
+.file-badge.csv span { background: var(--t-blue); }
+.missing-row.locked .file-badge { opacity: .55; filter: grayscale(.6); }
+
+.spinner {
+  flex: none; width: 12px; height: 12px; border-radius: 50%;
+  border: 1.6px solid currentColor; border-right-color: transparent;
+  animation: spin .7s linear infinite;
+}
 
 /* Calm */
 

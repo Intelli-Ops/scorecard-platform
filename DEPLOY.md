@@ -419,6 +419,7 @@ change.
 | `SCORECARD_WORK_HOURS` | `7-21` | Sign-ins outside these hours are flagged |
 | `SCORECARD_API_DOCS` | `0` | `1` shows the API listing at `/docs` (not reachable through nginx anyway) |
 | `SCORECARD_CORS_ORIGINS` | empty | Not needed: page and API share one address |
+| `SCORECARD_BLOCKED_EMAIL_DOMAINS` | not set | Extra email domains sign-up refuses, comma separated (`newtempmail.com,another.net`). Any work email may sign up; about 10,000 known temporary-email domains are already refused (`backend/app/service/disposable_domains.txt`) |
 | `SCORECARD_MAX_UPLOAD_MB` | `1024` | Largest single upload. Keep `client_max_body_size` in the nginx site's upload `location` above it |
 
 ---

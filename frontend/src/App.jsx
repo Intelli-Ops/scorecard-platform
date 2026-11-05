@@ -15,6 +15,7 @@ import AdminActivity from "./pages/AdminActivity";
 import AdminHolidays from "./pages/AdminHolidays";
 import AdminProviders from "./pages/AdminProviders";
 import { Loading } from "./components";
+import { personName } from "./format";
 import { MenuIcon, NavCalendarIcon, NavChartIcon, NavHistoryIcon, NavListIcon, NavPeopleIcon, NavPersonIcon,
          NavShieldIcon, NavSignOutIcon, NavUploadIcon } from "./icons";
 
@@ -52,7 +53,7 @@ export default function App() {
   if (!user) return <SignIn />;
   if (user.must_change_password) return <ChangePassword />;
 
-  const initials = (user.display_name ?? user.email)
+  const initials = (user.display_name || personName(user.email))
     .split(/[\s.@]+/).filter(Boolean).slice(0, 2)
     .map((w) => w[0]).join("").toUpperCase();
 
@@ -98,7 +99,7 @@ export default function App() {
             <span className="avatar">{initials}</span>
             {open && (
               <span className="who-text">
-                <span className="email">{user.display_name ?? user.email.split("@")[0]}</span>
+                <span className="email">{user.display_name || personName(user.email)}</span>
                 <span className="apd">{user.apd_id} · {user.role_label}</span>
               </span>
             )}

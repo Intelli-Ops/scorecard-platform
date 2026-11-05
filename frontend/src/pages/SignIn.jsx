@@ -6,13 +6,12 @@ import { Button } from "../buttons";
 import { CodeInput, clock, useCountdown } from "../codes";
 import { NewPasswordFields, PasswordInput } from "../components";
 
-const DOMAIN = "@appedology.com";
 const RESEND_AFTER = 60;        // seconds - the server refuses sooner anyway
 
 const TITLES = {
   in: ["Sign in", "The weekly GFS and All Providers scorecards."],
   up: ["Create your account",
-       "Appedology accounts only. You confirm your email with a code, then an admin approves the account."],
+       "Use your work email. You confirm it with a code, then an admin approves the account."],
   verify: ["Confirm your email", null],
   forgot: ["Forgot your password?",
            "Enter your work email and we will send you a 6-digit code to reset it."],
@@ -233,9 +232,9 @@ function EmailField({ email, setEmail, hint }) {
     <div className="field">
       <label htmlFor="email">Work email</label>
       <input id="email" type="email" autoComplete="username" required
-             placeholder={`you${DOMAIN}`} value={email}
+             placeholder="you@yourcompany.com" value={email}
              onChange={(e) => setEmail(e.target.value)} />
-      {hint && <div className="hint">Must end {DOMAIN}</div>}
+      {hint && <div className="hint">Your work email. Temporary email addresses are not accepted.</div>}
     </div>
   );
 }

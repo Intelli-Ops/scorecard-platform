@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from ..db.models import ACTIVE, Run, RunFigure, User
+from ..db.models import ACTIVE, Run, RunFigure, User, name_from_email
 from ..db.session import session
 from ..jobs import worker
 from ..reports import REPORTS, load_rules
@@ -112,7 +112,7 @@ def current_scorecards(user=Depends(current_user)) -> list[dict]:
             if approved is not None and approved.approved_by:
                 u = s.execute(select(User).where(
                     User.email == approved.approved_by)).scalar_one_or_none()
-                approver = u.name if u else approved.approved_by.split("@")[0]
+                approver = u.name if u else name_from_email(approved.approved_by)
 
             out.append({
                 "key": r.key, "label": r.label, "short": r.short,

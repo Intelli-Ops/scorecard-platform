@@ -1,6 +1,6 @@
 // Shows and edits a month's working days.
 import { useState } from "react";
-import { api, stamp } from "./api";
+import { api, personName, stamp } from "./api";
 import { useLoad } from "./hooks";
 import { ClearX } from "./components";
 import { Button } from "./buttons";
@@ -38,7 +38,7 @@ export default function WorkingDays({ week }) {
         <div className="workdays-title">Working days in {info.label}</div>
         <div className="small muted">
           {info.entered
-            ? `Entered by ${info.set_by?.split("@")[0]} · ${stamp(info.set_at)}. `
+            ? `Entered by ${personName(info.set_by)} · ${stamp(info.set_at)}. `
               + `The calendar says ${info.calendar_days}.`
             : `From the calendar: weekdays less holidays. Change it if the office `
               + `worked a different number of days.`}
