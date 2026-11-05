@@ -187,17 +187,18 @@ const INPUT_SHORT = {
   owner_case_ar: "Owner Case AR", custom_case_ar: "Custom Case AR",
 };
 
-// Which files an admin may upload: every one, or those a system admin picked.
+// Which files an admin may upload: all of them, none, or the ones a system admin chose, by name.
 function UploadsCell({ u, reports, act }) {
   const [open, setOpen] = useState(false);
   if (!u.is_admin) return <span className="muted small">None</span>;
   const inputs = [...new Map(reports.flatMap((r) => r.sources)
     .map((s) => [s.key, s])).values()];
-  const summary = u.uploads_all ? "All files"
-    : u.uploads.length ? `${u.uploads.length} of ${inputs.length} files` : "No files";
+  const none = !u.uploads_all && !u.uploads.length;
+  const summary = u.uploads_all ? "All files" : none ? "No files"
+    : inputs.filter((s) => u.uploads.includes(s.key))
+        .map((s) => INPUT_SHORT[s.key] ?? s.label).join(", ");
   if (!u.can.uploads) {
-    return <span className="muted small" title={u.uploads_all ? undefined
-      : u.uploads.map((k) => INPUT_SHORT[k] ?? k).join(", ")}>{summary}</span>;
+    return <span className={`small${none ? " muted" : ""}`}>{summary}</span>;
   }
 
   const set = (next) => act(() => api.setUploadAccess(
@@ -205,7 +206,7 @@ function UploadsCell({ u, reports, act }) {
   return (
     <span className="who-cell">
       <span className="row tight">
-        <span className="small">{summary}</span>
+        <span className={`small${none ? " muted" : ""}`}>{summary}</span>
         <Button size="sm" tone="quiet" onClick={() => setOpen(!open)}
                 aria-expanded={open}>{open ? "Done" : "Choose"}</Button>
       </span>
@@ -214,6 +215,9 @@ function UploadsCell({ u, reports, act }) {
           <button type="button" className={`chip${u.uploads_all ? " on" : ""}`}
                   aria-pressed={u.uploads_all} onClick={act(() => api.setUploadAccess(u.id, null))}
                   title="Every file, now and any added later">All files</button>
+          <button type="button" className={`chip${none ? " on" : ""}`}
+                  aria-pressed={none} onClick={act(() => api.setUploadAccess(u.id, []))}
+                  title="This admin uploads nothing until files are chosen">No files</button>
           {inputs.map((s) => {
             const on = !u.uploads_all && u.uploads.includes(s.key);
             const base = u.uploads_all ? [] : u.uploads;

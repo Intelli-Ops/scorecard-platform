@@ -480,6 +480,17 @@ def test_admins_upload_every_file_until_a_system_admin_narrows_them(client, root
     assert _me(client, admin)["uploads_all"]
 
 
+def test_an_admin_given_no_files_uploads_nothing(client, root, admin):
+    aid = _id(client, root, "admin@appedology.com")
+    assert client.post(f"/api/admin/users/{aid}/uploads", headers=root,
+                       json={"inputs": []}).status_code == 200
+    me = _me(client, admin)
+    assert not me["uploads_all"] and me["uploads"] == []
+    r = _upload(client, admin, "Master Settlement & Collection Delta WC.xlsb").json()
+    assert not r["accepted"] and "not been given this file" in r["rejected"][0]["reason"]
+    assert _upload(client, admin, "x.xlsb", as_source="delta_wc").status_code == 403
+
+
 def test_a_narrowed_admin_cannot_take_back_or_wipe_other_admins_files(client, root, admin):
     hid = _upload(client, root, "Hearing Calendar.xlsx").json()["status"]
     hid = hid["reports"]["gfs"]["have"][0]["id"]
