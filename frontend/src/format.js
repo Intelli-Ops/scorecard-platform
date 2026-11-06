@@ -22,12 +22,18 @@ export function personName(email) {
 export const bytes = (n) =>
   n < 1e6 ? `${(n / 1e3).toFixed(0)} KB` : `${(n / 1e6).toFixed(1)} MB`;
 
-export const when = (iso) =>
+const dateTime = (options) => (iso) =>
   iso ? new Date(iso).toLocaleString(undefined,
-    { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+    { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", ...options }) : "";
+
+export const when = dateTime();
 
 const MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS_FULL = ["", "January", "February", "March", "April", "May", "June", "July",
+                     "August", "September", "October", "November", "December"];
+const utcDay = (d) => d.getUTCDate();
+const utcMonth = (d) => MONTHS[d.getUTCMonth() + 1];
 
 // Weeks are written out: "Week-2", not "Wk 2".
 export const weekLabel = (n) => `Week-${n}`;
@@ -36,16 +42,15 @@ export const bucketLabel = (b) =>
   b?.startsWith("M") ? MONTHS[+b.slice(1)] ?? b : weekLabel(b?.slice(1));
 
 export const monthName = (m) => MONTHS[m] ?? String(m);
+export const monthFull = (m) => MONTHS_FULL[m] ?? String(m);
 
 // Two ISO dates as the days between them: "1 to 9 Oct", "28 Sep to 2 Oct".
 export function daySpan(first, last) {
   const [a, b] = [first, last].map((d) => new Date(`${d}T00:00:00Z`));
-  const day = (d) => d.getUTCDate();
-  const mon = (d) => MONTHS[d.getUTCMonth() + 1];
-  if (first === last) return `${day(a)} ${mon(a)}`;
+  if (first === last) return `${utcDay(a)} ${utcMonth(a)}`;
   return a.getUTCMonth() === b.getUTCMonth()
-    ? `${day(a)} to ${day(b)} ${mon(b)}`
-    : `${day(a)} ${mon(a)} to ${day(b)} ${mon(b)}`;
+    ? `${utcDay(a)} to ${utcDay(b)} ${utcMonth(b)}`
+    : `${utcDay(a)} ${utcMonth(a)} to ${utcDay(b)} ${utcMonth(b)}`;
 }
 
 // The days week `n` of `month` covers, from a run's week spans; "" if not known.
@@ -74,10 +79,7 @@ export function device(ua) {
 }
 
 // A date and time in full, for a record that may be read months later.
-export const stamp = (iso) =>
-  iso ? new Date(iso).toLocaleString(undefined,
-    { day: "numeric", month: "short", year: "numeric",
-      hour: "2-digit", minute: "2-digit" }) : "";
+export const stamp = dateTime({ year: "numeric" });
 
 // "2026-W38" as the days it covers.
 export function weekRange(label) {
@@ -89,12 +91,10 @@ export function weekRange(label) {
   monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() || 7) - 1) + (week - 1) * 7);
   const sunday = new Date(monday);
   sunday.setUTCDate(monday.getUTCDate() + 6);
-  const day = (d) => d.getUTCDate();
-  const mon = (d) => MONTHS[d.getUTCMonth() + 1];
   const start = monday.getUTCMonth() === sunday.getUTCMonth()
-    ? `${day(monday)}`
+    ? `${utcDay(monday)}`
     : monday.getUTCFullYear() === sunday.getUTCFullYear()
-      ? `${day(monday)} ${mon(monday)}`
-      : `${day(monday)} ${mon(monday)} ${monday.getUTCFullYear()}`;
-  return `${start} to ${day(sunday)} ${mon(sunday)} ${sunday.getUTCFullYear()}`;
+      ? `${utcDay(monday)} ${utcMonth(monday)}`
+      : `${utcDay(monday)} ${utcMonth(monday)} ${monday.getUTCFullYear()}`;
+  return `${start} to ${utcDay(sunday)} ${utcMonth(sunday)} ${sunday.getUTCFullYear()}`;
 }

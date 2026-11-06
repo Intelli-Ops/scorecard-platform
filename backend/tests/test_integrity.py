@@ -567,6 +567,18 @@ def _run_with_table(rows: int, tmp_path) -> int:
     return run_id
 
 
+def test_a_case_ar_filter_can_be_given_several_values(client, tmp_path, monkeypatch):
+    from app.service import case_ar_view
+    seen = {}
+    monkeypatch.setattr(case_ar_view, "case_ar",
+                        lambda raw, rules, key, chosen: seen.update(chosen) or {})
+    run_id = _run_with_table(4, tmp_path)
+    r = client.get(f"/api/runs/{run_id}/case-ar",
+                   params={"group": ["A", "B"], "validity": "Valid"})
+    assert r.status_code == 200
+    assert seen == {"group": ["A", "B"], "file_status": None, "validity": ["Valid"]}
+
+
 def test_a_table_is_exported_in_pieces_and_arrives_whole(client, tmp_path,
                                                         monkeypatch):
     """The whole table, and then the whole CSV, used to sit in the server's

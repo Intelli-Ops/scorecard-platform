@@ -151,6 +151,18 @@ def test_nobody_demotes_or_removes_another_system_admin(client, root):
                        json={"role": "viewer"}).status_code == 403
 
 
+def test_enabling_cannot_skip_approval_or_the_email_check(client, root):
+    """A sign-up waiting on its code is turned away by Enable: only approval lets it in."""
+    r = client.post("/api/auth/signup", json={"email": "new@appedology.com",
+                                              "apd_id": "APD-0042",
+                                              "password": "a good long password"})
+    assert r.status_code == 200
+    uid = _id(client, root, "new@appedology.com")
+    r = client.post(f"/api/admin/users/{uid}/active", headers=root, json={"active": True})
+    assert r.status_code == 409 and "waiting for approval" in r.json()["detail"]
+    assert login_ok(client, "new@appedology.com") is False
+
+
 def test_a_system_admin_can_stop_another_in_an_emergency(client, root):
     """A stolen laptop, a leaked password: another system admin can sign them
     out, disable them, re-enable them and reset their password."""
@@ -332,19 +344,15 @@ def test_the_pace_uses_the_entered_working_days():
 
 
 def test_a_build_records_the_working_days_it_paced_on(client, admin):
-    from app.db.models import MonthSetting, Run
     from app.db.session import session
     from app.service import runner
     client.put("/api/weeks/2026-W38/month", headers=admin, json={"working_days": 19})
     with session() as s:
-        run = Run(report_key="gfs", week="2026-W38", status="running")
-        s.add(run)
-        s.flush()
-        rules = {"holidays": []}
-        runner._fix_working_days(s, run, rules)
+        run = runner.queue(s, "gfs", "2026-W38")
         assert run.working_days == 19 and run.working_days_source == "entered"
-        assert rules["working_days"] == {"2026-09": 19}
-        assert s.get(MonthSetting, "2026-09").set_by == "admin@appedology.com"
+        period, entered = runner.month_entered(s, "2026-W38", {"holidays": []})
+        assert period.business_days == 19
+        assert entered.set_by == "admin@appedology.com"
 
 
 def test_admins_keep_the_holidays_and_pacing_follows_them(client, admin, root):

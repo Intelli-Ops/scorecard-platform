@@ -1,8 +1,5 @@
-"""Migration 0007: an uploaded file can be deleted after a build has read it.
-
-The file leaves the week - the upload screen and the next build no longer see it -
-but its row stays while a build still records reading it, so finished scorecards
-keep a true account of their inputs. Deleting those builds clears it for good.
+"""Migration 0007: a file deleted after a build read it is withdrawn, not removed,
+so the builds that read it keep a true account of their inputs.
 
 Revision ID: 0007
 Revises: 0006"""

@@ -28,6 +28,17 @@ export function useLoad(load, deps, { keep = false } = {}) {
   return { data, error, setData, setError, reload };
 }
 
+// A set of keys each click adds or takes away: which months or weeks are open.
+export function useToggleSet(initial = []) {
+  const [set, setSet] = useState(() => new Set(initial));
+  const toggle = useCallback((key) => setSet((was) => {
+    const next = new Set(was);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  }), []);
+  return [set, toggle];
+}
+
 // Closing something - a confirmation, a pending choice - when the person clicks anywhere else or presses Escape.
 export function useDismiss(active, onDismiss) {
   const ref = useRef(null);

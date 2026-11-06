@@ -197,11 +197,7 @@ class WorkingDays(BaseModel):
 
 
 def _month_info(s, week: str) -> dict:
-    rules = with_holidays(s, load_rules("gfs"))
-    period = runner.month_of(week, rules)
-    row = s.get(MonthSetting, period.key)
-    if row is not None:
-        period = runner.month_of(week, {**rules, "working_days": {period.key: row.working_days}})
+    period, row = runner.month_entered(s, week, with_holidays(s, load_rules("gfs")))
     n = period.weeks_so_far
     return {"month": period.key, "label": period.label,
             "calendar_days": period.calendar_days,

@@ -1,7 +1,7 @@
 // The All Providers Delta Comparison sheet, without React.
-import { inSheetOrder } from "./layout.js";
+import { TOTAL, inSheetOrder, sumOf } from "./layout.js";
 
-export const TOTAL = "Total";
+export { TOTAL };
 
 // Each month's three columns, as the sheet heads them, and the key each is kept under.
 export const MEASURES = [
@@ -40,7 +40,7 @@ export function pivotDeltaComparison(rows, { order = [], upTo = 0 } = {}) {
   const total = { group: TOTAL };
   for (const key of [...months.flatMap((mo) => MEASURES.map((m) => `m${mo}_${m.key}`)),
                      ...MEASURES.map((m) => `_${m.key}`)]) {
-    total[key] = body.reduce((s, g) => s + (g[key] ?? 0), 0);
+    total[key] = sumOf(body, key);
   }
   return { months, rows: [...body, total] };
 }

@@ -28,11 +28,14 @@ const send = (method) => (path, body) =>
                body: JSON.stringify(body ?? {}) });
 const post = send("POST");
 const patch = send("PATCH");
+const put = send("PUT");
+const del = (path) => json(path, { method: "DELETE" });
 
 const query = (params) => {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null && v !== "") q.set(k, v);
+    if (Array.isArray(v)) for (const each of v) q.append(k, each);
+    else if (v !== undefined && v !== null && v !== "") q.set(k, v);
   }
   const text = q.toString();
   return text ? `?${text}` : "";
@@ -66,14 +69,14 @@ export const api = {
     post("/api/auth/password/verify-code", { email, code }),
   setNewPassword: (ticket, password) =>
     post("/api/auth/password/reset", { ticket, password }),
-  logout: () => json("/api/auth/logout", { method: "POST" }),
+  logout: () => post("/api/auth/logout"),
   me: () => json("/api/auth/me"),
 
   updateProfile: (display_name) => patch("/api/me", { display_name }),
   changePassword: (current, next) =>
     post("/api/me/password", { current, new: next }),
   mySessions: () => json("/api/me/sessions"),
-  endSession: (id) => json(`/api/me/sessions/${id}`, { method: "DELETE" }),
+  endSession: (id) => del(`/api/me/sessions/${id}`),
   endOtherSessions: () => post("/api/me/sessions/end-others"),
   myActivity: () => json("/api/me/activity"),
 
@@ -84,22 +87,22 @@ export const api = {
   setAccess: (id, reports) => post(`/api/admin/users/${id}/access`, { reports }),
   // `inputs` null: every input.
   setUploadAccess: (id, inputs) => post(`/api/admin/users/${id}/uploads`, { inputs }),
-  deleteUser: (id) => json(`/api/admin/users/${id}`, { method: "DELETE" }),
+  deleteUser: (id) => del(`/api/admin/users/${id}`),
   setActive: (id, active) => post(`/api/admin/users/${id}/active`, { active }),
   unlockUser: (id) => post(`/api/admin/users/${id}/unlock`),
   resetPassword: (id) => post(`/api/admin/users/${id}/reset-password`),
   signOutUser: (id) => post(`/api/admin/users/${id}/sign-out`),
   actions: () => json("/api/admin/actions"),
   activity: (filters = {}) => json(`/api/admin/activity${query(filters)}`),
-  alerts: (days = 7) => json(`/api/admin/alerts?days=${days}`),
+  alerts: (days = 7) => json(`/api/admin/alerts${query({ days })}`),
   deleteActivity: (body) => post("/api/admin/activity/delete", body),
   holidays: () => json("/api/admin/holidays"),
   addHoliday: (day, name) => post("/api/admin/holidays", { day, name }),
-  deleteHoliday: (day) => json(`/api/admin/holidays/${day}`, { method: "DELETE" }),
+  deleteHoliday: (day) => del(`/api/admin/holidays/${day}`),
   providers: () => json("/api/admin/providers"),
   addProvider: (row) => post("/api/admin/providers", row),
-  editProvider: (regid, row) => send("PUT")(`/api/admin/providers/${regid}`, row),
-  deleteProvider: (regid) => json(`/api/admin/providers/${regid}`, { method: "DELETE" }),
+  editProvider: (regid, row) => put(`/api/admin/providers/${regid}`, row),
+  deleteProvider: (regid) => del(`/api/admin/providers/${regid}`),
   downloadActivity: (filters = {}) =>
     download(`/api/admin/activity/csv${query(filters)}`, "activity.csv"),
 
@@ -108,10 +111,7 @@ export const api = {
   weeks: () => json("/api/weeks"),
   week: (w) => json(`/api/weeks/${w}`),
   weekMonth: (w) => json(`/api/weeks/${w}/month`),
-  setWorkingDays: (w, days) =>
-    json(`/api/weeks/${w}/month`, {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ working_days: days }) }),
+  setWorkingDays: (w, days) => put(`/api/weeks/${w}/month`, { working_days: days }),
 
   upload(week, files, { forReport, asSource, onProgress } = {}) {
     const body = new FormData();
@@ -142,23 +142,20 @@ export const api = {
   },
 
   startRun: (report, week, asOf) =>
-    json(`/api/runs?report=${report}&week=${week}` +
-         (asOf ? `&as_of=${asOf}` : ""), { method: "POST" }),
-  runs: (report, weeks = 12) =>
-    json(`/api/runs?weeks=${weeks}` + (report ? `&report=${report}` : "")),
+    post(`/api/runs${query({ report, week, as_of: asOf })}`),
+  runs: (report, weeks = 12) => json(`/api/runs${query({ weeks, report })}`),
   run: (id) => json(`/api/runs/${id}`),
-  approve: (id) => json(`/api/runs/${id}/approve`, { method: "POST" }),
-  unapprove: (id) => json(`/api/runs/${id}/unapprove`, { method: "POST" }),
-  deleteRun: (id) => json(`/api/runs/${id}`, { method: "DELETE" }),
+  approve: (id) => post(`/api/runs/${id}/approve`),
+  unapprove: (id) => post(`/api/runs/${id}/unapprove`),
+  deleteRun: (id) => del(`/api/runs/${id}`),
 
-  deleteWeek: (w) => json(`/api/weeks/${w}`, { method: "DELETE" }),
-  removeUpload: (w, id) =>
-    json(`/api/weeks/${w}/uploads/${id}`, { method: "DELETE" }),
+  deleteWeek: (w) => del(`/api/weeks/${w}`),
+  removeUpload: (w, id) => del(`/api/weeks/${w}/uploads/${id}`),
   figures: (id, name) => json(`/api/runs/${id}/figures/${name}`),
   caseAr: (id, filters = {}) => json(`/api/runs/${id}/case-ar${query(filters)}`),
   collectionsHistory: (id) => json(`/api/runs/${id}/collections-history`),
   table: (id, name, { limit = 100, offset = 0 } = {}) =>
-    json(`/api/runs/${id}/tables/${name}?limit=${limit}&offset=${offset}`),
+    json(`/api/runs/${id}/tables/${name}${query({ limit, offset })}`),
 
   downloadCsv: (id, name) =>
     download(`/api/runs/${id}/tables/${name}/csv`, `${name}.csv`),

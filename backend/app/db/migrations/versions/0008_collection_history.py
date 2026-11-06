@@ -1,9 +1,5 @@
-"""Migration 0008: collections by provider for January to September 2026.
-
-The app keeps collections itself from October 2026 (each month's builds). The months
-before that come from the one-off file management gave ("For SC.xlsx"), loaded here so
-every install has them. They are shown, by provider group, at the bottom of the
-Collections tab.
+"""Migration 0008: collections by provider for January to September 2026, from the
+one-off file management gave ("For SC.xlsx"); builds keep them from October 2026.
 
 Revision ID: 0008
 Revises: 0007"""

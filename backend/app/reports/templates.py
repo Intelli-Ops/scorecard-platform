@@ -6,7 +6,7 @@ import fastexcel
 import polars as pl
 
 from . import REPORTS, load_rules
-from .reading import column_key, find_sheet, name_key
+from .reading import column_key, find_sheet
 
 CSV = ""                          # the sheet name a CSV's one table goes by
 # Raw Data columns the builds work out themselves rather than read from the Owner Case AR.
@@ -115,12 +115,6 @@ def _provider_ids(book, sheet: str, column: str) -> set[int]:
     return out
 
 
-def _near(name: str, names) -> str | None:
-    """`name` as the file has it, if only the case or spaces differ."""
-    k = name_key(name)
-    return next((n for n in names if name_key(n) == k), None)
-
-
 def _open(path: Path, sheets):
     """(the workbook or None for a CSV, its sheet names, {each of `sheets` it has:
     (the name the file gives it, its header row)}). A sheet whose name differs
@@ -164,7 +158,7 @@ def check(source_key: str, path: Path, report_key: str | None = None) -> list[st
         have = headers[sheet][1]
         missing = [c for c in cols if c not in have]
         if missing:
-            hints = [f"'{c}'" + (f" (the file has '{n}')" if (n := _near(c, have)) else "")
+            hints = [f"'{c}'" + (f" (the file has '{n}')" if (n := find_sheet(have, c)) else "")
                      for c in missing]
             where = "the file" if sheet == CSV else f"sheet '{sheet}'"
             problems.append(f"{where} is missing column(s): {', '.join(hints)}")

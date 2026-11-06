@@ -1,15 +1,16 @@
 // The Settlement High-Level tab.
-import { useMemo, useState } from "react";
-import { bucketLabel, money, weekDays } from "./api";
-import { TOTAL, amountOnly, amountPctPair, col, total } from "./columns";
-import { Stat, Stats, TableCard, WeekHead } from "./ui";
+import { useMemo } from "react";
+import { bucketLabel, monthFull, money, weekDays } from "./api";
+import { GROUP, TOTAL, amountOnly, amountPctPair, col, total } from "./columns";
+import { useToggleSet } from "./hooks";
+import { OpenableHead, Stat, Stats, TableCard, WeekHead } from "./ui";
 import { bucketNum, cpAcross, monthToDate, paceTotals, pivot, pivotPace, sortBlocks,
          withMonthWeeks } from "./settlement-model";
-import { rowsOf } from "./layout";
+import { rowsOf, sumOf } from "./layout";
 
-const GROUP = col.label("group", "Group", { width: 186, className: "sticky", sortable: true });
-const MONTH_FULL = ["", "January", "February", "March", "April", "May", "June", "July",
-                    "August", "September", "October", "November", "December"];
+const CP_TITLE = "CP Settled Cases";
+const CP_SUB = "Cases settled, what settled on them, and what is still outstanding, by month.";
+const CP_EMPTY = "No CP settled cases for this run.";
 
 // `pct` false leaves out the Settlement % columns, for a report that has none.
 function Block({ title, sub, rows, totals, block, monthLabel, pace, monthWeeks,
@@ -18,13 +19,7 @@ function Block({ title, sub, rows, totals, block, monthLabel, pace, monthWeeks,
     () => withMonthWeeks(pivot(rows, totals, block, order), monthWeeks, block),
     [rows, totals, block, monthWeeks, order]);
   const paced = useMemo(() => pivotPace(pace, block, order), [pace, block, order]);
-  const [open, setOpen] = useState(() => new Set());
-
-  const toggle = (m) => setOpen((was) => {
-    const next = new Set(was);
-    if (next.has(m)) next.delete(m); else next.add(m);
-    return next;
-  });
+  const [open, toggle] = useToggleSet();
 
   const { columns, spans } = useMemo(() => {
     const week = (w, month) => (
@@ -34,21 +29,11 @@ function Block({ title, sub, rows, totals, block, monthLabel, pace, monthWeeks,
     // A closed month's name, with the round + (or -) that opens it into its weeks.
     const monthHead = (m, label) => {
       if (!p.weeksOf[m]?.length) return label;
-      const shut = !open.has(m);
-      const say = shut ? `Open ${MONTH_FULL[bucketNum(m)]} into its weeks`
-                       : `Close ${MONTH_FULL[bucketNum(m)]} back to its total`;
+      const name = monthFull(bucketNum(m));
       return (
-        <span className="month-head">
-          <span>{label}</span>
-          <button type="button" className={`expand-month${shut ? "" : " open"}`}
-                  onClick={() => toggle(m)} aria-expanded={!shut}
-                  aria-label={say} title={say}>
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-              <path d={shut ? "M5 1.8v6.4M1.8 5h6.4" : "M1.8 5h6.4"} fill="none"
-                    stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-            </svg>
-          </button>
-        </span>
+        <OpenableHead label={label} open={open.has(m)} onClick={() => toggle(m)}
+                      say={open.has(m) ? `Close ${name} back to its total`
+                                       : `Open ${name} into its weeks`} />
       );
     };
 
@@ -71,7 +56,7 @@ function Block({ title, sub, rows, totals, block, monthLabel, pace, monthWeeks,
     for (const m of p.months) {
       if (!isOpen(m)) { add(cell(m, monthHead(m, bucketLabel(m)))); continue; }
       const weeks = p.weeksOf[m];
-      first.push({ label: monthHead(m, `${MONTH_FULL[bucketNum(m)]}`),
+      first.push({ label: monthHead(m, monthFull(bucketNum(m))),
                    span: wide * (weeks.length + 1), className: "opened month-group" });
       for (const w of weeks) {
         const pair = cell(`${m}${w}`, null);
@@ -94,7 +79,7 @@ function Block({ title, sub, rows, totals, block, monthLabel, pace, monthWeeks,
     columns.push(col.strong("_total", "Year to date"));
     first.push({ label: "Grand total", span: 1, rowSpan: tall });
     return { columns, spans: twoRows ? [first, second] : first };
-  }, [p, monthLabel, open, weekSpans, currentMonth, pct]);
+  }, [p, monthLabel, open, toggle, weekSpans, currentMonth, pct]);
 
   const paceColumns = useMemo(() => [
     GROUP,
@@ -127,7 +112,7 @@ export default function Settlement({ settlement, totals, pace, cp, monthLabel,
 
   const cpRows = useMemo(() => {
     if (!cp?.length) return [];
-    const sum = (k) => cp.reduce((s, r) => s + r[k], 0);
+    const sum = (k) => sumOf(cp, k);
     return [
       ...cp.map((r) => ({ ...r, label: bucketLabel(`M${r.month}`) })),
       { month: TOTAL, label: TOTAL, cases: sum("cases"),
@@ -156,9 +141,7 @@ export default function Settlement({ settlement, totals, pace, cp, monthLabel,
                   currentMonth={currentMonth} />
       ) : (
       <TableCard
-        title="CP Settled Cases"
-        sub="Cases settled, what settled on them, and what is still outstanding, by month."
-        empty="No CP settled cases for this run."
+        title={CP_TITLE} sub={CP_SUB} empty={CP_EMPTY}
         columns={[
           col.label("label", "Month", { width: 140, className: "sticky" }),
           col.count("cases", "# of Cases"),
@@ -184,7 +167,7 @@ function CpAcross({ cp, label, year, currentMonth }) {
     ];
     for (const m of grid.months) {
       const className = m === currentMonth ? "current" : undefined;
-      spans.push({ label: `${MONTH_FULL[m]}${year ? ` ${year}` : ""}`, span: 3, className });
+      spans.push({ label: `${monthFull(m)}${year ? ` ${year}` : ""}`, span: 3, className });
       columns.push(...three(`m${m}_`, className));
     }
     spans.push({ label: "Grand Total", span: 3 });
@@ -193,11 +176,8 @@ function CpAcross({ cp, label, year, currentMonth }) {
   }, [grid.months, year, currentMonth]);
 
   return (
-    <TableCard
-      title="CP Settled Cases"
-      sub="Cases settled, what settled on them, and what is still outstanding, by month."
-      empty="No CP settled cases for this run."
-      columns={columns} spans={spans} rows={grid.rows} />
+    <TableCard title={CP_TITLE} sub={CP_SUB} empty={CP_EMPTY}
+               columns={columns} spans={spans} rows={grid.rows} />
   );
 }
 

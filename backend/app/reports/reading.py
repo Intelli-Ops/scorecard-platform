@@ -1,6 +1,6 @@
 """Reads one source sheet and records how long it took."""
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 import time
@@ -9,6 +9,8 @@ import fastexcel
 import polars as pl
 
 from .cache import Cache, NoCache, ParquetCache
+from .locate import SourceSet
+from .notes import Note
 
 
 def name_key(name) -> str:
@@ -73,7 +75,6 @@ class FileRead:
     filename: str
     rows: int
     seconds: float
-    from_cache: bool = False
 
 
 def timed_reader(cache: Cache | None, reads: list[FileRead]):
@@ -91,10 +92,9 @@ def timed_reader(cache: Cache | None, reads: list[FileRead]):
         ck = (ParquetCache.key_for(key, path)
               if isinstance(cache, ParquetCache) else key)
         df = tidy_columns(cache.get_or_read(ck, load))     # cached before tidying, too
-        elapsed = time.perf_counter() - t
         reads.append(FileRead(key=key, source_key=source_key or key, label=label,
                               filename=path.name, rows=df.height,
-                              seconds=elapsed, from_cache=elapsed < 0.25))
+                              seconds=time.perf_counter() - t))
         return df
 
     return timed
@@ -113,3 +113,63 @@ def provider_list(rules: dict) -> pl.DataFrame:
         schema={"BUSINESSREGID": pl.Float64, "PROVIDER ID": pl.Utf8,
                 "PROVIDER NAME": pl.Utf8, "Provider Status": pl.Utf8,
                 "Provider Group": pl.Utf8})
+
+
+@dataclass
+class Sources:
+    """A build's uploaded files as tables. Each is None when its file was not
+    uploaded - a partial build."""
+    owner_ar: pl.DataFrame | None
+    custom_ar: pl.DataFrame | None           # Closing Order / Validity / Status lookups
+    providers: pl.DataFrame                  # provider -> group map
+    delta_sheets: dict[str, pl.DataFrame]    # only the sheets uploaded
+    payments: pl.DataFrame | None            # Collection High-Level
+    hearing_noi: pl.DataFrame | None         # CP Settled Cases
+    sql_doc: pl.DataFrame | None             # KPI: SBR and DDE
+    scorecard: pl.DataFrame | None           # KPI numbers - may legitimately be absent
+    gfs_cases: pl.DataFrame | None = None    # GFS only: which cases count as GFS
+    delta_comments: dict[str, pl.DataFrame] = field(default_factory=dict)   # GFS only
+    reads: list[FileRead] = field(default_factory=list)
+    notes: list[Note] = field(default_factory=list)
+
+
+def read_sources(sources: SourceSet, rules: dict, cache: Cache | None,
+                 custom_columns: list[str], hearing_columns: list[str] | None = None
+                 ) -> tuple[Sources, Callable]:
+    """Every input both reports read, and the read function for any the caller adds."""
+    reads: list[FileRead] = []
+    timed = timed_reader(cache, reads)
+
+    def sheet(key: str, label: str, name, **kwargs) -> pl.DataFrame | None:
+        path = sources.optional(key)
+        return timed(key, label, path, lambda: load_sheet(path, name, **kwargs))
+
+    books = {"wc": sources.optional("delta_wc"), "mlcr": sources.optional("delta_mlcr")}
+    delta_sheets: dict[str, pl.DataFrame] = {}
+    for spec in rules["delta"]["sources"]:
+        book, name = books[spec["workbook"]], spec["sheet"]
+        df = timed(f"delta_{name}", name, book,
+                   lambda b=book, s=name, c=list(spec["columns"].values()):
+                       load_sheet(b, s, header_row=0, use_columns=c),
+                   source_key=f"delta_{spec['workbook']}")
+        if df is not None:
+            delta_sheets[name] = df
+
+    sql_path = sources.optional("document_log")
+    hearing = {"use_columns": hearing_columns} if hearing_columns else {}
+    src = Sources(
+        owner_ar=sheet("owner_case_ar", "Combined Owner Case AR", "Sheet1", header_row=0),
+        custom_ar=sheet("custom_case_ar", "Combined Custom Case AR", "Sheet1", header_row=0,
+                        use_columns=custom_columns),
+        providers=provider_list(rules),
+        delta_sheets=delta_sheets,
+        payments=sheet("payment_detail", "Payment Detail Report",
+                       rules["collections"]["sheet"], header_row=0),
+        hearing_noi=sheet("hearing_calendar", "Hearing Calendar", "NOI, CP Settlements",
+                          header_row=0, **hearing),
+        sql_doc=timed("document_log", "SQL document log", sql_path,
+                      lambda: pl.read_csv(sql_path)),
+        scorecard=sheet("kpi_numbers", "KPI numbers",
+                        (rules["kpi"].get("scorecard") or {}).get("sheet", 0), header_row=None),
+        reads=reads)
+    return src, timed

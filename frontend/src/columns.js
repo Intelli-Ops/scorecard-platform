@@ -1,7 +1,7 @@
 // Column definitions shared by every table.
 import { count, money, pct } from "./format.js";
 
-export const TOTAL = "Total";
+export { TOTAL } from "./layout.js";
 
 export const TONES = ["green", "teal", "blue", "violet", "amber", "rose"];
 
@@ -29,9 +29,11 @@ export const col = {
   count: (key, label, extra = {}) =>
     base(key, label, { render: (r) => dash(r[key], count), ...extra }),
 
-  strong: (key, label, extra = {}) =>
-    total(base(key, label, { render: (r) => dash(r[key] || null, money), ...extra })),
+  strong: (key, label, extra = {}) => total(col.money(key, label, extra)),
 };
+
+// The provider-group column most grids lead with.
+export const GROUP = col.label("group", "Group", { width: 186, className: "sticky", sortable: true });
 
 // Mark any column as a total column, whatever it holds.
 export function total(column) {
@@ -43,7 +45,7 @@ export function total(column) {
 export function amountPctPair(bucket, label, { current = false } = {}) {
   const className = current ? "current" : undefined;
   return {
-    span: { label, span: 2, className: current ? "current" : undefined },
+    span: { label, span: 2, className },
     columns: [
       col.money(bucket, "Amount", { className }),
       col.pct(`${bucket}_pct`, "Settlement %", { className }),

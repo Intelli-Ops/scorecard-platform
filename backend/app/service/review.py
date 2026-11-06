@@ -4,7 +4,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from ..db.models import Run, RunInput, RunNote
+from ..db.models import Run, RunInput
 from ..reports import get as get_report
 from ..reports.notes import ACTION, WARNING, INFO, SEVERITY_ORDER
 from . import runner
@@ -172,18 +172,3 @@ def history(session: Session, report_key: str, weeks: int = 12) -> list[dict]:
         })
     return out
 
-
-def metric_over_time(session: Session, report_key: str, code: str,
-                     field: str) -> list[dict]:
-    """One number from one warning, across every week that reported it."""
-    stmt = (select(Run, RunNote)
-            .join(RunNote, RunNote.run_id == Run.id)
-            .where(Run.report_key == report_key, RunNote.code == code,
-                   Run.status.in_(("review", "approved")))
-            .order_by(Run.week))
-    out = []
-    for run, note in session.execute(stmt):
-        value = (note.detail or {}).get(field)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            out.append({"week": run.week, "run_id": run.id, "value": value})
-    return out

@@ -1,8 +1,8 @@
 // The year's collections month by month (the table under the Collections tab), without React.
-import { inSheetOrder } from "./layout.js";
+import { TOTAL, inSheetOrder, sumOf } from "./layout.js";
 import { PAYMENT_TYPES } from "./collections-model.js";
 
-export const TOTAL = "Total";
+export { TOTAL };
 
 // One row per group: `m10` is a month's total, `m10w2` a week's, `m10w2_BILLING` a payment
 // type's within that week, `_total` the year so far. Only months taken from a build have
@@ -40,6 +40,6 @@ export function pivotHistory(h) {
 
   const total = { group: TOTAL };
   const keys = new Set(body.flatMap((g) => Object.keys(g)).filter((k) => k !== "group"));
-  for (const k of keys) total[k] = body.reduce((s, g) => s + (g[k] ?? 0), 0);
+  for (const k of keys) total[k] = sumOf(body, k);
   return { months, weeksOf, typesOf, rows: [...body, total] };
 }

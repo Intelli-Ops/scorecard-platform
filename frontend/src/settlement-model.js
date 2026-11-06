@@ -1,7 +1,7 @@
 // Settlement High-Level arithmetic, without React.
-import { inSheetOrder } from "./layout.js";
+import { TOTAL, inSheetOrder, sumOf } from "./layout.js";
 
-export const TOTAL = "Total";
+export { TOTAL };
 
 const BLOCK_ORDER = ["in house", "board"];
 export function sortBlocks(names) {
@@ -48,7 +48,7 @@ export function pivot(rows, totals, block, order = []) {
 
   const total = { group: TOTAL, _month: 0, _total: 0 };
   for (const b of [...months, ...weeks]) {
-    total[b] = body.reduce((s, g) => s + (g[b] ?? 0), 0);
+    total[b] = sumOf(body, b);
     if (pctFor[b] != null) total[`${b}_pct`] = pctFor[b];
     total._total += total[b];
     if (isWeek(b)) total._month += total[b];
@@ -101,7 +101,7 @@ export function pivotPace(pace, block, order = []) {
     Object.values(byGroup).sort((a, b) => (b[last] ?? 0) - (a[last] ?? 0)), order,
     (group) => ({ group }));
   const total = { group: TOTAL };
-  for (const w of weeks) total[w] = body.reduce((s, g) => s + (g[w] ?? 0), 0);
+  for (const w of weeks) total[w] = sumOf(body, w);
   return { weeks, rows: [...body, total] };
 }
 

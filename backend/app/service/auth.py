@@ -76,10 +76,9 @@ def _disposable() -> frozenset[str]:
 
 def is_disposable(email: str) -> bool:
     """Whether the address is at a temporary-email provider, or a subdomain of one."""
-    domain = email.rpartition("@")[2].lower()
-    blocked = _disposable() | settings.blocked_email_domains
-    labels = domain.split(".")
-    return any(".".join(labels[i:]) in blocked for i in range(len(labels) - 1))
+    labels = email.rpartition("@")[2].lower().split(".")
+    return any(d in _disposable() or d in settings.blocked_email_domains
+               for d in (".".join(labels[i:]) for i in range(len(labels) - 1)))
 
 
 def clean_email(raw: str) -> str:
@@ -200,13 +199,11 @@ def sign_in(db: DbSession, email: str, password: str, *,
         raise LoginRefused(WRONG, email=lookup, reason="no_account")
 
     lock = _lock_key(user, ip)
-    wait = ratelimit.blocked(lock, LOCK)
-    if wait:
-        minutes = max(1, round(wait / 60))
+    if wait := ratelimit.blocked(lock, LOCK):
         raise LoginRefused(
             f"Sign-in to this account from here is locked after too many wrong "
-            f"passwords. Try again in {minutes} minute{'s' if minutes != 1 else ''}"
-            f", or ask an admin to unlock it.",
+            f"passwords. Try again in {ratelimit.minutes_text(wait)}, or ask an "
+            f"admin to unlock it.",
             email=lookup, user=user, reason="locked")
 
     if not verify_password(password or "", user.password_hash):
@@ -221,7 +218,7 @@ def sign_in(db: DbSession, email: str, password: str, *,
         raise LoginRefused(WRONG, email=lookup, user=user)
 
     if user.pending and not user.email_verified_at:
-        raise LoginRefused(f"Confirm your email address first: open the link "
+        raise LoginRefused(f"Confirm your email address first: enter the code "
                            f"we sent to {user.email}.",
                            email=lookup, user=user, reason="unverified")
     if user.pending:
@@ -289,12 +286,17 @@ def start_session(db: DbSession, user: User, *, ip: str | None = None,
     return token
 
 
-def session_for_token(db: DbSession, token: str | None) -> Session | None:
-    """The live session a token opens, or None."""
+def _session_row(db: DbSession, token: str | None) -> Session | None:
+    """The session row a token names, live or not."""
     if not token:
         return None
-    row = db.execute(select(Session).where(Session.token == digest(token))
-                     ).scalar_one_or_none()
+    return db.execute(select(Session).where(Session.token == digest(token))
+                      ).scalar_one_or_none()
+
+
+def session_for_token(db: DbSession, token: str | None) -> Session | None:
+    """The live session a token opens, or None."""
+    row = _session_row(db, token)
     if row is None or row.revoked or row.expires_at < utcnow():
         return None
     user = row.user
@@ -317,10 +319,7 @@ def touch(db: DbSession, row: Session, ip: str | None) -> None:
 
 def sign_out(db: DbSession, token: str | None) -> User | None:
     """End the session this token opens."""
-    if not token:
-        return None
-    row = db.execute(select(Session).where(Session.token == digest(token))
-                     ).scalar_one_or_none()
+    row = _session_row(db, token)
     if row is None or row.revoked:
         return None
     row.revoked = True
@@ -549,11 +548,13 @@ def approve(db: DbSession, actor: User, target: User, reports=None) -> User:
 def set_active(db: DbSession, actor: User, target: User, active: bool) -> User:
     """Disable or re-enable."""
     _intervene(actor, target)
+    if target.pending:
+        raise AdminError(f"{target.email} is waiting for approval - approve or "
+                         f"turn down the account instead.")
     if not active:
         keep_a_system_admin(db, target, "disabling them")
         revoke_sessions(db, target.id)
     target.is_active = active
-    target.pending = False
     db.flush()
     return target
 

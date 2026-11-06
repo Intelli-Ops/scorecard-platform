@@ -246,8 +246,7 @@ def delete_activity(body: ActivityDelete, request: Request,
                     admin: User = Depends(require_admin)) -> dict:
     """Delete events from the log - system admins only."""
     if not admin.is_system_admin:
-        audit.record("admin.denied", request=request, user=admin, outcome="denied",
-                     target="delete activity")
+        audit.denied(request, admin, "delete activity")
         raise HTTPException(403, "Only a system admin can delete activity.")
     try:
         req = audit.DeleteRequest(body.ids, body.since, body.until, body.everything)
@@ -319,12 +318,15 @@ def delete_holiday(day: dt.date, request: Request,
         return gone
 
 
+def _provider_row(p: Provider) -> dict:
+    return _provider(p) | {"set_by": p.set_by, "set_at": p.set_at}
+
+
 @router.get("/providers")
 def list_providers() -> list[dict]:
     """The provider list, by BUSINESSREGID."""
     with session() as s:
-        return [_provider(p) | {"set_by": p.set_by, "set_at": p.set_at}
-                for p in s.scalars(select(Provider).order_by(Provider.regid))]
+        return [_provider_row(p) for p in s.scalars(select(Provider).order_by(Provider.regid))]
 
 
 @router.post("/providers")
@@ -341,7 +343,7 @@ def add_provider(body: ProviderIn, request: Request,
         s.flush()
         audit.record("provider.add", db=s, request=request, user=admin,
                      target=str(p.regid), detail=_provider(p))
-        return _provider(p) | {"set_by": p.set_by, "set_at": p.set_at}
+        return _provider_row(p)
 
 
 @router.put("/providers/{regid}")
@@ -372,7 +374,7 @@ def edit_provider(regid: int, body: ProviderIn, request: Request,
                      target=str(regid),
                      detail={k: {"was": was[k], "now": now[k]}
                              for k in now if was[k] != now[k]})
-        return now | {"set_by": p.set_by, "set_at": p.set_at}
+        return _provider_row(p)
 
 
 @router.delete("/providers/{regid}")

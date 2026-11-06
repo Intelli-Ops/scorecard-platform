@@ -28,6 +28,29 @@ export function TableCard({ title, sub, right, columns, rows, spans,
   );
 }
 
+// The round + (or -) beside a heading that opens a month or a week into its parts.
+export function Opener({ open, say, onClick }) {
+  return (
+    <button type="button" className={`expand-month${open ? " open" : ""}`}
+            onClick={onClick} aria-expanded={open} aria-label={say} title={say}>
+      <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+        <path d={open ? "M1.8 5h6.4" : "M5 1.8v6.4M1.8 5h6.4"} fill="none"
+              stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      </svg>
+    </button>
+  );
+}
+
+// A heading with its + (or -) beside it.
+export function OpenableHead({ label, open, say, onClick }) {
+  return (
+    <span className="month-head">
+      <span>{label}</span>
+      <Opener open={open} say={say} onClick={onClick} />
+    </span>
+  );
+}
+
 // A week's heading, with the days it covers on a line of their own beneath it.
 export function WeekHead({ label, days }) {
   if (!days) return label;

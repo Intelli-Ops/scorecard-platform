@@ -1,10 +1,8 @@
 // KPI High-Level arithmetic, without React.
-import { inSheetOrder, rowsOf } from "./layout.js";
+import { monthName } from "./format.js";
+import { TOTAL, inSheetOrder, rowsOf, sumOf } from "./layout.js";
 
-export const TOTAL = "Total";
-
-const MONTHS = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+export { TOTAL };
 
 // The block order for a build that recorded none.
 const ORDER = ["sbr", "pmr", "ddel", "ntp", "medical index", "dor",
@@ -30,7 +28,7 @@ function monthsOf(rows, fallback) {
   const named = [...new Set(rows.map((r) => r.month).filter((m) => m != null))];
   if (!named.length) return [{ key: "value", label: fallback ?? "Value" }];
   return named.sort((a, b) => a - b)
-    .map((m) => ({ key: `m${m}`, label: MONTHS[m] ?? String(m), month: m }));
+    .map((m) => ({ key: `m${m}`, label: monthName(m), month: m }));
 }
 
 // One table per block, each with a Total row. Blocks and their rows follow the workbook
@@ -56,7 +54,7 @@ export function kpiBlocks(kpi, monthLabel, layout = []) {
 
     const total = { group: TOTAL, _total: 0 };
     for (const m of months) {
-      total[m.key] = body.reduce((s, g) => s + (g[m.key] ?? 0), 0);
+      total[m.key] = sumOf(body, m.key);
       total._total += total[m.key];
     }
 

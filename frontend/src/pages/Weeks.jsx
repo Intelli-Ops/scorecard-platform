@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api, bytes, when } from "../api";
 import { useAuth } from "../auth";
 import WorkingDays from "../WorkingDays";
+import { Select } from "../select";
 import { Card, DataTable, ErrorBox, Loading, Modal, Picker }
   from "../components";
 import { Button, DeleteButton } from "../buttons";
@@ -21,12 +22,18 @@ function isoWeek(d = new Date()) {
   return `${t.getUTCFullYear()}-W${String(n).padStart(2, "0")}`;
 }
 
+// The week a scorecard is made for: last week. Each week's files are uploaded and built the
+// week after it ends (in week 45, week 44 is reported), so that is where the page starts.
+function reportingWeek(d = new Date()) {
+  return isoWeek(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7));
+}
+
 const WEEK_RE = /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/;
 
 export default function Weeks() {
   const nav = useNavigate();
   const { user } = useAuth();
-  const [week, setWeek] = useState(isoWeek());
+  const [week, setWeek] = useState(() => reportingWeek());
   const [forReport, setForReport] = useState("");
   const [progress, setProgress] = useState(null);
   const [over, setOver] = useState(false);
@@ -141,11 +148,9 @@ export default function Weeks() {
             <input type="text" value={week} size={9}
                    onChange={(e) => setWeek(e.target.value.trim())} />
             {weeks.length > 0 && (
-              <select className="picker" value=""
-                      onChange={(e) => e.target.value && setWeek(e.target.value)}>
-                <option value="">earlier weeks…</option>
-                {weeks.map((w) => <option key={w.week} value={w.week}>{w.week}</option>)}
-              </select>
+              <Select value="" prompt="earlier weeks…" label="Earlier weeks"
+                      onChange={(v) => v && setWeek(v)}
+                      options={weeks.map((w) => w.week)} />
             )}
           </div>
           <span className="row tight">

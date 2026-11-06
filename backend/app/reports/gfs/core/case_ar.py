@@ -1,126 +1,46 @@
 """GFS: Case AR and Raw Data (steps doc phases 1-3)."""
 from __future__ import annotations
-from dataclasses import dataclass, field
-import re
 
 import polars as pl
 
-from ...common import StageLog, i64 as _i64
+from ...common import case_ar_rows, i64
 
 
-@dataclass
-class BuildReport(StageLog):
-    """Row counts at each stage, so a wrong number can be located, not guessed at."""
-    dropped_no_group: int = 0
-    dropped_no_status: int = 0
-    unknown_regids: list[int] = field(default_factory=list)
-    validity_fixed: dict[str, int] = field(default_factory=dict)
-    closing_order_collapsed: int = 0
+def _gfs_rows(owner_ar: pl.DataFrame, ca: dict) -> pl.DataFrame:
+    """The Owner Case AR rows of the GFS owners and case types."""
+    return owner_ar.filter(pl.col("OWNER NAME").is_in(ca["owner_names"])
+                           & pl.col("CASETYPE").is_in(ca["case_types"]))
 
 
 def gfs_case_ids(owner_ar: pl.DataFrame, rules: dict) -> pl.DataFrame:
     """PHASE 1 output: the GFS case list the manual process pastes into the
     Supporting File's 'GFS Cases' sheet."""
-    r = rules["case_ar"]
-    return (owner_ar
-            .filter(pl.col("OWNER NAME").is_in(r["owner_names"])
-                    & pl.col("CASETYPE").is_in(r["case_types"]))
-            .select(_i64("CASEID").alias("CASEID"))
-            .unique())
+    return _gfs_rows(owner_ar, rules["case_ar"]).select(i64("CASEID").alias("CASEID")).unique()
 
 
-def build_raw_data(owner_ar: pl.DataFrame,
-                   provider_list: pl.DataFrame,
-                   custom_ar: pl.DataFrame,
-                   rules: dict) -> tuple[pl.DataFrame, BuildReport]:
-    """Combined Owner Case AR -> the Raw Data sheet (278,930 x 12)."""
-    r = rules["case_ar"]
-    rep = BuildReport()
-
-    df = owner_ar.filter(
-        pl.col("OWNER NAME").is_in(r["owner_names"])
-        & pl.col("CASETYPE").is_in(r["case_types"])
-    )
-    rep.add("1. filter owners + case types", df.height)
-    df = df.with_columns(_i64("BUSINESSREGID").alias("BUSINESSREGID"),
-                         _i64("CASEID").alias("CASEID"))
-
-    prov = (provider_list
-            .select(_i64("BUSINESSREGID").alias("BUSINESSREGID"),
-                    pl.col("Provider Group").alias("Group"))
-            .unique(subset=["BUSINESSREGID"], keep="first"))   # VLOOKUP takes the first
-    df = df.join(prov, on="BUSINESSREGID", how="left")
-
-    if r.get("drop_rows_without_group", True):
-        no_group = df.filter(pl.col("Group").is_null())
-        rep.dropped_no_group = no_group.height
-        rep.unknown_regids = sorted(no_group["BUSINESSREGID"].unique().to_list())[:40]
-        df = df.filter(pl.col("Group").is_not_null())
-    rep.add("2. + Group, drop unmapped providers", df.height)
-
-    cus = (custom_ar
-           .with_columns(_i64("CASEID").alias("CASEID"))
-           .unique(subset=["CASEID"], keep="first")            # VLOOKUP takes the first
-           .select(["CASEID", "Closing Order", "Case_Validity", "FileStatus"]))
-    before = df.height
-    how = "inner" if r.get("drop_rows_without_status", True) else "left"
-    df = df.join(cus, on="CASEID", how=how)
-    rep.dropped_no_status = before - df.height
-    rep.add("3. + Closing Order/Validity/Status", df.height)
-
-    vmap = r.get("validity_map") or {}
-    blank_to = r.get("validity_blank_becomes")
-    rep.validity_fixed = {
-        k: df.filter(pl.col("Case_Validity") == k).height for k in vmap
-    }
-    if blank_to:
-        rep.validity_fixed["(blank)"] = df["Case_Validity"].null_count()
-    expr = pl.col("Case_Validity")
-    if vmap:
-        expr = expr.replace(vmap)
-    if blank_to:
-        expr = pl.when(pl.col("Case_Validity").is_null()).then(pl.lit(blank_to)).otherwise(expr)
-    df = df.with_columns(expr.alias("Case_Validity"))
-
-    prefix = r.get("closing_order_strip_prefix")
-    co = pl.col("Closing Order")
-    if prefix:
-        co = co.str.replace(rf"(?i)^{re.escape(prefix)}\s*", "")
-    df = df.with_columns(co.str.strip_chars().alias("Closing Order"))
-    keep, default = r["closing_order_keep"], r["closing_order_default"]
-    rep.closing_order_collapsed = df.filter(
-        pl.col("Closing Order").is_null() | ~pl.col("Closing Order").is_in(keep)).height
-    df = df.with_columns(
-        pl.when(pl.col("Closing Order").is_in(keep))
-          .then(pl.col("Closing Order"))
-          .otherwise(pl.lit(default))
-          .alias("Closing Order"))
-
-    closed = r["file_status_closed_value"]
-    df = df.with_columns(
-        pl.when(pl.col("FileStatus") == closed)
-          .then(pl.lit(closed))
-          .otherwise(pl.lit(r["file_status_open_value"]))
-          .alias("FileStatus2"))
-
-    keys, measures = r["raw_data_group_by"], r["raw_data_measures"]
-    raw = (df.group_by(keys)
-             .agg([pl.col(m).sum().alias(m) for m in measures])
-             .select(keys[:2] + ["Group"] + keys[3:] + measures))
-    rep.add("4. pivot -> Raw Data", raw.height)
-    return raw, rep
+def build_raw_data(owner_ar: pl.DataFrame, providers: pl.DataFrame,
+                   custom_ar: pl.DataFrame, rules: dict) -> pl.DataFrame:
+    """Combined Owner Case AR -> the Raw Data sheet, by case."""
+    ca = rules["case_ar"]
+    closed = ca["file_status_closed_value"]
+    df = (case_ar_rows(_gfs_rows(owner_ar, ca), providers, custom_ar, ca)
+          .with_columns(pl.when(pl.col("FileStatus") == closed).then(pl.lit(closed))
+                          .otherwise(pl.lit(ca["file_status_open_value"])).alias("FileStatus2")))
+    keys, measures = ca["raw_data_group_by"], ca["raw_data_measures"]
+    return (df.group_by(keys)
+              .agg([pl.col(m).sum() for m in measures])
+              .select(keys[:2] + ["Group"] + keys[3:] + measures)
+              .sort(keys))
 
 
 def build_case_ar(raw: pl.DataFrame, rules: dict) -> pl.DataFrame:
     """Raw Data to the Case AR sheet: a pivot by validity and closing order."""
-    r = rules["case_ar"]
-    rows, measures = r["case_ar_rows"], r["raw_data_measures"]
-    out = (raw.group_by(rows)
-              .agg(pl.len().alias("# Of Cases"),
-                   *[pl.col(m).sum().alias(m) for m in measures]))
-    v_order = {v: i for i, v in enumerate(r["case_ar_row_order"])}
-    c_order = {c: i for i, c in enumerate(r["case_ar_closing_order_order"])}
-    return (out
-            .with_columns(pl.col(rows[0]).replace_strict(v_order, default=99).alias("_v"),
-                          pl.col(rows[1]).replace_strict(c_order, default=99).alias("_c"))
-            .sort(["_v", "_c"]).drop(["_v", "_c"]))
+    ca = rules["case_ar"]
+    rows, measures = ca["case_ar_rows"], ca["raw_data_measures"]
+    v_order = {v: i for i, v in enumerate(ca["case_ar_row_order"])}
+    c_order = {c: i for i, c in enumerate(ca["case_ar_closing_order_order"])}
+    return (raw.group_by(rows)
+               .agg(pl.len().alias("# Of Cases"), *[pl.col(m).sum() for m in measures])
+               .with_columns(pl.col(rows[0]).replace_strict(v_order, default=99).alias("_v"),
+                             pl.col(rows[1]).replace_strict(c_order, default=99).alias("_c"))
+               .sort(["_v", "_c", *rows]).drop(["_v", "_c"]))

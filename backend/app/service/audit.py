@@ -112,6 +112,12 @@ def record(action: str, *, db: Session | None = None,
             "Try again; if it keeps happening, tell an admin.") from exc
 
 
+def denied(request: Request, user: User, target: str | None = None) -> None:
+    """Log an attempt at something this person's role does not allow."""
+    record("admin.denied", request=request, user=user, outcome="denied",
+           target=target or f"{request.method} {request.url.path}")
+
+
 def record_once(action: str, *, db: Session, user: User, target: str,
                 request: Request,
                 within: dt.timedelta = dt.timedelta(minutes=10)) -> None:

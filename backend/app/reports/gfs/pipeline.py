@@ -1,22 +1,23 @@
 """GFS: the full calculation, from source tables to finished tables."""
 from __future__ import annotations
-from dataclasses import dataclass, field
 import datetime as dt
+import time
 
 import polars as pl
 
-from .core.case_ar import build_raw_data, build_case_ar
-from .core.collections import build_collections
-from .core.delta import DeltaReport, attach_comments, combine_delta, build_delta
-from .core.kpi import KpiReport, build_kpi_sql, build_kpi_scorecard
-from .core.settlement import LOCATIONS, settled_rows, settlement_grids, cp_settled
 from ..closed_weeks import settlement_month_weeks
 from ..notes import Note, info, sort_notes, warning
-from ..pacing import pace_grid
 from ..partial import absent, empty, missing_books, waiting
-from ..period import Period, reporting_period, week_index_expr
+from ..period import reporting_period
+from ..result import (COLLECTIONS, RunResult, case_ar_tables, collections_table, cp_table,
+                      kpi_notes, paced, rules_layout)
 from ..review_notes import add_new_providers, review_notes, week_label
-from .readers import GfsSources
+from .core.case_ar import build_case_ar, build_raw_data
+from .core.delta import DeltaReport, attach_comments, build_delta, combine_delta
+from ..common import KpiReport
+from .core.kpi import build_kpi_scorecard, build_kpi_sql
+from .core.settlement import LOCATIONS, settled_rows, settlement_grids
+from ..reading import Sources
 
 # The four tables' columns, for a section whose files are not in yet.
 EMPTY = {
@@ -38,41 +39,11 @@ EMPTY = {
         "Group": pl.Utf8, "Closing Order": pl.Utf8, "Case_Validity": pl.Utf8,
         "Lien Filed": pl.Utf8, "Aging": pl.Utf8, "Ongoing DOR Status": pl.Utf8,
         "Ongoing DOR Details": pl.Utf8},
-    "collections": {"Group": pl.Utf8, "Week": pl.Int32, "PT": pl.Utf8, "Payment": pl.Float64},
+    "collections": COLLECTIONS,
 }
 
 GROUPS = ["A Miles", "Artheon", "Bayco", "Med-Legal", "Medvantage", "MH Express",
           "POS", "United", "Southern California"]
-
-
-@dataclass
-class RunResult:
-    """Everything one GFS run produced."""
-    raw_data: pl.DataFrame
-    case_ar: pl.DataFrame
-    delta_comparison: pl.DataFrame
-    collections: pl.DataFrame
-
-    settlement_grids: dict
-    cp_settled: dict
-    kpi: dict
-    current_month: int
-
-    settlement_pace: dict = field(default_factory=dict)
-
-    collections_pace: dict = field(default_factory=dict)
-    year: int = 0
-    settlement_month_weeks: list = field(default_factory=list)
-    period: Period | None = None
-
-    notes: list[Note] = field(default_factory=list)
-    seconds: float = 0.0
-
-    @property
-    def tables(self) -> dict[str, pl.DataFrame]:
-        return {"raw_data": self.raw_data, "case_ar": self.case_ar,
-                "delta_comparison": self.delta_comparison,
-                "collections": self.collections}
 
 
 def comment_notes(drep, rules: dict) -> list[Note]:
@@ -98,24 +69,16 @@ def comment_notes(drep, rules: dict) -> list[Note]:
     return out
 
 
-def run(src: GfsSources, rules: dict, as_of: dt.date | None = None,
+def run(src: Sources, rules: dict, as_of: dt.date | None = None,
         week: str | None = None) -> RunResult:
     """`week` is the label being reported, e.g. 2026-W37."""
-    import time
     t0 = time.perf_counter()
     as_of = as_of or dt.date.today()
     period = reporting_period(week_label(week, as_of), rules.get("holidays"),
                               rules.get("working_days"))
+    notes = kpi_notes(src)
 
-    notes: list[Note] = [n for n in src.notes if n.code == "kpi_numbers_not_supplied"]
-
-    gone = absent(owner_case_ar=src.owner_ar, custom_case_ar=src.custom_ar)
-    if gone:
-        raw, case_ar = empty(EMPTY["raw_data"]), empty(EMPTY["case_ar"])
-        notes.append(waiting("Raw Data or Case AR", gone))
-    else:
-        raw, rep = build_raw_data(src.owner_ar, src.providers, src.custom_ar, rules)
-        case_ar = build_case_ar(raw, rules)
+    raw, case_ar = case_ar_tables(src, rules, EMPTY, notes, build_raw_data, build_case_ar)
 
     books = missing_books(rules, src.delta_sheets)
     drep = DeltaReport()
@@ -128,49 +91,30 @@ def run(src: GfsSources, rules: dict, as_of: dt.date | None = None,
     else:
         if books:
             notes.append(waiting("part of Delta Comparison and Settlement", books))
-        comb, drep = combine_delta(src.delta_sheets, rules)
+        comb = combine_delta(src.delta_sheets, rules)
         settled = settled_rows(comb, src.gfs_cases, src.providers, period)
-        grids = settlement_grids(comb, src.gfs_cases, src.providers, period, settled)
+        grids = settlement_grids(settled, period)
         month_weeks = settlement_month_weeks(settled, LOCATIONS, period, with_pct=True)
         if src.custom_ar is None:
             delta = empty(EMPTY["delta_comparison"])
             notes.append(waiting("Delta Comparison", ["custom_case_ar"]))
         else:
-            delta, drep = build_delta(comb, src.gfs_cases, src.providers, src.custom_ar,
-                                      rules, as_of=as_of, rep=drep)
+            delta = build_delta(comb, src.gfs_cases, src.providers, src.custom_ar,
+                                rules, as_of, drep)
             delta = attach_comments(delta, src.delta_comments, rules, drep)
 
-    gone = absent(payment_detail=src.payments, owner_case_ar=src.owner_ar)
-    if gone:
-        coll = empty(EMPTY["collections"])
-        notes.append(waiting("Collections", gone))
-    else:
-        coll, crep = build_collections(src.payments, src.gfs_cases, src.providers, rules,
-                                       year=period.year, month=period.month,
-                                       week_expr=week_index_expr("paid_on", period))
+    coll = collections_table(src, rules, period, notes, src.gfs_cases,
+                             owner_case_ar=src.owner_ar)
+    cp = cp_table(src, period, notes)
+    settlement_pace, collections_pace = paced(
+        {block: amounts for block, (amounts, _pcts, _totals) in grids.items()}, coll, period)
 
-    if src.hearing_noi is None:
-        cp = {}
-        notes.append(waiting("CP Settled Cases", ["hearing_calendar"]))
-    else:
-        cp = cp_settled(src.hearing_noi, period.year, period.month)
-
-    weeks = [f"W{i}" for i in range(1, period.weeks_so_far + 1)]
-    paced = {block: pace_grid(amounts, weeks, period)
-             for block, (amounts, _pcts, _totals) in grids.items()}
-
-    coll_amounts = {(g, f"W{w}"): amt for g, w, amt in
-                    coll.group_by(["Group", "Week"])
-                        .agg(pl.col("Payment").sum().alias("amt"))
-                        .select("Group", "Week", "amt").rows()}
-    collections_paced = pace_grid(coll_amounts, weeks, period)
-
+    krep = KpiReport()
     if src.sql_doc is None:
-        kpi, krep = {}, KpiReport()
+        kpi = {}
         notes.append(waiting("KPI SBR or DDE", ["document_log"]))
     else:
-        kpi, krep = build_kpi_sql(src.sql_doc, src.providers, rules,
-                                  period.year, period.month)
+        kpi = build_kpi_sql(src.sql_doc, src.providers, rules, period.year, period.month, krep)
     kpi.update(build_kpi_scorecard(src.scorecard, src.providers, rules, krep))
     added = add_new_providers(kpi, krep)
 
@@ -183,8 +127,7 @@ def run(src: GfsSources, rules: dict, as_of: dt.date | None = None,
     return RunResult(
         raw_data=raw, case_ar=case_ar, delta_comparison=delta, collections=coll,
         settlement_grids=grids, cp_settled=cp, kpi=kpi, current_month=period.month,
-        settlement_pace=paced, collections_pace=collections_paced,
+        settlement_pace=settlement_pace, collections_pace=collections_pace,
         year=period.year, settlement_month_weeks=month_weeks, period=period,
-        notes=sort_notes(notes),
-        seconds=time.perf_counter() - t0,
-    )
+        layout=rules_layout(rules), notes=sort_notes(notes),
+        seconds=time.perf_counter() - t0)

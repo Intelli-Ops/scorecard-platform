@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.models import Base, Run, RunNote, RunTable
 from app.reports.notes import ACTION, WARNING, INFO, info, warning, action, sort_notes
-from app.service.review import review, previous_run, history, metric_over_time
+from app.service.review import review, previous_run, history
 
 
 @pytest.fixture
@@ -104,13 +104,6 @@ def test_table_row_counts_are_compared_with_last_week(db):
     assert t["rows_last_week"] == 278_000
     assert t["change"] == 930
 
-
-def test_one_number_can_be_followed_across_weeks(db):
-    for week, rows in (("2026-W33", 900), ("2026-W34", 1500), ("2026-W35", 112960)):
-        add_run(db, week, [warning("dropped", f"{rows} dropped", rows=rows)])
-    series = metric_over_time(db, "gfs", "dropped", "rows")
-    assert [p["value"] for p in series] == [900, 1500, 112960]
-    assert [p["week"] for p in series] == ["2026-W33", "2026-W34", "2026-W35"]
 
 
 def test_history_lists_runs_newest_first_with_their_counts(db):

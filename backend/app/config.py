@@ -75,12 +75,16 @@ class Settings:
         self.public_url = (os.environ.get("SCORECARD_PUBLIC_URL", "").strip()
                            or "http://localhost:5173").rstrip("/")
 
+    def zone(self) -> dt.tzinfo:
+        """Where the business is; the server's own zone if that is not known."""
+        try:
+            return ZoneInfo(self.timezone)
+        except Exception:                     # unknown name, or no tz data
+            return dt.datetime.now().astimezone().tzinfo
+
     def today(self) -> dt.date:
         """Today's date where the business is - not where the server is."""
-        try:
-            return dt.datetime.now(ZoneInfo(self.timezone)).date()
-        except Exception:                     # unknown name, or no tz data
-            return dt.date.today()
+        return dt.datetime.now(self.zone()).date()
 
     def ensure(self) -> None:
         for d in (self.data_dir, self.object_dir, self.results_dir):

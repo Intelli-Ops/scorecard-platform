@@ -191,7 +191,7 @@ export function ScorecardView({ id, header }) {
       {tab === "delta" && (allProviders
         ? <DeltaComparison rows={delta} order={rowsOf(layout, "delta")}
                            currentMonth={currentMonth} year={meta?.[0]?.year} />
-        : <Delta rows={delta} />)}
+        : <Delta rows={delta} dorOrder={rowsOf(layout, "dor")} />)}
 
       {tab === "collections" && (
         <Collections rows={collections} pace={collectionsPace}

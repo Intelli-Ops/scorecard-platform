@@ -66,15 +66,3 @@ def test_a_group_that_settled_nothing_paces_to_nothing():
 def test_pace_of_nothing_elapsed_is_nothing_rather_than_a_crash():
     assert pace(1000.0, 0, 21) == 0.0
 
-
-def test_excel_weeknum_starts_weeks_on_sunday():
-    """Excel's weeknum(date, 1)"""
-    import datetime as dt
-    import polars as pl
-    from app.reports.common import excel_weeknum
-    days = [dt.date(2026, 1, 3), dt.date(2026, 1, 4),    # Sat, Sun
-            dt.date(2023, 1, 1), dt.date(2023, 1, 7), dt.date(2023, 1, 8)]
-    got = lambda year: (pl.DataFrame({"d": days})
-                        .select(excel_weeknum("d", year))["d"].to_list())
-    assert got(2026)[:2] == [1, 2]
-    assert got(2023)[2:] == [1, 1, 2]

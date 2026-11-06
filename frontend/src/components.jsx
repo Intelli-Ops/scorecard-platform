@@ -1,6 +1,7 @@
 // Shared components: password fields, cards, tiles, filters, tables, status labels and the pop-up window.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CapsIcon, CrossIcon, EyeIcon, EyeOffIcon } from "./icons";
+import { Select } from "./select";
 import { sortAtoZ } from "./sort-model";
 
 // Every password box in the app.
@@ -119,26 +120,17 @@ export function Segmented({ options, value, onChange, label, onClear }) {
 }
 
 // A dropdown, dressed the same way as the segmented control so the two read as one family.
-export function Picker({ label, value, onChange, options, placeholder, active,
-                         onClear }) {
+// With `multiple`, `value` is a list and several choices can be ticked at once.
+export function Picker({ label, value, onChange, options, placeholder, prompt, active,
+                         onClear, multiple }) {
   const clearable = active && onClear;
   return (
     <div className={`filter${active ? " on" : ""}`}>
       {label && <span className="filter-label">{label}</span>}
       <span className="clearable">
-        <select className={`picker${active ? " on" : ""}${clearable ? " has-x" : ""}`}
-                value={value} onChange={(e) => onChange(e.target.value)}>
-          {placeholder && <option value="">{placeholder}</option>}
-          {options.map((o) =>
-            typeof o === "string"
-              ? <option key={o} value={o}>{o}</option>
-              : o.group
-                ? <optgroup key={o.group} label={o.group}>
-                    {o.options.map((i) =>
-                      <option key={i.value} value={i.value}>{i.label}</option>)}
-                  </optgroup>
-                : <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
+        <Select className={`${active ? "on" : ""}${clearable ? " has-x" : ""}`}
+                label={label} value={value} onChange={onChange} options={options}
+                placeholder={placeholder} prompt={prompt} multiple={multiple} />
         {clearable && <ClearX what={label} onClick={onClear} />}
       </span>
     </div>

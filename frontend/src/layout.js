@@ -1,4 +1,11 @@
-// The client's row order for each block, from a build's "layout" figure, without React.
+// What the table models share, without React: the Total row, and the client's row order
+// for each block from a build's "layout" figure.
+
+// The name every table gives its Total row.
+export const TOTAL = "Total";
+
+// One column summed over `rows`, a missing cell counting as 0.
+export const sumOf = (rows, key) => rows.reduce((s, r) => s + (r[key] ?? 0), 0);
 
 // Names match whatever their case or spacing: "BayCo" is "Bayco".
 const key = (name) => String(name ?? "").split(/\s+/).filter(Boolean).join(" ").toLowerCase();

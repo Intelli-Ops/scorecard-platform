@@ -1,9 +1,5 @@
-"""The year's collections month by month, for the table under the Collections tab.
-
-January to September 2026 are held in the collection_history table, loaded once by
-migration 0008 from the file management gave. From October 2026 each finished month
-comes from that month's last build, kept week by week and payment type by payment
-type, since each week's payment report holds only its own month."""
+"""The year's collections month by month, for the table under the Collections tab:
+January to September 2026 from migration 0008's table, later months from their builds."""
 from __future__ import annotations
 
 import polars as pl
@@ -29,16 +25,18 @@ def _shown_groups(rules: dict) -> list[str] | None:
     return None
 
 
-def _month_build(s: Session, report_key: str, year: int, month: int,
-                 rules: dict) -> Run | None:
-    """The build a finished month's collections are taken from: its last approved
+def _month_builds(s: Session, report_key: str, year: int, rules: dict) -> dict[int, Run]:
+    """The build each finished month's collections are taken from: its last approved
     build, or failing that its last finished one."""
-    runs = s.scalars(select(Run).where(Run.report_key == report_key,
-                                       Run.status.in_(("approved", "review")))
-                     .order_by(Run.id.desc())).all()
-    mine = [r for r in runs if (p := runner.month_of(r.week, rules)).year == year
-            and p.month == month]
-    return next((r for r in mine if r.status == "approved"), mine[0] if mine else None)
+    out: dict[int, Run] = {}
+    for r in s.scalars(select(Run).where(Run.report_key == report_key,
+                                         Run.status.in_(("approved", "review")))
+                       .order_by(Run.id.desc())):
+        p = runner.month_of(r.week, rules)
+        if p.year == year and (p.month not in out or (r.status == "approved"
+                                                        and out[p.month].status != "approved")):
+            out[p.month] = r
+    return out
 
 
 def for_run(s: Session, run: Run) -> dict:
@@ -49,16 +47,19 @@ def for_run(s: Session, run: Run) -> dict:
     year = period.year
     shown = _shown_groups(rules)
     keep = None if shown is None else {name_key(g) for g in shown}
-    wanted = lambda g: g is not None and (keep is None or name_key(g) in keep)  # noqa: E731
+
+    def wanted(g) -> bool:
+        return g is not None and (keep is None or name_key(g) in keep)
 
     groups = {p.regid: p.provider_group for p in s.scalars(select(Provider))}
+    builds = _month_builds(s, run.report_key, year, rules)
     from_builds = set(closed_months(period))
 
     totals: dict[tuple[str, int], float] = {}
     weeks: list[dict] = []
     months: list[dict] = []
     for m in range(1, period.month):
-        build = _month_build(s, run.report_key, year, m, rules) if m in from_builds else None
+        build = builds.get(m) if m in from_builds else None
         if build is not None:
             coll = pl.read_parquet(runner.table_path(build, "collections"))
             for g, w, pt, pay in coll.select("Group", "Week", "PT", "Payment").rows():

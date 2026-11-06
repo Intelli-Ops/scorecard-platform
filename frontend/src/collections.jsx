@@ -1,14 +1,13 @@
 // The Collection High-Level tab.
 import { useMemo } from "react";
 import { money, weekDays } from "./api";
-import { assemble, col } from "./columns";
+import { GROUP, assemble, col } from "./columns";
 import { Stat, Stats, TableCard, WeekHead } from "./ui";
 import {
   collectionsPaceTotal, collectionsToDate, paymentTypeTotals,
   pivotCollections, pivotCollectionsPace, TOTAL, weekLabel,
 } from "./collections-model";
 
-const GROUP = col.label("group", "Group", { width: 186, className: "sticky", sortable: true });
 
 export default function Collections({ rows, pace, monthLabel, spans: weekSpans,
                                       currentMonth, order }) {

@@ -42,6 +42,16 @@ def test_each_filter_narrows_the_pivot(rules):
     assert out["rows"][-1]["# Of Cases"] == 1
 
 
+def test_a_filter_with_several_values_keeps_rows_matching_any(rules):
+    out = case_ar(raw(), rules, "gfs", {"group": ["Artheon", "Med-Legal"]})
+    assert out["matched"] == 3
+    out = case_ar(raw(), rules, "gfs", {"group": ["Artheon", "Med-Legal"],
+                                        "validity": ["Valid"]})
+    assert out["matched"] == 2
+    assert out["rows"][-1]["BILLED"] == pytest.approx(120.26)
+    assert case_ar(raw(), rules, "gfs", {"group": []})["matched"] == 3
+
+
 def test_gfs_file_status_is_open_or_closed(rules):
     """GFS's File status filter is FileStatus2, not the raw FileStatus."""
     out = case_ar(raw(), rules, "gfs", {})
@@ -80,3 +90,14 @@ def test_all_providers_case_ar_has_the_sheets_headings_highest_outstanding_first
 def test_nothing_matching_is_an_empty_table(rules):
     out = case_ar(raw(), rules, "gfs", {"group": "Nobody"})
     assert out["rows"] == [] and out["matched"] == 0
+
+
+def test_gfs_owner_case_ar_step_takes_bayco_with_gfs_gfs_spv_and_med_legal():
+    """PHASE 1: the owners whose cases make up the GFS case list (Bayco since November 2026)."""
+    from app.reports import load_rules
+    from app.reports.gfs.core.case_ar import gfs_case_ids
+    gfs_rules = load_rules("gfs")
+    owners = ["GFS", "GFS-SPV", "Med Legal", "Bayco", "Javlin", "Russman"]
+    owner_ar = pl.DataFrame({"CASEID": list(range(1, 7)), "OWNER NAME": owners,
+                             "CASETYPE": ["Workers Compensation"] * 6})
+    assert sorted(gfs_case_ids(owner_ar, gfs_rules)["CASEID"].to_list()) == [1, 2, 3, 4]

@@ -7,6 +7,7 @@ case_ar:
     - GFS
     - GFS-SPV
     - Med Legal              # doc shorthand: "Medlegal"
+    - Bayco                  # added November 2026
 
   case_types:                # doc shorthand -> the real values in the file
     - Workers Compensation                      # "WC"
@@ -342,3 +343,41 @@ kpi:
         Artheon: 77
         "WC ": 78
         MHE Pharmacy: 79
+
+# The workbook's row order for blocks the screens lay out as the sheet does.
+layout:
+  # Delta Comparison sheet, the second pivot (B15): Sum of Settlement Amount by Ongoing
+  # DOR Status, with Aging as its filter (90+ unless changed). Statuses come in the
+  # order the workbook lists them; one not listed here follows, A to Z. A status with
+  # nothing in the chosen brackets is left out, as the pivot leaves it out.
+  dor:
+    - "Cannot file DOR"
+    - "CIC Pending"
+    - "CP - DOR Filed"
+    - "CP Case"
+    - "CP Filed"
+    - "CP Payment Case"
+    - "CRO Effort Required"
+    - "DOR Filed"
+    - "DOR for Payment Case"
+    - "Future Hearing"
+    - "Litigation Effort Required"
+    - "NOI for Payment Served"
+    - "Not Authorized to file DOR"
+    - "Not Eligible for Pleading"
+    - "Redemption File"
+    - "Re-Review Required"
+    - "Re-Review Required for CP Payment"
+    - "Re-Review Required for NOI Payment"
+    - "Review Required for NOI"
+    - "Review Required for NOI Payment"
+    - "In Queue"
+    - "Not Eligible to file DOR"
+    - "Past Hearing 90 Days"
+    - "Not Eligible for Enforcement of Agreement"
+    - "Need to file lien"
+    - "DOR On Hold"
+    - "PMR filing in Queue"
+    - "Waiting for Order Against PMR"
+    - "Courtfiling Efforts Required"
+    - "Enforcement of Agreement Filed"

@@ -1,4 +1,5 @@
 // Case AR table layout, without React.
+import { sumOf } from "./layout.js";
 export const GRAND_TOTAL = "Grand Total";
 const SECTION_COLUMNS = ["Case_Validity", "Validity"];
 
@@ -19,7 +20,7 @@ export function sectionCaseAr({ columns, kinds, rows }) {
   for (const name of order) {
     const mine = body.filter((r) => r[by] === name);
     const sub = { [lead]: `${name} total`, _kind: "subtotal", _section: name };
-    for (const c of figures) sub[c] = mine.reduce((s, r) => s + (r[c] ?? 0), 0);
+    for (const c of figures) sub[c] = sumOf(mine, c);
     out.push({ _kind: "section", _section: name, _totals: sub });
     for (const r of mine) out.push({ ...r, _section: name });
     out.push(sub);

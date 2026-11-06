@@ -124,7 +124,7 @@ def cmd_protect_log(a):
 
 
 # Tables a new database is made with rows in - the source's rows replace them.
-SEEDED = {"holiday", "provider"}
+SEEDED = {"holiday", "provider", "collection_history"}
 
 
 def cmd_copy_db(a):

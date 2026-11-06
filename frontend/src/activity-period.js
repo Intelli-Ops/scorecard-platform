@@ -1,7 +1,7 @@
 // Day, week and month ranges for deleting activity.
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const fmt = (d) => `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+import { monthName } from "./format.js";
+
+const fmt = (d) => `${d.getDate()} ${monthName(d.getMonth() + 1)} ${d.getFullYear()}`;
 
 // "2026-09-29" -> a local Date at midnight, or null.
 export function parseDay(text) {
@@ -29,7 +29,7 @@ export function periodOf(kind, text) {
   } else if (kind === "month") {
     since = new Date(d.getFullYear(), d.getMonth(), 1);
     until = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-    label = `${MONTHS[since.getMonth()]} ${since.getFullYear()}`;
+    label = `${monthName(since.getMonth() + 1)} ${since.getFullYear()}`;
   } else {
     return null;
   }

@@ -35,18 +35,15 @@ def engine():
 
 def create_all() -> None:
     """Apply pending migrations and add the activity log trigger."""
-    if not settings.migrate_database_url:
-        e = engine()
-        migrate.upgrade(e)
-        migrate.protect_activity_log(e)
-        return
     settings.ensure()
-    e = create_engine(settings.migrate_database_url, future=True)
+    own = settings.migrate_database_url
+    e = create_engine(own, future=True) if own else engine()
     try:
         migrate.upgrade(e)
         migrate.protect_activity_log(e)
     finally:
-        e.dispose()
+        if own:
+            e.dispose()
 
 
 class SchemaOutOfDate(RuntimeError):

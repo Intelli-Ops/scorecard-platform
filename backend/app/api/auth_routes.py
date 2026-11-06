@@ -51,14 +51,15 @@ class PasswordChange(BaseModel):
     new: str = Password
 
 
+def _ip(request: Request) -> str:
+    return audit.client_of(request)[0] or "?"
+
+
 def _too_many(key: str, rule: tuple[int, int], what: str) -> None:
-    wait = ratelimit.blocked(key, rule)
-    if wait:
-        minutes = max(1, round(wait / 60))
-        raise HTTPException(
-            429, f"Too many {what}. Try again in {minutes} "
-                 f"minute{'s' if minutes != 1 else ''}.",
-            headers={"Retry-After": str(wait)})
+    if wait := ratelimit.blocked(key, rule):
+        raise HTTPException(429, f"Too many {what}. Try again in "
+                                 f"{ratelimit.minutes_text(wait)}.",
+                            headers={"Retry-After": str(wait)})
 
 
 @router.get("/rules")
@@ -74,7 +75,7 @@ def rules() -> dict:
 @router.post("/signup")
 def signup(body: SignUp, request: Request) -> dict:
     """Create an account and mail the 6-digit code that confirms the address."""
-    ip = audit.client_of(request)[0] or "?"
+    ip = _ip(request)
     _too_many(f"signup:{ip}", ratelimit.SIGNUPS, "new accounts from this address")
     ratelimit.hit(f"signup:{ip}", ratelimit.SIGNUPS)
     with session() as s:
@@ -94,20 +95,18 @@ def signup(body: SignUp, request: Request) -> dict:
 
 def _wrong_code(request: Request, action: str, email: str) -> HTTPException:
     """Count a wrong code against the address it came from, and log it."""
-    ip = audit.client_of(request)[0] or "?"
-    ratelimit.hit(f"code:{ip}", ratelimit.CODE_FAILURES)
+    ratelimit.hit(f"code:{_ip(request)}", ratelimit.CODE_FAILURES)
     audit.record(action, request=request, email=email.strip().lower(),
                  outcome="failure", detail={"reason": "wrong_code"})
     return HTTPException(400, codes.WRONG_CODE)
 
 
 def _guard_codes(request: Request) -> None:
-    ip = audit.client_of(request)[0] or "?"
-    _too_many(f"code:{ip}", ratelimit.CODE_FAILURES, "wrong codes from this address")
+    _too_many(f"code:{_ip(request)}", ratelimit.CODE_FAILURES, "wrong codes from this address")
 
 
 def _guard_requests(request: Request, what: str) -> None:
-    ip = audit.client_of(request)[0] or "?"
+    ip = _ip(request)
     _too_many(f"codereq:{ip}", ratelimit.CODE_REQUESTS, what)
     ratelimit.hit(f"codereq:{ip}", ratelimit.CODE_REQUESTS)
 
@@ -235,12 +234,8 @@ def logout(request: Request, response: Response) -> dict:
 
 
 @router.get("/me")
-def me(user: User = Depends(signed_in)) -> dict:
-    return auth.as_dict(user)
-
-
 @me_router.get("")
-def my_profile(user: User = Depends(signed_in)) -> dict:
+def me(user: User = Depends(signed_in)) -> dict:
     return auth.as_dict(user)
 
 

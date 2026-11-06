@@ -30,9 +30,15 @@ def _readable(run: Run | None, user: User, request: Request) -> Run:
         return run
     if run.status == "approved" and run.report_key in user.reports:
         return run
-    audit.record("admin.denied", request=request, user=user, outcome="denied",
-                 target=f"run {run.id}")
+    audit.denied(request, user, f"run {run.id}")
     raise HTTPException(404, "No such run.")
+
+
+def _run(s, run_id: int) -> Run:
+    run = s.get(Run, run_id)
+    if run is None:
+        raise HTTPException(404, "No such run.")
+    return run
 
 
 _heavy = threading.BoundedSemaphore(2)
@@ -169,9 +175,7 @@ def approve_run(run_id: int, request: Request,
     """Approving is a person's act, so it is recorded as that person - taken
     from the signed-in account rather than from whatever the caller typed."""
     with session() as s:
-        run = s.get(Run, run_id)
-        if run is None:
-            raise HTTPException(404, f"no run {run_id}")
+        run = _run(s, run_id)
         try:
             runner.approve(s, run, by=user.email)
         except ValueError as e:
@@ -190,9 +194,7 @@ def unapprove_run(run_id: int, request: Request,
                   user=Depends(require_admin)) -> dict:
     """Take an approval back."""
     with session() as s:
-        run = s.get(Run, run_id)
-        if run is None:
-            raise HTTPException(404, f"no run {run_id}")
+        run = _run(s, run_id)
         was = run.approved_by
         try:
             runner.unapprove(s, run, by=user.email)
@@ -211,9 +213,7 @@ def delete_run(run_id: int, request: Request,
                user=Depends(require_admin)) -> dict:
     """Delete a scorecard."""
     with session() as s:
-        run = s.get(Run, run_id)
-        if run is None:
-            raise HTTPException(404, f"no run {run_id}")
+        run = _run(s, run_id)
         if run.status in ACTIVE:
             raise HTTPException(
                 409, "This build is still running. Wait for it to finish.")
@@ -258,10 +258,13 @@ def get_table(run_id: int, name: str, request: Request,
 
 
 @router.get("/runs/{run_id}/case-ar")
-def get_case_ar(run_id: int, request: Request, group: str | None = None,
-                file_status: str | None = None, validity: str | None = None,
+def get_case_ar(run_id: int, request: Request,
+                group: list[str] | None = Query(None),
+                file_status: list[str] | None = Query(None),
+                validity: list[str] | None = Query(None),
                 user=Depends(current_user)) -> dict:
-    """The Case AR pivot, re-built from Raw Data for the filters chosen."""
+    """The Case AR pivot, re-built from Raw Data for the filters chosen. A filter given
+    more than once (?group=A&group=B) keeps rows matching any of its values."""
     from ..service.case_ar_view import case_ar
     with session() as s:
         run = _readable(s.get(Run, run_id), user, request)

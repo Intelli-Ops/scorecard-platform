@@ -18,7 +18,7 @@ from ..db.session import after_commit
 from ..reports import ReportType, get as get_report, load_rules
 from ..reports.cache import ParquetCache
 from ..reports.locate import SourceSet
-from ..reports.period import reporting_period
+from ..reports.period import Period, reporting_period
 from ..storage.files import FileStore, StoredFile
 from . import blobs
 from .figures import all_figures
@@ -52,7 +52,10 @@ def queue(session: Session, report_key: str, week: str,
     run = Run(report_key=report_key, week=week, status="pending",
               as_of=as_of or settings.today())
     session.add(run)
-    _fix_working_days(session, run, with_holidays(session, load_rules(report_key)))
+    # The working days it will pace on, as they stand when it is queued.
+    period, entered = month_entered(session, week, with_holidays(session, load_rules(report_key)))
+    run.working_days = period.business_days
+    run.working_days_source = "calendar" if entered is None else "entered"
     session.flush()        # the database refuses a second active build here
     for upload in latest_uploads(session, report, week).values():
         session.add(RunInput(run_id=run.id, upload_id=upload.id))
@@ -77,15 +80,13 @@ def plan(store: FileStore, run: Run) -> Plan:
     report: ReportType = get_report(run.report_key)
     uploads = {ri.upload.source_key: ri.upload for ri in run.inputs}
     found = {key: store.path(u.sha256, u.suffix) for key, u in uploads.items()}
-    ss = SourceSet(report=report, found=found,
-                   missing=tuple(s for s in report.sources if s.key not in found))
     if not found:
         raise FileNotFoundError(f"No files were uploaded for {run.week}.")
 
     return Plan(report_key=run.report_key, week=run.week, as_of=run.as_of,
                 rules=rules_for(object_session(run), run.report_key, run.week,
                                 run.working_days, run.working_days_source),
-                sources=ss,
+                sources=SourceSet(report=report, found=found),
                 upload_ids={key: u.id for key, u in uploads.items()})
 
 
@@ -184,16 +185,15 @@ def month_of(week: str, rules: dict | None = None):
                             (rules or {}).get("working_days"))
 
 
-def _fix_working_days(session: Session, run: Run, rules: dict) -> None:
-    """Note on the run the working days it will pace on - those entered for its
-    month, if any, or the calendar's - as they stand when it is queued."""
-    key = month_of(run.week, rules).key
-    row = session.get(MonthSetting, key)
+def month_entered(session: Session, week: str, rules: dict
+                  ) -> tuple[Period, MonthSetting | None]:
+    """The month `week` belongs to, paced on the working days entered for it if
+    there are any; and that entry."""
+    period = month_of(week, rules)
+    row = session.get(MonthSetting, period.key)
     if row is not None:
-        rules["working_days"] = {key: row.working_days}
-    period = month_of(run.week, rules)
-    run.working_days = period.business_days
-    run.working_days_source = "entered" if row is not None else "calendar"
+        period = month_of(week, {**rules, "working_days": {period.key: row.working_days}})
+    return period, row
 
 
 def table_row(run: Run, name: str) -> RunTable:

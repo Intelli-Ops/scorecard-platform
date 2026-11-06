@@ -1,7 +1,7 @@
 // Collection High-Level arithmetic, without React.
-import { inSheetOrder } from "./layout.js";
+import { TOTAL, inSheetOrder, sumOf } from "./layout.js";
 
-export const TOTAL = "Total";
+export { TOTAL };
 
 export const PAYMENT_TYPES = ["BILLING", "REBILLING", "APPEAL", "SETTLEMENT"];
 
@@ -32,9 +32,9 @@ export function pivotCollections(rows, order = []) {
   const total = { group: TOTAL, _total: 0 };
   for (const w of weeks) {
     for (const t of types) {
-      total[`w${w}_${t}`] = body.reduce((s, g) => s + (g[`w${w}_${t}`] ?? 0), 0);
+      total[`w${w}_${t}`] = sumOf(body, `w${w}_${t}`);
     }
-    total[`w${w}`] = body.reduce((s, g) => s + (g[`w${w}`] ?? 0), 0);
+    total[`w${w}`] = sumOf(body, `w${w}`);
     total._total += total[`w${w}`];
   }
   return { weeks, types, rows: [...body, total] };
@@ -55,7 +55,7 @@ export function pivotCollectionsPace(pace, order = []) {
     Object.values(byGroup).sort((a, b) => (b[last] ?? 0) - (a[last] ?? 0)), order,
     (group) => ({ group }));
   const total = { group: TOTAL };
-  for (const w of weeks) total[w] = body.reduce((s, g) => s + (g[w] ?? 0), 0);
+  for (const w of weeks) total[w] = sumOf(body, w);
   return { weeks, rows: [...body, total] };
 }
 
@@ -66,7 +66,7 @@ export function paymentTypeTotals(rows) {
   const present = PAYMENT_TYPES.filter((t) => t in by);
   if (!present.length) return [];          // same reasoning as the grid above
   const out = present.map((pt) => ({ pt, payment: by[pt] }));
-  const sum = out.reduce((s, r) => s + r.payment, 0);
+  const sum = sumOf(out, "payment");
   return [...out, { pt: TOTAL, payment: sum }];
 }
 

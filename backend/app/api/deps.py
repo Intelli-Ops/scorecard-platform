@@ -58,9 +58,7 @@ def require_admin(request: Request, user: User = Depends(current_user)) -> User:
     """An admin, or 403 - and the attempt is logged, because someone trying
     admin routes without the role is exactly what the log is for."""
     if not user.is_admin:
-        audit.record("admin.denied", request=request, user=user,
-                     outcome="denied",
-                     target=f"{request.method} {request.url.path}")
+        audit.denied(request, user)
         raise HTTPException(403, "Only an admin can do that.")
     return user
 
@@ -78,8 +76,7 @@ def refuse_upload(request: Request) -> tuple[int, str] | None:
         if user.is_admin:
             return None
         s.expunge(user)
-    audit.record("admin.denied", request=request, user=user, outcome="denied",
-                 target=f"{request.method} {request.url.path}")
+    audit.denied(request, user)
     return 403, "Only an admin can do that."
 
 

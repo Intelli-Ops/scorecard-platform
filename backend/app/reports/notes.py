@@ -17,10 +17,6 @@ class Note:
     def __str__(self) -> str:
         return self.message
 
-    def as_dict(self) -> dict:
-        return {"code": self.code, "severity": self.severity,
-                "message": self.message, "detail": self.detail}
-
 
 def info(code: str, message: str, **detail) -> Note:
     return Note(code, INFO, message, detail)

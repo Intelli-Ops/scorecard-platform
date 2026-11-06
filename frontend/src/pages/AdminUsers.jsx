@@ -4,6 +4,7 @@ import { api, stamp, when } from "../api";
 import { useAuth } from "../auth";
 import { useLoad } from "../hooks";
 import { Card, DataTable, ErrorBox, Loading, Modal } from "../components";
+import { Select } from "../select";
 import { Button, ConfirmButton, ConfirmPair, DeleteButton } from "../buttons";
 import { Stat, Stats } from "../ui";
 import { CheckIcon, CrossIcon, KeyIcon, LeaveIcon, PauseIcon, PlayIcon, SlidersIcon,
@@ -145,12 +146,11 @@ function RoleCell({ u, act }) {
     );
   }
   return (
-    <select className="picker role" value={u.role}
-            onChange={(e) => e.target.value === "system_admin"
+    <Select className="role" value={u.role} label={`Role for ${u.email}`}
+            onChange={(v) => v === "system_admin"
               ? setPending("system_admin")
-              : act(() => api.setRole(u.id, e.target.value))()}>
-      {u.can.roles.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
-    </select>
+              : act(() => api.setRole(u.id, v))()}
+            options={u.can.roles.map((r) => ({ value: r, label: ROLE_LABEL[r] }))} />
   );
 }
 

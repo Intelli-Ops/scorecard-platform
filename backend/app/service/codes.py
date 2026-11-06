@@ -33,9 +33,7 @@ class TooSoon(AuthError):
     """A new code asked for too soon after the last."""
 
     def __init__(self, seconds: int):
-        minutes = round(seconds / 60)
-        wait = (f"{seconds} seconds" if seconds < 90
-                else f"{minutes} minute{'s' if minutes != 1 else ''}")
+        wait = f"{seconds} seconds" if seconds < 90 else ratelimit.minutes_text(seconds)
         super().__init__(f"A code was sent a moment ago. You can ask for "
                          f"another in {wait}.")
         self.seconds = seconds

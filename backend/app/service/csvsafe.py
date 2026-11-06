@@ -5,6 +5,7 @@ import re
 import polars as pl
 
 _RISKY = ("=", "+", "-", "@", "\t", "\r")
+_STARTS_RISKY = "^[" + "".join(re.escape(c) for c in _RISKY) + "]"
 _NUMBER = re.compile(r"^-\d[\d,]*(\.\d+)?$")
 
 
@@ -22,7 +23,7 @@ def frame(df: pl.DataFrame) -> pl.DataFrame:
     if not text:
         return df
     return df.with_columns(
-        pl.when(pl.col(c).str.contains(r"^[=+\-@\t\r]")
+        pl.when(pl.col(c).str.contains(_STARTS_RISKY)
                 & ~pl.col(c).str.contains(_NUMBER.pattern))
         .then(pl.lit("'") + pl.col(c))
         .otherwise(pl.col(c))

@@ -2,31 +2,19 @@
 from __future__ import annotations
 import datetime as dt
 from collections import defaultdict
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, defer
 
 from ..config import settings
 from ..db.models import ActivityLog
-
-ACTION, WARNING, INFO = "action", "warning", "info"
-ORDER = {ACTION: 0, WARNING: 1, INFO: 2}
+from ..reports.notes import ACTION, INFO, SEVERITY_ORDER, WARNING
 
 GUESSING_FAILURES = 5          # wrong passwords for one account
 SPRAY_ACCOUNTS = 3             # accounts one address failed against
 EXPORTS_PER_HOUR = 10          # whole-table exports by one person in an hour
 NEW_ADDRESS_LOOKBACK = dt.timedelta(days=90)
 DELETIONS = ("run.delete", "week.delete", "admin.activity_delete")
-
-
-def _zone():
-    if settings.timezone:
-        try:
-            return ZoneInfo(settings.timezone)
-        except Exception:                     # unknown name, or no tz data
-            pass
-    return dt.datetime.now().astimezone().tzinfo
 
 
 def _alert(code, severity, title, text, rows, **extra) -> dict:
@@ -49,7 +37,7 @@ def alerts(s: Session, since: dt.datetime) -> list[dict]:
     out += _bulk_export(rows)
     out += _denied(rows)
     out += _deletions(rows)
-    return sorted(out, key=lambda a: (ORDER[a["severity"]], -a["last"].timestamp()))
+    return sorted(out, key=lambda a: (SEVERITY_ORDER[a["severity"]], -a["last"].timestamp()))
 
 
 def _failed_logins(rows):
@@ -135,7 +123,7 @@ def _new_address(s: Session, rows) -> list[dict]:
 
 
 def _out_of_hours(rows) -> list[dict]:
-    zone = _zone()
+    zone = settings.zone()
     start, end = settings.work_hours
     by_email = defaultdict(list)
     for r in rows:

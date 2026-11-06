@@ -18,6 +18,12 @@ LONGEST = max(window for _, window in (LOGIN_FAILURES, SIGNUPS, PASSWORD_FAILURE
                                        CODE_REQUESTS, CODE_FAILURES))
 
 
+def minutes_text(seconds: int) -> str:
+    """A wait in whole minutes, at least one: "1 minute", "15 minutes"."""
+    m = max(1, round(seconds / 60))
+    return f"{m} minute{'s' if m != 1 else ''}"
+
+
 def blocked(key: str, rule: tuple[int, int]) -> int:
     """Seconds until `key` may try again, or 0 if it may now."""
     limit, window = rule

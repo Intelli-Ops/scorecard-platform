@@ -26,3 +26,10 @@ def test_layout_records_keep_each_rows_place():
         {"section": "Board", "row": "A", "order": 1},
         {"section": "cp", "row": "Med-Legal", "order": 0},
     ]
+
+
+def test_gfs_keeps_the_dor_pivots_row_order_from_the_week_44_workbook():
+    """The Delta Comparison sheet's second pivot, by Ongoing DOR Status."""
+    dor = load_rules("gfs")["layout"]["dor"]
+    assert dor[:3] == ["Cannot file DOR", "CIC Pending", "CP - DOR Filed"]
+    assert dor[-1] == "Enforcement of Agreement Filed" and len(dor) == 30

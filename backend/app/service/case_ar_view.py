@@ -23,10 +23,18 @@ def _column(raw: pl.DataFrame, names: tuple[str, ...]) -> str | None:
     return next((c for c in names if c in raw.columns), None)
 
 
+def _wanted(value) -> list[str]:
+    """A filter's chosen values: none, one, or several."""
+    if value is None or value == "":
+        return []
+    return [str(v) for v in ([value] if isinstance(value, str) else value) if v != ""]
+
+
 def case_ar(raw: pl.DataFrame, rules: dict, report_key: str,
-            chosen: dict[str, str | None]) -> dict:
+            chosen: dict[str, str | list[str] | None]) -> dict:
     """The Case AR pivot of the Raw Data rows matching `chosen`, with its Grand
-    Total row, and what each filter can be set to."""
+    Total row, and what each filter can be set to. A filter given several values
+    keeps rows matching any of them; different filters must all match."""
     filters, narrowed = [], raw
     for key, label, names in FILTERS:
         col = _column(raw, names)
@@ -34,8 +42,9 @@ def case_ar(raw: pl.DataFrame, rules: dict, report_key: str,
             continue
         values = sorted(str(v) for v in raw[col].drop_nulls().unique().to_list())
         filters.append({"key": key, "label": label, "values": values})
-        if chosen.get(key):
-            narrowed = narrowed.filter(pl.col(col).cast(pl.Utf8) == chosen[key])
+        wanted = _wanted(chosen.get(key))
+        if wanted:
+            narrowed = narrowed.filter(pl.col(col).cast(pl.Utf8).is_in(wanted))
 
     rows: list[dict] = []
     columns: list[str] = []

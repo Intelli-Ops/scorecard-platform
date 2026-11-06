@@ -226,7 +226,6 @@ class Run(Base):
         back_populates="run", cascade="all, delete-orphan")
 
 
-STATUSES = ("pending", "running", "review", "approved", "failed")
 ACTIVE = ("pending", "running")
 
 
@@ -322,8 +321,6 @@ class ActivityLog(Base):
         Index("ix_activity_action_at", "action", "at"),
         Index("ix_activity_ip_at", "ip", "at"),
     )
-
-OUTCOMES = ("success", "failure", "denied")
 
 
 class RateHit(Base):
